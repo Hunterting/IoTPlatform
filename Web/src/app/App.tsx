@@ -22,6 +22,7 @@ import { TenantSelectionPage } from '@/app/pages/TenantSelectionPage';
 import { LogManagementPage } from '@/app/pages/LogManagementPage';
 import { AlertCenterPage } from '@/app/pages/AlertCenterPage';
 import { DictionaryManagementPage } from '@/app/pages/DictionaryManagementPage';
+import { DataCollectionPage } from '@/app/pages/DataCollectionPage';
 
 function AppContent() {
   const { user, currentCustomer } = useAuth();
@@ -75,6 +76,17 @@ function AppContent() {
         return <WorkOrderPage />;
       case 'alert-center':
         return <AlertCenterPage />;
+      case 'data-collection':
+      case 'data-collection-protocol':
+      case 'data-collection-gateway':
+      case 'data-collection-tunnel':
+      case 'data-collection-plugin':
+      case 'data-collection-center':
+      case 'data-collection-rules':
+      case 'data-collection-transform':
+      case 'data-collection-database':
+      case 'data-collection-export':
+        return <DataCollectionPage activePage={currentPage} />;
       case 'logs':
       case 'logs-login':
       case 'logs-operation':

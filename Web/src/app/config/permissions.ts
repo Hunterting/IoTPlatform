@@ -23,7 +23,7 @@ export const PERMISSIONS = {
   UPDATE_ALERTS: 'update_alerts',
   DELETE_ALERTS: 'delete_alerts',
 
-  // ── 实时监控 ──────────────────────────────────────────────
+  // ─ 实时监控 ──────────────────────────────────────────────
   VIEW_MONITORING: 'view_monitoring',
 
   // ── 智能分析 ──────────────────────────────────────────────
@@ -75,6 +75,34 @@ export const PERMISSIONS = {
   CREATE_DICTIONARY: 'create_dictionary',
   UPDATE_DICTIONARY: 'update_dictionary',
   DELETE_DICTIONARY: 'delete_dictionary',
+
+  // ── 数据采集 ──────────────────────────────────────────────
+  VIEW_DATA_COLLECTION: 'view_data_collection',
+  MANAGE_PROTOCOLS: 'manage_protocols',
+  MANAGE_RULES: 'manage_rules',
+  EXPORT_DATA: 'export_data',
+  
+  // ── 协议与接入管理 ────────────────────────────────────────
+  VIEW_PROTOCOL_CONFIG: 'view_protocol_config',
+  MANAGE_PROTOCOL_CONFIG: 'manage_protocol_config',
+  VIEW_PROTOCOL_GATEWAY: 'view_protocol_gateway',
+  MANAGE_PROTOCOL_GATEWAY: 'manage_protocol_gateway',
+  VIEW_NETWORK_TUNNEL: 'view_network_tunnel',
+  MANAGE_NETWORK_TUNNEL: 'manage_network_tunnel',
+  VIEW_PLUGIN_SYSTEM: 'view_plugin_system',
+  MANAGE_PLUGIN_SYSTEM: 'manage_plugin_system',
+  
+  // ── 数据处理 ──────────────────────────────────────────────
+  VIEW_DATA_CENTER: 'view_data_center',
+  MANAGE_DATA_CENTER: 'manage_data_center',
+  VIEW_RULE_ENGINE: 'view_rule_engine',
+  MANAGE_RULE_ENGINE: 'manage_rule_engine',
+  VIEW_DATA_TRANSFORM: 'view_data_transform',
+  MANAGE_DATA_TRANSFORM: 'manage_data_transform',
+  VIEW_DATABASE_CONFIG: 'view_database_config',
+  MANAGE_DATABASE_CONFIG: 'manage_database_config',
+  VIEW_DATA_EXPORT: 'view_data_export',
+  PERFORM_DATA_EXPORT: 'perform_data_export',
 } as const;
 
 export type Permission = typeof PERMISSIONS[keyof typeof PERMISSIONS];
@@ -219,12 +247,49 @@ export const PERMISSION_GROUPS = [
       { code: PERMISSIONS.DELETE_DICTIONARY, name: '删除字典' },
     ],
   },
+  {
+    name: '数据采集',
+    permissions: [
+      { code: PERMISSIONS.VIEW_DATA_COLLECTION, name: '查看数据采集' },
+      { code: PERMISSIONS.MANAGE_PROTOCOLS, name: '管理协议' },
+      { code: PERMISSIONS.MANAGE_RULES, name: '管理规则' },
+      { code: PERMISSIONS.EXPORT_DATA, name: '导出数据' },
+    ],
+  },
+  {
+    name: '协议与接入管理',
+    permissions: [
+      { code: PERMISSIONS.VIEW_PROTOCOL_CONFIG, name: '查看协议配置' },
+      { code: PERMISSIONS.MANAGE_PROTOCOL_CONFIG, name: '管理协议配置' },
+      { code: PERMISSIONS.VIEW_PROTOCOL_GATEWAY, name: '查看协议网关' },
+      { code: PERMISSIONS.MANAGE_PROTOCOL_GATEWAY, name: '管理协议网关' },
+      { code: PERMISSIONS.VIEW_NETWORK_TUNNEL, name: '查看网络隧道' },
+      { code: PERMISSIONS.MANAGE_NETWORK_TUNNEL, name: '管理网络隧道' },
+      { code: PERMISSIONS.VIEW_PLUGIN_SYSTEM, name: '查看插件系统' },
+      { code: PERMISSIONS.MANAGE_PLUGIN_SYSTEM, name: '管理插件系统' },
+    ],
+  },
+  {
+    name: '数据处理',
+    permissions: [
+      { code: PERMISSIONS.VIEW_DATA_CENTER, name: '查看数据中心' },
+      { code: PERMISSIONS.MANAGE_DATA_CENTER, name: '管理数据中心' },
+      { code: PERMISSIONS.VIEW_RULE_ENGINE, name: '查看规则引擎' },
+      { code: PERMISSIONS.MANAGE_RULE_ENGINE, name: '管理规则引擎' },
+      { code: PERMISSIONS.VIEW_DATA_TRANSFORM, name: '查看数据转换' },
+      { code: PERMISSIONS.MANAGE_DATA_TRANSFORM, name: '管理数据转换' },
+      { code: PERMISSIONS.VIEW_DATABASE_CONFIG, name: '查看数据库配置' },
+      { code: PERMISSIONS.MANAGE_DATABASE_CONFIG, name: '管理数据库配置' },
+      { code: PERMISSIONS.VIEW_DATA_EXPORT, name: '查看数据导出' },
+      { code: PERMISSIONS.PERFORM_DATA_EXPORT, name: '执行数据导出' },
+    ],
+  },
 ];
 
 // ── 默认角色定义 ──────────────────────────────────────────────
 // 规则：
 //   super_admin → Object.values(PERMISSIONS) 动态获取，新增权限自动继承
-//   其他角色    → 显式列举，需手动授权才可访问新模块
+//   其他角色    → 显式列，需手动授权才可访问新模块
 export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
   super_admin: {
     code: 'super_admin',
@@ -294,6 +359,31 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.CREATE_DICTIONARY,
       PERMISSIONS.UPDATE_DICTIONARY,
       PERMISSIONS.DELETE_DICTIONARY,
+      // 数据采集
+      PERMISSIONS.VIEW_DATA_COLLECTION,
+      PERMISSIONS.MANAGE_PROTOCOLS,
+      PERMISSIONS.MANAGE_RULES,
+      PERMISSIONS.EXPORT_DATA,
+      // 协议与接入管理
+      PERMISSIONS.VIEW_PROTOCOL_CONFIG,
+      PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
+      PERMISSIONS.VIEW_PROTOCOL_GATEWAY,
+      PERMISSIONS.MANAGE_PROTOCOL_GATEWAY,
+      PERMISSIONS.VIEW_NETWORK_TUNNEL,
+      PERMISSIONS.MANAGE_NETWORK_TUNNEL,
+      PERMISSIONS.VIEW_PLUGIN_SYSTEM,
+      PERMISSIONS.MANAGE_PLUGIN_SYSTEM,
+      // 数据处理
+      PERMISSIONS.VIEW_DATA_CENTER,
+      PERMISSIONS.MANAGE_DATA_CENTER,
+      PERMISSIONS.VIEW_RULE_ENGINE,
+      PERMISSIONS.MANAGE_RULE_ENGINE,
+      PERMISSIONS.VIEW_DATA_TRANSFORM,
+      PERMISSIONS.MANAGE_DATA_TRANSFORM,
+      PERMISSIONS.VIEW_DATABASE_CONFIG,
+      PERMISSIONS.MANAGE_DATABASE_CONFIG,
+      PERMISSIONS.VIEW_DATA_EXPORT,
+      PERMISSIONS.PERFORM_DATA_EXPORT,
     ],
     dataScope: 'ALL',
   },

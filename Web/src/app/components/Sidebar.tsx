@@ -29,6 +29,7 @@ import {
   ClipboardCheck,
   Wind,
   BookOpen,
+  Database,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, Permission } from '@/app/config/permissions';
@@ -45,6 +46,16 @@ export type PageType =
   | 'monitoring'
   | 'archives'
   | 'work-orders'
+  | 'data-collection'
+  | 'data-collection-protocol'
+  | 'data-collection-gateway'
+  | 'data-collection-tunnel'
+  | 'data-collection-plugin'
+  | 'data-collection-center'
+  | 'data-collection-rules'
+  | 'data-collection-transform'
+  | 'data-collection-database'
+  | 'data-collection-export'
   | 'logs'
   | 'logs-login'
   | 'logs-operation'
@@ -162,6 +173,68 @@ const menuItems: MenuItem[] = [
     requiredPermission: PERMISSIONS.VIEW_WORK_ORDERS,
   },
   {
+    id: 'data-collection',
+    label: '数据采集',
+    icon: <Database className="w-5 h-5" />,
+    requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+    subItems: [
+      {
+        id: 'data-collection-protocol',
+        label: '协议配置',
+        icon: <Tag className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-gateway',
+        label: '网关配置',
+        icon: <Globe className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-tunnel',
+        label: '隧道配置',
+        icon: <Zap className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-plugin',
+        label: '插件配置',
+        icon: <Key className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-center',
+        label: '采集中心',
+        icon: <Database className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-rules',
+        label: '采集规则',
+        icon: <List className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-transform',
+        label: '数据转换',
+        icon: <BookOpen className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-database',
+        label: '数据库配置',
+        icon: <Database className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+      {
+        id: 'data-collection-export',
+        label: '数据导出',
+        icon: <ClipboardCheck className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATA_COLLECTION,
+      },
+    ],
+  },
+  {
     id: 'logs',
     label: '日志管理',
     icon: <ScrollText className="w-5 h-5" />,
@@ -244,6 +317,12 @@ const menuItems: MenuItem[] = [
         icon: <BookOpen className="w-4 h-4" />,
         requiredPermission: PERMISSIONS.VIEW_DICTIONARY,
       },
+      {
+        id: 'settings-database',
+        label: '数据库管理',
+        icon: <Database className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DATABASE,
+      },
     ],
   },
 ];
@@ -255,6 +334,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     if (currentPage.startsWith('settings')) return 'settings';
     if (currentPage.startsWith('users')) return 'users';
     if (currentPage.startsWith('logs')) return 'logs';
+    if (currentPage.startsWith('data-collection')) return 'data-collection';
     if (
       currentPage === 'devices' ||
       currentPage === 'area-management' ||
