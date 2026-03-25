@@ -25,6 +25,7 @@ export interface Archive {
   areaId?: string;
   areaName?: string;
   imageUrl?: string;
+  sceneConfig?: any; // 3D场景配置
 }
 
 // 档案数据
@@ -62,6 +63,21 @@ export const archivesData: Archive[] = [
       { id: 'd3', name: '智能炉灶-C01', x: 40, y: 60, type: '烹饪设备', model: 'GS-P4000', serialNumber: 'SN20250101003', sensors: ['用气传感器', '温度传感器'] },
       { id: 'd4', name: '洗碗机-D01', x: 75, y: 70, type: '清洁设备', model: 'DW-M9000', serialNumber: 'SN20250101004', sensors: ['用水传感器'] },
     ],
+    sceneConfig: {
+      areaId: 'L2-001',
+      areaName: '中央厨房',
+      cadFilePath: '/assets/cad/central-kitchen.dxf',
+      devices: [
+        { id: 'marker-d1', deviceId: '1', name: '智能冰箱-A01', position: { x: -5, y: 0, z: -3 } },
+        { id: 'marker-d2', deviceId: '2', name: '智能烤箱-B01', position: { x: 2, y: 0, z: 1 } },
+        { id: 'marker-d3', deviceId: '3', name: '智能炉灶-C01', position: { x: -1, y: 0, z: 4 } },
+        { id: 'marker-d4', deviceId: '4', name: '洗碗机-D01', position: { x: 5, y: 0, z: 3 } },
+      ],
+      camera: {
+        position: [15, 12, 15],
+        lookAt: [0, 0, 0]
+      }
+    }
   },
   {
     id: '4',
@@ -87,6 +103,19 @@ export const archivesData: Archive[] = [
       { id: 'd5', name: '咖啡机-E01', x: 30, y: 40, type: '饮品设备', model: 'CF-L5000', serialNumber: 'SN20250101005', sensors: ['用水传感器'] },
       { id: 'd6', name: '蒸箱-F01', x: 70, y: 50, type: '烹饪设备', model: 'ST-Z3000', serialNumber: 'SN20250101006', sensors: ['用气传感器', '温度传感器'] },
     ],
+    sceneConfig: {
+      areaId: 'L2-001',
+      areaName: '一层大厅区',
+      cadFilePath: '/assets/cad/level1-hall.dxf',
+      devices: [
+        { id: 'marker-d5', deviceId: '5', name: '咖啡机-E01', position: { x: -3, y: 0, z: -1 } },
+        { id: 'marker-d6', deviceId: '5', name: '蒸箱-F01', position: { x: 3, y: 0, z: 2 } },
+      ],
+      camera: {
+        position: [10, 8, 10],
+        lookAt: [0, 0, 0]
+      }
+    }
   },
   {
     id: '6',
@@ -130,6 +159,19 @@ export const archivesData: Archive[] = [
       { id: 'd7', name: '新风机-AQ01', x: 20, y: 25, type: '新风设备', model: 'XF-8000', serialNumber: 'SN20250201001', sensors: ['风量传感器', '温度传感器', 'PM2.5传感器'] },
       { id: 'd8', name: '排风机-AQ02', x: 80, y: 25, type: '排风设备', model: 'PF-6000', serialNumber: 'SN20250201002', sensors: ['风量传感器'] },
     ],
+    sceneConfig: {
+      areaId: 'L2-001',
+      areaName: '一层大厅区',
+      cadFilePath: '/assets/cad/level1-air-quality.dxf',
+      devices: [
+        { id: 'marker-d7', deviceId: '1', name: '新风机-AQ01', position: { x: -5, y: 0, z: -3 } },
+        { id: 'marker-d8', deviceId: '2', name: '排风机-AQ02', position: { x: 5, y: 0, z: -3 } },
+      ],
+      camera: {
+        position: [12, 10, 12],
+        lookAt: [0, 0, 0]
+      }
+    }
   },
   {
     id: '10',
@@ -148,5 +190,19 @@ export const archivesData: Archive[] = [
       { id: 'd10', name: '排风机-AQ04', x: 75, y: 30, type: '排风设备', model: 'PF-6000', serialNumber: 'SN20250201004', sensors: ['风量传感器'] },
       { id: 'd11', name: '油烟净化器-AQ05', x: 50, y: 60, type: '净化设备', model: 'YJ-5000', serialNumber: 'SN20250201005', sensors: ['油烟浓度传感器'] },
     ],
+    sceneConfig: {
+      areaId: 'L2-002',
+      areaName: 'A区用餐区',
+      cadFilePath: '/assets/cad/area-dining-air-quality.dxf',
+      devices: [
+        { id: 'marker-d9', deviceId: '1', name: '新风机-AQ03', position: { x: -4, y: 0, z: -2 } },
+        { id: 'marker-d10', deviceId: '2', name: '排风机-AQ04', position: { x: 4, y: 0, z: -2 } },
+        { id: 'marker-d11', deviceId: '1', name: '油烟净化器-AQ05', position: { x: 0, y: 0, z: 3 } },
+      ],
+      camera: {
+        position: [10, 8, 10],
+        lookAt: [0, 0, 0]
+      }
+    }
   },
 ];

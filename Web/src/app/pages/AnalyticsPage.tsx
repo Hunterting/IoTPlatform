@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, ChevronDown, MapPin, Droplets, Zap, Flame,
-  AlertTriangle, Bell, Clock, TrendingUp, Calendar, LogOut, Cpu, X,
+  AlertTriangle, Bell, Clock, TrendingUp, Calendar, LogOut, Cpu,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -12,31 +12,10 @@ import { useAuth } from '@/app/contexts/AuthContext';
 import { useDevices } from '@/app/contexts/DeviceContext';
 import { useArea } from '@/app/contexts/AreaContext';
 import { SHARED_ALERT_RECORDS } from '@/app/config/sharedMockData';
+import { SceneViewer } from '@/app/components/3d-scene/SceneViewer';
+import { DeviceInfoPanel } from '@/app/components/3d-scene/DeviceInfoPanel';
 
 type EnergyType = 'electric' | 'water' | 'gas';
-
-// Device marker interface for 3D scene
-interface DeviceMarker {
-  id: string;
-  name: string;
-  x: number;
-  y: number;
-  type: string;
-  model?: string;
-  serialNumber?: string;
-  sensors?: string[];
-  specification?: string;
-}
-
-// Archive interface for 3D models
-interface Archive3D {
-  id: string;
-  name: string;
-  areaId: string;
-  areaName: string;
-  devices: DeviceMarker[];
-  imageUrl: string;
-}
 
 // ── Mock Data ──────────────────────────────────────────────────────────────────
 // 模拟用能数据 - 日历视图（以电为例）
@@ -73,49 +52,6 @@ const yearlyElectricTrend = [
 
 const yearlyWaterTrend = yearlyElectricTrend.map(y => ({ ...y, value: y.value * 85 }));
 const yearlyGasTrend = yearlyElectricTrend.map(y => ({ ...y, value: Math.round(y.value * 6.2) }));
-
-// Mock 3D Archive Data - 关联到区域的3D模型数据
-const mock3DArchives: Archive3D[] = [
-  {
-    id: 'archive-001',
-    name: '一层大厅区 - 3D布局图',
-    areaId: 'L2-001',
-    areaName: '一层大厅区',
-    imageUrl: 'https://images.unsplash.com/photo-1556911220-bff31c812dba?w=1200&h=800&fit=crop',
-    devices: [
-      { 
-        id: 'd5', 
-        name: '咖啡机-E01', 
-        x: 30, 
-        y: 40, 
-        type: '饮品设备', 
-        model: 'CF-L5000', 
-        serialNumber: 'SN20250101005', 
-        sensors: ['用水传感器'] 
-      },
-      { 
-        id: 'd6', 
-        name: '蒸箱-F01', 
-        x: 70, 
-        y: 50, 
-        type: '烹饪设备', 
-        model: 'ST-Z3000', 
-        serialNumber: 'SN20250101006', 
-        sensors: ['用气传感器', '温度传感器'] 
-      },
-      { 
-        id: 'd7', 
-        name: '冰箱-G01', 
-        x: 50, 
-        y: 70, 
-        type: '制冷设备', 
-        model: 'RF-X2000', 
-        serialNumber: 'SN20250101007', 
-        sensors: ['温度传感器'] 
-      },
-    ],
-  },
-];
 
 // ── Area Tree Component ────────────────────────────────────────────────────────
 interface AreaTreeNodeProps {
@@ -185,7 +121,7 @@ function AreaTreeNode({ area, level, selectedArea, onSelect }: AreaTreeNodeProps
 // ── Main Component ─────────────────────────────────────────────────────────────
 export function AnalyticsPage() {
   const { user, logout, currentCustomer } = useAuth();
-  const { devices } = useDevices();
+  const { devices, updateDeviceStatus } = useDevices();
   const { areas } = useArea();
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedEnergyType, setSelectedEnergyType] = useState<EnergyType>('electric');
@@ -197,8 +133,8 @@ export function AnalyticsPage() {
   const [showYearOnlyPicker, setShowYearOnlyPicker] = useState(false);
   
   // 3D scene states
-  const [selectedDevice, setSelectedDevice] = useState<DeviceMarker | null>(null);
-  const [hoveredDevice, setHoveredDevice] = useState<string | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [selected3DDevice, setSelected3DDevice] = useState<any>(null);
   const [showDeviceInfo, setShowDeviceInfo] = useState(false);
 
   // 可选年份列表（2020-2030）
@@ -207,16 +143,78 @@ export function AnalyticsPage() {
   // 可选月份列表
   const availableMonths = Array.from({ length: 12 }, (_, i) => i + 1);
   
-  // 根据选中的区域获取3D模型
-  const current3DArchive = useMemo(() => {
+  // 根据选中的区域获取3D场景配置
+  const currentSceneConfig = useMemo(() => {
     if (!selectedArea) return null;
-    return mock3DArchives.find(archive => archive.areaName === selectedArea) || null;
-  }, [selectedArea]);
-  
+    
+    // 查找匹配的区域
+    const matchingArea = areas.find((area: any) => area.name === selectedArea);
+    if (!matchingArea) return null;
+    
+    // 返回3D场景配置（这里使用mock配置，实际应从archivesData获取）
+    return {
+      areaId: matchingArea.id,
+      areaName: selectedArea,
+      cadFilePath: '/assets/cad/default.dxf',
+      devices: [
+        {
+          id: 'device-1',
+          deviceId: '1',
+          name: '咖啡机-E01',
+          position: { x: -3, y: 0, z: -1 },
+          color: 0x00c3ff,
+        },
+        {
+          id: 'device-2',
+          deviceId: '2',
+          name: '蒸箱-F01',
+          position: { x: 3, y: 0, z: 2 },
+          color: 0x00c3ff,
+        },
+        {
+          id: 'device-3',
+          deviceId: '3',
+          name: '新风机-AQ01',
+          position: { x: -5, y: 0, z: -3 },
+          color: 0x00c3ff,
+        },
+      ],
+      camera: {
+        position: [12, 10, 12],
+        lookAt: [0, 0, 0],
+      },
+      backgroundColor: 0x0a1628,
+    };
+  }, [selectedArea, areas]);
+
   // 处理设备点击
-  const handleDeviceClick = (device: DeviceMarker) => {
-    setSelectedDevice(device);
+  const handleDeviceClick = (deviceId: string, deviceData: any) => {
+    setSelectedDeviceId(deviceId);
+    setSelected3DDevice(deviceData);
     setShowDeviceInfo(true);
+  };
+
+  // 处理设备悬停
+  const handleHoverDevice = (deviceId: string | null, deviceData?: any) => {
+    // 可以用于高亮设备或显示悬停提示
+    console.log('Hovered device:', deviceId);
+  };
+
+  // 处理设备状态切换
+  const handleTogglePower = async (deviceId: string, status: 'online' | 'offline') => {
+    try {
+      await updateDeviceStatus(deviceId, status);
+    } catch (error) {
+      console.error('设备状态更新失败:', error);
+      throw error;
+    }
+  };
+
+  // 关闭设备信息面板
+  const closeDeviceInfo = () => {
+    setShowDeviceInfo(false);
+    setSelectedDeviceId(null);
+    setSelected3DDevice(null);
   };
 
   // 统计设备状态
@@ -388,7 +386,7 @@ export function AnalyticsPage() {
 
           {/* 3D 场景 */}
           <div className="flex-1 bg-black/40 backdrop-blur-sm border border-cyan-500/30 rounded-lg p-4 relative overflow-hidden">
-            {!current3DArchive ? (
+            {!currentSceneConfig ? (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
                   <MapPin className="w-16 h-16 text-gray-600 mx-auto mb-4" />
@@ -402,144 +400,32 @@ export function AnalyticsPage() {
                 <div className="flex items-center justify-between mb-3 pb-2 border-b border-cyan-500/20">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-cyan-400" />
-                    <h3 className="text-sm font-bold text-cyan-300">{current3DArchive.areaName}</h3>
+                    <h3 className="text-sm font-bold text-cyan-300">{currentSceneConfig.areaName}</h3>
                   </div>
                   <span className="text-xs text-gray-400">
-                    {current3DArchive.devices.length} 个设备标注
+                    {currentSceneConfig.devices.length} 个设备标注
                   </span>
                 </div>
 
                 {/* 3D Scene View */}
                 <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-hidden">
-                  {/* Background Image */}
-                  <img
-                    src={current3DArchive.imageUrl}
-                    alt={current3DArchive.areaName}
-                    className="w-full h-full object-cover opacity-60"
+                  {/* SceneViewer */}
+                  <SceneViewer
+                    sceneConfig={currentSceneConfig}
+                    onDeviceClick={handleDeviceClick}
+                    onHoverDevice={handleHoverDevice}
+                    className="w-full h-full"
                   />
-
-                  {/* Device Markers */}
-                  {current3DArchive.devices.map((device) => (
-                    <motion.div
-                      key={device.id}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      whileHover={{ scale: 1.2 }}
-                      className="absolute cursor-pointer"
-                      style={{
-                        left: `${device.x}%`,
-                        top: `${device.y}%`,
-                        transform: 'translate(-50%, -50%)',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeviceClick(device);
-                      }}
-                      onMouseEnter={() => setHoveredDevice(device.id)}
-                      onMouseLeave={() => setHoveredDevice(null)}
-                    >
-                      {/* Pulsing Circle */}
-                      <div className="relative">
-                        <motion.div
-                          animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0, 0.6] }}
-                          transition={{ repeat: Infinity, duration: 2 }}
-                          className="absolute inset-0 w-10 h-10 bg-cyan-500 rounded-full"
-                        />
-                        <div className="relative w-10 h-10 bg-cyan-500 rounded-full flex items-center justify-center border-2 border-white shadow-lg">
-                          <Cpu className="w-5 h-5 text-white" />
-                        </div>
-                      </div>
-
-                      {/* Device Label on Hover */}
-                      {hoveredDevice === device.id && (
-                        <motion.div
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-gray-900 border border-white/20 rounded-lg p-2 whitespace-nowrap shadow-xl z-10"
-                        >
-                          <p className="text-white text-xs font-medium">{device.name}</p>
-                          <p className="text-gray-400 text-[10px]">{device.type}</p>
-                        </motion.div>
-                      )}
-                    </motion.div>
-                  ))}
 
                   {/* Device Info Panel */}
                   <AnimatePresence>
-                    {showDeviceInfo && selectedDevice && (
-                      <motion.div
-                        initial={{ x: 300, opacity: 0 }}
-                        animate={{ x: 0, opacity: 1 }}
-                        exit={{ x: 300, opacity: 0 }}
-                        className="absolute right-4 top-4 bottom-4 w-64 bg-gray-800/95 backdrop-blur-xl border border-white/10 rounded-lg p-4 overflow-y-auto"
-                      >
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="text-base font-bold text-white">设备详情</h4>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowDeviceInfo(false);
-                              setSelectedDevice(null);
-                            }}
-                            className="p-1 hover:bg-white/10 rounded transition-colors"
-                          >
-                            <X className="w-3 h-3 text-gray-400" />
-                          </button>
-                        </div>
-
-                        <div className="space-y-3">
-                          {/* Device Icon */}
-                          <div className="flex items-center justify-center p-3 bg-cyan-500/20 rounded-lg">
-                            <Cpu className="w-12 h-12 text-cyan-400" />
-                          </div>
-
-                          {/* Device Name */}
-                          <div>
-                            <p className="text-xs text-gray-400 mb-1">设备名称</p>
-                            <p className="text-white text-sm font-medium">{selectedDevice.name}</p>
-                          </div>
-
-                          {/* Device Type */}
-                          <div>
-                            <p className="text-xs text-gray-400 mb-1">设备类型</p>
-                            <p className="text-white text-sm">{selectedDevice.type}</p>
-                          </div>
-
-                          {/* Model */}
-                          {selectedDevice.model && (
-                            <div>
-                              <p className="text-xs text-gray-400 mb-1">设备型号</p>
-                              <p className="text-white text-sm">{selectedDevice.model}</p>
-                            </div>
-                          )}
-
-                          {/* Serial Number */}
-                          {selectedDevice.serialNumber && (
-                            <div>
-                              <p className="text-xs text-gray-400 mb-1">序列号</p>
-                              <p className="text-white font-mono text-xs">{selectedDevice.serialNumber}</p>
-                            </div>
-                          )}
-
-                          {/* Sensors */}
-                          {selectedDevice.sensors && selectedDevice.sensors.length > 0 && (
-                            <div>
-                              <p className="text-xs text-gray-400 mb-2">关联传感器</p>
-                              <div className="space-y-1">
-                                {selectedDevice.sensors.map((sensor, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="flex items-center gap-2 p-2 bg-black/30 rounded"
-                                  >
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                                    <span className="text-xs text-gray-300">{sensor}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </motion.div>
+                    {showDeviceInfo && selectedDeviceId && selected3DDevice && (
+                      <DeviceInfoPanel
+                        device={selected3DDevice}
+                        onClose={closeDeviceInfo}
+                        onTogglePower={handleTogglePower}
+                        className="absolute right-0 top-0 bottom-0"
+                      />
                     )}
                   </AnimatePresence>
                 </div>
