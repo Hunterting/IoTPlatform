@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, ChevronDown, MapPin, Wind, Droplets, Thermometer,
   Activity, Cpu, AlertTriangle, Clock, TrendingUp, TrendingDown,
-  Power, Settings as SettingsIcon, X, Download, Check,
+  Power, Settings as SettingsIcon, X, Download, Check, RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { useArea } from '@/app/contexts/AreaContext';
@@ -11,6 +11,8 @@ import { useArchive } from '@/app/contexts/ArchiveContext';
 import { PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as XLSX from 'xlsx';
 import { archivesData } from '@/app/data/archivesData';
+import { SceneViewer } from '@/app/components/3d-scene/SceneViewer';
+import type { SceneConfig } from '@/app/types/3d-scene';
 
 // 空气质量数据接口
 interface AirQualityData {
@@ -276,6 +278,32 @@ export function AirQualityPage() {
     return archivesData.find(archive => archive.areaName === selectedArea && archive.is3DModel) || null;
   }, [selectedArea]);
 
+  // 3D场景配置与加载状态
+  const [sceneConfig, setSceneConfig] = useState<SceneConfig | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 监听区域选择变化，提取sceneConfig
+  useEffect(() => {
+    if (!current3DArchive) {
+      setSceneConfig(null);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (current3DArchive.sceneConfig) {
+        setSceneConfig(current3DArchive.sceneConfig as SceneConfig);
+      } else {
+        setSceneConfig(null);
+      }
+    } catch (error) {
+      console.error('查找3D模型失败:', error);
+      setSceneConfig(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [current3DArchive]);
+
   // 根据选中区域获取空气质量数据
   const currentAirQuality = useMemo(() => {
     if (!selectedArea) return null;
@@ -411,61 +439,80 @@ export function AirQualityPage() {
             <div className="flex-1 flex flex-col min-h-0">
               {/* 3D场景视图 */}
               <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-hidden">
-                <img
-                  src={current3DArchive.imageUrl}
-                  alt={current3DArchive.areaName}
-                  className="absolute inset-0 w-full h-full object-cover opacity-40"
-                />
+                {/* 清除选择按钮 */}
+                <button
+                  onClick={() => {
+                    setSelectedArea(null);
+                    setSceneConfig(null);
+                    setSelectedAreaForArchive(null);
+                  }}
+                  className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-black/70 backdrop-blur-sm border border-white/20 rounded-lg text-gray-300 text-xs hover:bg-black/90 hover:text-white transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  清除选择
+                </button>
+
+                {/* 3D场景渲染 */}
+                {sceneConfig ? (
+                  <SceneViewer
+                    key={sceneConfig.areaId}
+                    sceneConfig={sceneConfig}
+                    className="w-full h-full"
+                    onDeviceClick={(deviceId, deviceData) => {
+                      console.log('设备点击:', deviceId, deviceData);
+                    }}
+                    onHoverDevice={(deviceId, deviceData) => {
+                      // 设备悬停交互，可扩展
+                    }}
+                  />
+                ) : !loading ? (
+                  <div className="flex items-center justify-center w-full h-full">
+                    <div className="text-center">
+                      <MapPin className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                      <p className="text-gray-400 text-sm">暂无3D模型数据</p>
+                    </div>
+                  </div>
+                ) : null}
 
                 {/* 空气质量指标覆盖层 - 左侧垂直排列 */}
                 {currentAirQuality && (
-                  <>
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 space-y-3">
-                      {/* 新风风量 */}
-                      <div className="bg-black/80 backdrop-blur-sm border border-blue-400/50 rounded-lg p-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Wind className="w-4 h-4 text-blue-400" />
-                          <span className="text-xs text-gray-400">新风风量</span>
-                        </div>
-                        <p className="text-lg font-bold text-white">{currentAirQuality.freshAirVolume} <span className="text-xs text-gray-400">m³/h</span></p>
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 space-y-3 z-10 pointer-events-none">
+                    {/* 新风风量 */}
+                    <div className="bg-black/80 backdrop-blur-sm border border-blue-400/50 rounded-lg p-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Wind className="w-4 h-4 text-blue-400" />
+                        <span className="text-xs text-gray-400">新风风量</span>
                       </div>
-
-                      {/* 排风风量 */}
-                      <div className="bg-black/80 backdrop-blur-sm border border-cyan-400/50 rounded-lg p-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Wind className="w-4 h-4 text-cyan-400" />
-                          <span className="text-xs text-gray-400">排风风量</span>
-                        </div>
-                        <p className="text-lg font-bold text-white">{currentAirQuality.exhaustAirVolume} <span className="text-xs text-gray-400">m³/h</span></p>
-                      </div>
-
-                      {/* 烟雾浓度 */}
-                      <div className="bg-black/80 backdrop-blur-sm border border-orange-400/50 rounded-lg p-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Activity className="w-4 h-4 text-orange-400" />
-                          <span className="text-xs text-gray-400">烟雾浓度</span>
-                        </div>
-                        <p className="text-lg font-bold text-white">{currentAirQuality.smokePurification} <span className="text-xs text-gray-400">mg/m³</span></p>
-                      </div>
-
-                      {/* 联动效率 */}
-                      <div className="bg-black/80 backdrop-blur-sm border border-green-400/50 rounded-lg p-2">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Cpu className="w-4 h-4 text-green-400" />
-                          <span className="text-xs text-gray-400">联动效率</span>
-                        </div>
-                        <p className="text-lg font-bold text-white">{currentAirQuality.linkageEfficiency}<span className="text-xs text-gray-400">%</span></p>
-                      </div>
+                      <p className="text-lg font-bold text-white">{currentAirQuality.freshAirVolume} <span className="text-xs text-gray-400">m³/h</span></p>
                     </div>
 
-                    {/* 3D建筑模型提示 */}
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                      <div className="text-center">
-                        <div className="w-16 h-16 mx-auto mb-2 border-4 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
-                        <p className="text-blue-400 text-xs">3D场景渲染中...</p>
+                    {/* 排风风量 */}
+                    <div className="bg-black/80 backdrop-blur-sm border border-cyan-400/50 rounded-lg p-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Wind className="w-4 h-4 text-cyan-400" />
+                        <span className="text-xs text-gray-400">排风风量</span>
                       </div>
+                      <p className="text-lg font-bold text-white">{currentAirQuality.exhaustAirVolume} <span className="text-xs text-gray-400">m³/h</span></p>
                     </div>
-                  </>
+
+                    {/* 烟雾浓度 */}
+                    <div className="bg-black/80 backdrop-blur-sm border border-orange-400/50 rounded-lg p-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Activity className="w-4 h-4 text-orange-400" />
+                        <span className="text-xs text-gray-400">烟雾浓度</span>
+                      </div>
+                      <p className="text-lg font-bold text-white">{currentAirQuality.smokePurification} <span className="text-xs text-gray-400">mg/m³</span></p>
+                    </div>
+
+                    {/* 联动效率 */}
+                    <div className="bg-black/80 backdrop-blur-sm border border-green-400/50 rounded-lg p-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Cpu className="w-4 h-4 text-green-400" />
+                        <span className="text-xs text-gray-400">联动效率</span>
+                      </div>
+                      <p className="text-lg font-bold text-white">{currentAirQuality.linkageEfficiency}<span className="text-xs text-gray-400">%</span></p>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

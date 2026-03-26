@@ -29,15 +29,26 @@ export function SceneViewer({
   const [error, setError] = useState<string | null>(null);
   const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
 
-  // 处理窗口大小变化
+  // 获取容器尺寸，用于相机宽高比和渲染器大小
+  const getContainerSize = useCallback(() => {
+    if (!containerRef.current) return null;
+    return {
+      width: containerRef.current.clientWidth || 1,
+      height: containerRef.current.clientHeight || 1,
+    };
+  }, []);
+
+  // 处理容器/窗口大小变化
   const handleResize = useCallback(() => {
     if (!sceneRef.current) return;
-    
+    const size = getContainerSize();
+    if (!size) return;
+
     const { camera, renderer } = sceneRef.current;
-    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.aspect = size.width / size.height;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }, []);
+    renderer.setSize(size.width, size.height);
+  }, [getContainerSize]);
 
   // 处理鼠标移动(设备悬停检测)
   const handleMouseMove = useCallback((event: MouseEvent) => {
@@ -138,6 +149,14 @@ export function SceneViewer({
         // 构建场景
         sceneResult = await SceneBuilderService.buildScene(sceneConfig);
         sceneRef.current = sceneResult;
+
+        // 使用容器尺寸设置渲染器大小（替代window尺寸）
+        const containerSize = getContainerSize();
+        if (containerSize) {
+          sceneResult.camera.aspect = containerSize.width / containerSize.height;
+          sceneResult.camera.updateProjectionMatrix();
+          sceneResult.renderer.setSize(containerSize.width, containerSize.height);
+        }
 
         // 将渲染器添加到DOM
         containerRef.current.appendChild(sceneResult.renderer.domElement);
