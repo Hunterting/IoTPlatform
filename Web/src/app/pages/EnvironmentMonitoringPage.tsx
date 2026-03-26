@@ -1,14 +1,17 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, MapPin, Thermometer, Droplets, Wind, 
   Volume2, AlertTriangle, Flame, Activity, FileDown,
-  Settings as SettingsIcon, Check, X,
+  Settings as SettingsIcon, Check, X, RotateCcw,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { useArea } from '@/app/contexts/AreaContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as XLSX from 'xlsx';
+import { archivesData } from '@/app/data/archivesData';
+import { SceneViewer } from '@/app/components/3d-scene/SceneViewer';
+import type { SceneConfig } from '@/app/types/3d-scene';
 
 // 3D档案数据接口
 interface Archive3D {
@@ -18,6 +21,7 @@ interface Archive3D {
   areaName: string;
   imageUrl: string;
   categoryName?: string; // 档案分类名称
+  sceneConfig?: any; // 兼容archivesData中的sceneConfig
 }
 
 // 环境监测数据接口
@@ -35,32 +39,7 @@ interface EnvironmentData {
 }
 
 // 模拟3D档案数据（根据档案管理中的分类和区域）
-const mock3DArchives: Archive3D[] = [
-  {
-    id: 'archive-001',
-    name: '一层大厅区 - 3D热力图',
-    areaId: 'L2-001',
-    areaName: '一层大厅区',
-    categoryName: '图纸资料',
-    imageUrl: 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=1200&h=800&fit=crop',
-  },
-  {
-    id: 'archive-002',
-    name: 'A区用餐区 - 3D热图',
-    areaId: 'L2-002',
-    areaName: 'A区用餐区',
-    categoryName: '图纸资料',
-    imageUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=1200&h=800&fit=crop',
-  },
-  {
-    id: 'archive-003',
-    name: '一层厨区 - 3D热力图',
-    areaId: 'L2-003',
-    areaName: '一层厨区',
-    categoryName: '图纸资料',
-    imageUrl: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&h=800&fit=crop',
-  },
-];
+
 
 // 模拟环境监测数据
 const mockEnvironmentData: EnvironmentData[] = [
@@ -322,11 +301,43 @@ export function EnvironmentMonitoringPage() {
     setEditingThresholds(prev => ({ ...prev, [key]: value }));
   };
 
-  // 根据选中区域获取3D模型（从档案管理图纸资料分类）
+  // 根据选中区域获取3D模型 - 优先查找环境监测分类的图纸
   const current3DArchive = useMemo(() => {
     if (!selectedArea) return null;
-    return mock3DArchives.find(archive => archive.areaName === selectedArea) || null;
+    // 优先查找环境监测分类的图纸
+    const environmentArchive = archivesData.find(
+      archive => archive.areaName === selectedArea && (archive.category === '环境监测' || archive.category === '图纸资料') && archive.is3DModel
+    );
+    if (environmentArchive) return environmentArchive;
+    // 如果没有找到环境监测图纸，查找其他3D图纸
+    return archivesData.find(archive => archive.areaName === selectedArea && archive.is3DModel) || null;
   }, [selectedArea]);
+
+  // 3D场景配置与加载状态
+  const [sceneConfig, setSceneConfig] = useState<SceneConfig | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 监听区域选择变化，提取sceneConfig
+  useEffect(() => {
+    if (!current3DArchive) {
+      setSceneConfig(null);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (current3DArchive.sceneConfig) {
+        setSceneConfig(current3DArchive.sceneConfig as SceneConfig);
+      } else {
+        setSceneConfig(null);
+      }
+    } catch (error) {
+      console.error('查找3D模型失败:', error);
+      setSceneConfig(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [current3DArchive]);
 
   // 根据选中区域获取环境数据
   const currentEnvironment = useMemo(() => {
@@ -498,24 +509,46 @@ export function EnvironmentMonitoringPage() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-hidden">
-              {/* 3D热力图背景 */}
-              <img
-                src={current3DArchive.imageUrl}
-                alt={current3DArchive.areaName}
-                className="absolute inset-0 w-full h-full object-cover opacity-30"
-              />
-              
-              {/* 热力图覆盖效果 */}
-              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 via-orange-500/30 to-red-500/20 mix-blend-multiply" />
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* 3D场景视图 */}
+              <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-hidden">
+                {/* 清除选择按钮 */}
+                <button
+                  onClick={() => {
+                    setSelectedArea(null);
+                    setSceneConfig(null);
+                  }}
+                  className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-black/70 backdrop-blur-sm border border-white/20 rounded-lg text-gray-300 text-xs hover:bg-black/90 hover:text-white transition-colors"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  清除选择
+                </button>
 
-              {/* 3D建筑模型提示 */}
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <div className="text-center">
-                  <div className="w-24 h-24 mx-auto mb-3 border-4 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
-                  <p className="text-blue-400 text-sm">3D热力图渲染中...</p>
-                  <p className="text-gray-500 text-xs mt-1">来自档案管理 - {current3DArchive.categoryName}</p>
-                </div>
+                {/* 3D场景渲染 */}
+                {sceneConfig ? (
+                  <SceneViewer
+                    key={sceneConfig.areaId}
+                    sceneConfig={sceneConfig}
+                    className="w-full h-full"
+                    onDeviceClick={(deviceId, deviceData) => {
+                      console.log('设备点击:', deviceId, deviceData);
+                    }}
+                    onHoverDevice={(deviceId, deviceData) => {
+                      // 设备悬停交互，可扩展
+                    }}
+                  />
+                ) : !loading ? (
+                  <div className="flex items-center justify-center w-full h-full">
+                    <div className="text-center">
+                      <MapPin className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                      <p className="text-gray-400 text-sm">暂无3D模型数据</p>
+                      <p className="text-gray-500 text-xs mt-1">来自档案管理 - {current3DArchive.category || current3DArchive.categoryName}</p>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* 热力图覆盖效果 */}
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 via-orange-500/20 to-red-500/10 mix-blend-multiply pointer-events-none z-0" />
               </div>
             </div>
           )}
