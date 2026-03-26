@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight,
@@ -18,10 +18,14 @@ import {
   Search,
   Check,
   Plus,
+  Box,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { useArea } from '@/app/contexts/AreaContext';
 import { PieChart, Pie, Cell } from 'recharts';
+import { archivesData, Archive } from '@/app/data/archivesData';
+import { DeviceMarker3D } from '@/app/types/3d-scene';
+import { SceneViewer } from '@/app/components/3d-scene/SceneViewer';
 
 interface Camera {
   id: string;
@@ -85,6 +89,12 @@ export function MonitoringPage() {
     areaId: '',
     rtspUrl: '',
   });
+
+  // 3D场景和设备详情状态
+  const [viewMode, setViewMode] = useState<'video' | '3d'>('video');
+  const [selectedCADArchive, setSelectedCADArchive] = useState<Archive | null>(null);
+  const [selectedDevice, setSelectedDevice] = useState<DeviceMarker3D | null>(null);
+  const [showDeviceDetail, setShowDeviceDetail] = useState(false);
 
   // 模拟报警记录
   const alarmRecords: AlarmRecord[] = [
@@ -211,6 +221,64 @@ export function MonitoringPage() {
   // 显示的摄像头（最多16个）
   const displayCameras = filteredCameras.slice(0, 16);
 
+  // 根据区域查找CAD档案
+  const findCADArchiveByArea = (areaId: string | null, areaName: string | null): Archive | null => {
+    if (!areaId && !areaName) return null;
+
+    const cadArchives = archivesData.filter(archive => 
+      archive.category === '图纸资料' &&
+      archive.type === 'blueprint' &&
+      archive.is3DModel === true &&
+      archive.sceneConfig
+    );
+
+    // 优先按areaId匹配
+    if (areaId) {
+      const matchedByAreaId = cadArchives.find(archive => archive.areaId === areaId);
+      if (matchedByAreaId) return matchedByAreaId;
+    }
+
+    // 其次按areaName匹配
+    if (areaName) {
+      const matchedByAreaName = cadArchives.find(archive => archive.areaName === areaName);
+      if (matchedByAreaName) return matchedByAreaName;
+    }
+
+    return null;
+  };
+
+  // 监听区域选择变化，查找对应CAD档案
+  useEffect(() => {
+    const selectedAreaData = flattenAreas(areas).find(a => a.id === selectedArea);
+    if (selectedAreaData) {
+      const cadArchive = findCADArchiveByArea(selectedAreaData.id, selectedAreaData.name);
+      setSelectedCADArchive(cadArchive);
+      
+      // 如果找到CAD档案且有3D配置，自动切换到3D视图
+      if (cadArchive && cadArchive.sceneConfig) {
+        setViewMode('3d');
+      } else {
+        setViewMode('video');
+      }
+    } else {
+      setSelectedCADArchive(null);
+      setViewMode('video');
+      setSelectedDevice(null);
+      setShowDeviceDetail(false);
+    }
+  }, [selectedArea, areas, flattenAreas]);
+
+  // 视图模式切换处理
+  const handleViewModeToggle = () => {
+    setViewMode(prev => prev === 'video' ? '3d' : 'video');
+  };
+
+  // 设备点击处理
+  const handleDeviceClick = (deviceId: string, deviceData: any) => {
+    setSelectedDevice(deviceData);
+    setShowDeviceDetail(true);
+  };
+
   return (
     <div className="h-screen flex flex-col bg-[#0a0e1a] overflow-hidden">
       {/* 主内容区域 */}
@@ -290,10 +358,34 @@ export function MonitoringPage() {
         {/* 中间面板 - 场景区域图 */}
         <div className="flex-1 flex flex-col gap-2 overflow-hidden">
           <div className="flex-1 bg-gradient-to-br from-[#1a1f35] to-[#0f1321] rounded-lg border border-blue-500/30 p-3 overflow-hidden flex flex-col">
-            <h3 className="text-sm font-bold text-white mb-2 flex-shrink-0">场景区域图</h3>
+            <div className="flex items-center justify-between mb-2 flex-shrink-0">
+              <h3 className="text-sm font-bold text-white">
+                {viewMode === 'video' ? '场景区域图' : `3D场景 - ${selectedCADArchive?.name || '未知'}`}
+              </h3>
+              <button
+                onClick={handleViewModeToggle}
+                className={`px-3 py-1 rounded text-xs transition-colors ${
+                  viewMode === '3d'
+                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+                    : 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                }`}
+              >
+                {viewMode === 'video' ? '切换到3D场景' : '返回视频监控'}
+              </button>
+            </div>
             
+            <AnimatePresence mode="wait">
+            {/* 视频监控视图 */}
+            {viewMode === 'video' && (
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.3 }}
+                className="flex-1"
+              >
             {/* 摄像头网格 */}
-            <div className="flex-1 grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
+            <div className="h-full grid grid-cols-4 grid-rows-4 gap-1 overflow-hidden">
               {displayCameras.map((camera, index) => (
                 <div
                   key={camera.id}
@@ -337,6 +429,46 @@ export function MonitoringPage() {
                 </div>
               ))}
             </div>
+              </motion.div>
+            )}
+            </AnimatePresence>
+
+            {/* 3D场景视图 */}
+            {viewMode === '3d' && selectedCADArchive?.sceneConfig && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+                className="flex-1 relative"
+              >
+                <SceneViewer
+                  sceneConfig={selectedCADArchive.sceneConfig}
+                  onDeviceClick={handleDeviceClick}
+                  onHoverDevice={(deviceId, deviceData) => {
+                    // 处理设备悬停
+                  }}
+                  className="w-full h-full"
+                />
+              </motion.div>
+            )}
+
+            {/* 无CAD档案提示 */}
+            {viewMode === '3d' && !selectedCADArchive?.sceneConfig && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="flex-1 flex items-center justify-center"
+              >
+                <div className="text-center">
+                  <Box className="w-16 h-16 mx-auto mb-4 text-cyan-400/50" />
+                  <div className="text-gray-400 text-sm mb-2">当前区域暂无3D场景</div>
+                  <div className="text-gray-500 text-xs">请先在档案管理中上传该区域的CAD图纸</div>
+                </div>
+              </motion.div>
+            )}
           </div>
 
           {/* 底部工具栏 */}
@@ -442,6 +574,89 @@ export function MonitoringPage() {
             查看全部报警信息
           </button>
         </div>
+        {/* 设备详情面板 */}
+        {showDeviceDetail && selectedDevice && (
+          <div className="w-64 bg-gradient-to-br from-[#1a1f35] to-[#0f1321] rounded-lg border border-cyan-500/30 p-3 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
+              <h3 className="text-sm font-bold text-white">设备详情</h3>
+              <button
+                onClick={() => setShowDeviceDetail(false)}
+                className="p-1 hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X className="w-4 h-4 text-gray-400" />
+              </button>
+            </div>
+
+            {/* 设备信息 */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3">
+              {/* 设备名称 */}
+              <div>
+                <p className="text-xs text-gray-400 mb-1">设备名称</p>
+                <p className="text-white font-medium">{selectedDevice.name || '未知'}</p>
+              </div>
+
+              {/* 设备类型 */}
+              <div>
+                <p className="text-xs text-gray-400 mb-1">设备类型</p>
+                <p className="text-white">{selectedDevice.type || '未知'}</p>
+              </div>
+
+              {/* 设备型号 */}
+              {selectedDevice.model && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">设备型号</p>
+                  <p className="text-white">{selectedDevice.model}</p>
+                </div>
+              )}
+
+              {/* 序列号 */}
+              {selectedDevice.serialNumber && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">序列号</p>
+                  <p className="text-white font-mono text-sm">{selectedDevice.serialNumber}</p>
+                </div>
+              )}
+
+              {/* 关联传感器 */}
+              {selectedDevice.sensors && selectedDevice.sensors.length > 0 && (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">关联传感器</p>
+                  <div className="space-y-1">
+                    {selectedDevice.sensors.map((sensor, index) => (
+                      <div
+                        key={index}
+                        className="bg-white/5 border border-white/10 rounded p-2"
+                      >
+                        <p className="text-xs text-white">{sensor.name || '未知传感器'}</p>
+                        {sensor.value !== undefined && (
+                          <p className="text-[10px] text-gray-400">数值: {sensor.value}</p>
+                        )}
+                        {sensor.status && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className={`w-2 h-2 rounded-full ${
+                              sensor.status === 'normal' ? 'bg-green-500' : 'bg-red-500'
+                            }`} />
+                            <span className="text-[10px] text-gray-500">{sensor.status}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 操作按钮 */}
+            <div className="mt-3 space-y-2 flex-shrink-0">
+              <button
+                onClick={() => setShowDeviceDetail(false)}
+                className="w-full py-2 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 rounded text-xs text-cyan-300 transition-colors"
+              >
+                查看完整设备信息
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 1. 分屏切换弹窗 */}
