@@ -54,6 +54,22 @@ builder.Services.AddScoped<IoTPlatform.Services.IMonitoringService, IoTPlatform.
 builder.Services.AddScoped<IoTPlatform.Services.IAlertService, IoTPlatform.Services.AlertService>();
 builder.Services.AddScoped<IoTPlatform.Services.IWorkOrderService, IoTPlatform.Services.WorkOrderService>();
 builder.Services.AddScoped<IoTPlatform.Services.IAnalyticsService, IoTPlatform.Services.AnalyticsService>();
+// 辅助功能模块服务
+builder.Services.AddScoped<IoTPlatform.Services.IArchiveService, IoTPlatform.Services.ArchiveService>();
+builder.Services.AddScoped<IoTPlatform.Services.ILogService, IoTPlatform.Services.LogService>();
+builder.Services.AddScoped<IoTPlatform.Services.IDictionaryService, IoTPlatform.Services.DictionaryService>();
+builder.Services.AddScoped<IoTPlatform.Services.ISettingsService, IoTPlatform.Services.SettingsService>();
+
+// 高级功能模块服务
+builder.Services.AddScoped<IoTPlatform.Services.IProtocolConfigService, IoTPlatform.Services.ProtocolConfigService>();
+builder.Services.AddScoped<IoTPlatform.Services.IDataRuleService, IoTPlatform.Services.DataRuleService>();
+builder.Services.AddScoped<IoTPlatform.Services.IETLTaskService, IoTPlatform.Services.ETLTaskService>();
+builder.Services.AddScoped<IoTPlatform.Services.IDataCollectionService, IoTPlatform.Services.DataCollectionService>();
+builder.Services.AddSingleton<IoTPlatform.Services.IMqttClientService, IoTPlatform.Services.MqttClientService>();
+builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();
+
+// 配置SignalR
+builder.Services.AddSignalR();
 
 // 配置CORS
 builder.Services.AddCors(options =>
@@ -159,5 +175,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// 配置SignalR
+app.MapHub<DeviceHub>("/hubs/device");
 
 app.Run();
