@@ -46,6 +46,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // 注册服务
 builder.Services.AddScoped<IoTPlatform.Services.IAuthService, IoTPlatform.Services.AuthService>();
+builder.Services.AddScoped<IoTPlatform.Services.IUserService, IoTPlatform.Services.UserService>();
+builder.Services.AddScoped<IoTPlatform.Services.IRoleService, IoTPlatform.Services.RoleService>();
+builder.Services.AddScoped<IoTPlatform.Services.IAreaService, IoTPlatform.Services.AreaService>();
+builder.Services.AddScoped<IoTPlatform.Services.IDeviceService, IoTPlatform.Services.DeviceService>();
+builder.Services.AddScoped<IoTPlatform.Services.IMonitoringService, IoTPlatform.Services.MonitoringService>();
+builder.Services.AddScoped<IoTPlatform.Services.IAlertService, IoTPlatform.Services.AlertService>();
+builder.Services.AddScoped<IoTPlatform.Services.IWorkOrderService, IoTPlatform.Services.WorkOrderService>();
+builder.Services.AddScoped<IoTPlatform.Services.IAnalyticsService, IoTPlatform.Services.AnalyticsService>();
 
 // 配置CORS
 builder.Services.AddCors(options =>
