@@ -1,0 +1,21 @@
+{
+  "name": "iot-backend",
+  "leadAgentId": "9f546895a72a441b905d9e853036b94c",
+  "workspacePath": "g:/IoTPlatform",
+  "createdAt": "2026-03-26T11:09:31.081Z",
+  "options": {
+    "workspacePath": "g:/IoTPlatform"
+  },
+  "members": [
+    {
+      "memberId": "team-lead@iot-backend",
+      "name": "team-lead",
+      "role": "Team Lead - coordinates the team and interacts with the user"
+    },
+    {
+      "memberId": "models-agent-1@iot-backend",
+      "name": "models-agent-1",
+      "role": "创建Models实体类(1)"
+    }
+  ]
+}
