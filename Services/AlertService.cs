@@ -1,22 +1,34 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.DTOs;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
-using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 告警服务实现
+/// 告警服务实现（使用仓储模式）
 /// </summary>
 public class AlertService : IAlertService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IAlertRecordRepository _alertRecordRepository;
+    private readonly IDeviceRepository _deviceRepository;
+    private readonly IAreaRepository _areaRepository;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public AlertService(AppDbContext dbContext)
+    public AlertService(
+        IAlertRecordRepository alertRecordRepository,
+        IDeviceRepository deviceRepository,
+        IAreaRepository areaRepository,
+        IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
-        _dbContext = dbContext;
+        _alertRecordRepository = alertRecordRepository;
+        _deviceRepository = deviceRepository;
+        _areaRepository = areaRepository;
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     /// <summary>
@@ -24,70 +36,12 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<PagedResponse<AlertDto>> GetAlertsAsync(int page, int pageSize, string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.AlertRecords
-            .Include(a => a.Device)
-            .Include(a => a.Area)
-            .AsQueryable();
-
-        // 租户过滤
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        // 区域权限过滤
-        if (allowedAreaIds != null && allowedAreaIds.Count > 0)
-        {
-            query = query.Where(a => a.AreaId == null || allowedAreaIds.Contains(a.AreaId.Value));
-        }
-
-        // 状态过滤
-        if (!string.IsNullOrEmpty(status))
-        {
-            query = query.Where(a => a.Status == status);
-        }
-
-        // 级别过滤
-        if (!string.IsNullOrEmpty(level))
-        {
-            query = query.Where(a => a.Level == level);
-        }
-
-        // 类型过滤
-        if (!string.IsNullOrEmpty(alertType))
-        {
-            query = query.Where(a => a.AlertType == alertType);
-        }
-
-        var totalCount = await query.CountAsync();
-        var alerts = await query
-            .OrderByDescending(a => a.AlertTime)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(a => new AlertDto
-            {
-                Id = a.Id,
-                AlertNo = a.AlertNo,
-                DeviceName = a.DeviceName,
-                DeviceCode = a.DeviceCode,
-                Area = a.Area,
-                AlertType = a.AlertType,
-                Level = a.Level,
-                Value = a.Value,
-                Threshold = a.Threshold,
-                AlertTime = a.AlertTime,
-                Status = a.Status,
-                Assignee = a.Assignee,
-                ResolveTime = a.ResolveTime,
-                Remark = a.Remark,
-                DeviceId = a.DeviceId,
-                AreaId = a.AreaId,
-                CreatedAt = a.CreatedAt,
-                UpdatedAt = a.UpdatedAt
-            })
-            .ToListAsync();
-
-        return PagedResponse<AlertDto>.Create(alerts, totalCount, page, pageSize);
+        var result = await _alertRecordRepository.GetAlertsWithDetailsAsync(
+            status, level, alertType, appCode, allowedAreaIds, page, pageSize);
+        
+        var alertDtos = _mapper.Map<List<AlertDto>>(result.Data);
+        
+        return PagedResponse<AlertDto>.Create(alertDtos, result.TotalCount, page, pageSize);
     }
 
     /// <summary>
@@ -95,47 +49,8 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto?> GetAlertAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.AlertRecords
-            .Include(a => a.Device)
-            .Include(a => a.Area)
-            .AsQueryable();
-
-        // 租户过滤
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        // 区域权限过滤
-        if (allowedAreaIds != null && allowedAreaIds.Count > 0)
-        {
-            query = query.Where(a => a.AreaId == null || allowedAreaIds.Contains(a.AreaId.Value));
-        }
-
-        var alert = await query.FirstOrDefaultAsync(a => a.Id == id);
-        if (alert == null) return null;
-
-        return new AlertDto
-        {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
+        var alert = await _alertRecordRepository.GetAlertWithDetailsAsync(id, appCode, allowedAreaIds);
+        return _mapper.Map<AlertDto?>(alert);
     }
 
     /// <summary>
@@ -143,52 +58,42 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto> CreateAlertAsync(CreateAlertRequest request)
     {
-        // 生成告警编号
-        var alertNo = $"ALT{DateTime.UtcNow:yyyyMMddHHmmss}";
-
-        var alert = new AlertRecord
+        try
         {
-            AlertNo = alertNo,
-            DeviceName = request.DeviceName,
-            DeviceCode = request.DeviceCode,
-            Area = request.Area,
-            AlertType = request.AlertType,
-            Level = request.Level,
-            Value = request.Value,
-            Threshold = request.Threshold,
-            AlertTime = DateTime.UtcNow,
-            Status = "pending",
-            Remark = request.Remark,
-            DeviceId = request.DeviceId,
-            AreaId = request.AreaId,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        };
+            await _unitOfWork.BeginTransactionAsync();
+            
+            // 生成告警编号
+            var alertNo = $"ALT{DateTime.UtcNow:yyyyMMddHHmmss}";
 
-        _dbContext.AlertRecords.Add(alert);
-        await _dbContext.SaveChangesAsync();
+            var alert = new AlertRecord
+            {
+                AlertNo = alertNo,
+                DeviceName = request.DeviceName,
+                DeviceCode = request.DeviceCode,
+                Area = request.Area,
+                AlertType = request.AlertType,
+                Level = request.Level,
+                Value = request.Value,
+                Threshold = request.Threshold,
+                AlertTime = DateTime.UtcNow,
+                Status = "pending",
+                Remark = request.Remark,
+                DeviceId = request.DeviceId,
+                AreaId = request.AreaId,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
 
-        return new AlertDto
+            await _alertRecordRepository.AddAsync(alert);
+            await _unitOfWork.CommitAsync();
+
+            return _mapper.Map<AlertDto>(alert);
+        }
+        catch
         {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
+            await _unitOfWork.RollbackAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -196,71 +101,52 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto> ProcessAlertAsync(long id, ProcessAlertRequest request)
     {
-        var alert = await _dbContext.AlertRecords.FindAsync(id);
-        if (alert == null)
+        try
         {
-            throw new InvalidOperationException("告警不存在");
+            await _unitOfWork.BeginTransactionAsync();
+            
+            var alert = await _alertRecordRepository.GetByIdAsync(id);
+            if (alert == null)
+            {
+                throw new InvalidOperationException("告警不存在");
+            }
+
+            var operatorName = "System"; // 可以从JWT获取
+
+            // 更新告警状态
+            switch (request.Action.ToLower())
+            {
+                case "assign":
+                    alert.Status = "processing";
+                    break;
+                case "process":
+                    alert.Status = "processing";
+                    break;
+                case "resolve":
+                    alert.Status = "resolved";
+                    alert.ResolveTime = DateTime.UtcNow;
+                    break;
+                case "ignore":
+                    alert.Status = "ignored";
+                    alert.ResolveTime = DateTime.UtcNow;
+                    break;
+                case "remark":
+                    // 不改变状态
+                    break;
+            }
+
+            alert.UpdatedAt = DateTime.UtcNow;
+            
+            await _alertRecordRepository.UpdateAsync(alert);
+            await _unitOfWork.CommitAsync();
+
+            return _mapper.Map<AlertDto>(alert);
         }
-
-        var operatorName = "System"; // 可以从JWT获取
-
-        // 记录处理日志
-        var log = new AlertProcessLog
+        catch
         {
-            AlertId = id,
-            Operator = operatorName,
-            Action = request.Action,
-            Comment = request.Comment,
-            CreatedAt = DateTime.UtcNow
-        };
-        _dbContext.AlertProcessLogs.Add(log);
-
-        // 更新告警状态
-        switch (request.Action.ToLower())
-        {
-            case "assign":
-                alert.Status = "processing";
-                break;
-            case "process":
-                alert.Status = "processing";
-                break;
-            case "resolve":
-                alert.Status = "resolved";
-                alert.ResolveTime = DateTime.UtcNow;
-                break;
-            case "ignore":
-                alert.Status = "ignored";
-                alert.ResolveTime = DateTime.UtcNow;
-                break;
-            case "remark":
-                // 不改变状态
-                break;
+            await _unitOfWork.RollbackAsync();
+            throw;
         }
-
-        alert.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
-
-        return new AlertDto
-        {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
     }
 
     /// <summary>
@@ -268,39 +154,30 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto> AssignAlertAsync(long id, string assignee)
     {
-        var alert = await _dbContext.AlertRecords.FindAsync(id);
-        if (alert == null)
+        try
         {
-            throw new InvalidOperationException("告警不存在");
+            await _unitOfWork.BeginTransactionAsync();
+            
+            var alert = await _alertRecordRepository.GetByIdAsync(id);
+            if (alert == null)
+            {
+                throw new InvalidOperationException("告警不存在");
+            }
+
+            alert.Status = "processing";
+            alert.Assignee = assignee;
+            alert.UpdatedAt = DateTime.UtcNow;
+
+            await _alertRecordRepository.UpdateAsync(alert);
+            await _unitOfWork.CommitAsync();
+
+            return _mapper.Map<AlertDto>(alert);
         }
-
-        alert.Status = "processing";
-        alert.Assignee = assignee;
-        alert.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync();
-
-        return new AlertDto
+        catch
         {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
+            await _unitOfWork.RollbackAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -308,40 +185,31 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto> ResolveAlertAsync(long id, string? remark)
     {
-        var alert = await _dbContext.AlertRecords.FindAsync(id);
-        if (alert == null)
+        try
         {
-            throw new InvalidOperationException("告警不存在");
+            await _unitOfWork.BeginTransactionAsync();
+            
+            var alert = await _alertRecordRepository.GetByIdAsync(id);
+            if (alert == null)
+            {
+                throw new InvalidOperationException("告警不存在");
+            }
+
+            alert.Status = "resolved";
+            alert.ResolveTime = DateTime.UtcNow;
+            alert.Remark = remark;
+            alert.UpdatedAt = DateTime.UtcNow;
+
+            await _alertRecordRepository.UpdateAsync(alert);
+            await _unitOfWork.CommitAsync();
+
+            return _mapper.Map<AlertDto>(alert);
         }
-
-        alert.Status = "resolved";
-        alert.ResolveTime = DateTime.UtcNow;
-        alert.Remark = remark;
-        alert.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync();
-
-        return new AlertDto
+        catch
         {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
+            await _unitOfWork.RollbackAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -349,40 +217,31 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertDto> IgnoreAlertAsync(long id, string? remark)
     {
-        var alert = await _dbContext.AlertRecords.FindAsync(id);
-        if (alert == null)
+        try
         {
-            throw new InvalidOperationException("告警不存在");
+            await _unitOfWork.BeginTransactionAsync();
+            
+            var alert = await _alertRecordRepository.GetByIdAsync(id);
+            if (alert == null)
+            {
+                throw new InvalidOperationException("告警不存在");
+            }
+
+            alert.Status = "ignored";
+            alert.ResolveTime = DateTime.UtcNow;
+            alert.Remark = remark;
+            alert.UpdatedAt = DateTime.UtcNow;
+
+            await _alertRecordRepository.UpdateAsync(alert);
+            await _unitOfWork.CommitAsync();
+
+            return _mapper.Map<AlertDto>(alert);
         }
-
-        alert.Status = "ignored";
-        alert.ResolveTime = DateTime.UtcNow;
-        alert.Remark = remark;
-        alert.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync();
-
-        return new AlertDto
+        catch
         {
-            Id = alert.Id,
-            AlertNo = alert.AlertNo,
-            DeviceName = alert.DeviceName,
-            DeviceCode = alert.DeviceCode,
-            Area = alert.Area,
-            AlertType = alert.AlertType,
-            Level = alert.Level,
-            Value = alert.Value,
-            Threshold = alert.Threshold,
-            AlertTime = alert.AlertTime,
-            Status = alert.Status,
-            Assignee = alert.Assignee,
-            ResolveTime = alert.ResolveTime,
-            Remark = alert.Remark,
-            DeviceId = alert.DeviceId,
-            AreaId = alert.AreaId,
-            CreatedAt = alert.CreatedAt,
-            UpdatedAt = alert.UpdatedAt
-        };
+            await _unitOfWork.RollbackAsync();
+            throw;
+        }
     }
 
     /// <summary>
@@ -390,19 +249,8 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<List<AlertProcessLogDto>> GetAlertLogsAsync(long alertId)
     {
-        return await _dbContext.AlertProcessLogs
-            .Where(l => l.AlertId == alertId)
-            .OrderByDescending(l => l.CreatedAt)
-            .Select(l => new AlertProcessLogDto
-            {
-                Id = l.Id,
-                AlertId = l.AlertId,
-                Operator = l.Operator,
-                Action = l.Action,
-                Comment = l.Comment,
-                CreatedAt = l.CreatedAt
-            })
-            .ToListAsync();
+        var logs = await _alertRecordRepository.GetAlertLogsAsync(alertId);
+        return _mapper.Map<List<AlertProcessLogDto>>(logs);
     }
 
     /// <summary>
@@ -410,51 +258,19 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime, DateTime? endTime, string? appCode)
     {
-        var query = _dbContext.AlertRecords.AsQueryable();
-
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        if (startTime.HasValue)
-        {
-            query = query.Where(a => a.AlertTime >= startTime.Value);
-        }
-        if (endTime.HasValue)
-        {
-            query = query.Where(a => a.AlertTime <= endTime.Value);
-        }
-
-        var totalAlerts = await query.CountAsync();
-        var pendingAlerts = await query.CountAsync(a => a.Status == "pending");
-        var processingAlerts = await query.CountAsync(a => a.Status == "processing");
-        var resolvedAlerts = await query.CountAsync(a => a.Status == "resolved");
-        var ignoredAlerts = await query.CountAsync(a => a.Status == "ignored");
-        var criticalAlerts = await query.CountAsync(a => a.Level == "critical");
-        var warningAlerts = await query.CountAsync(a => a.Level == "warning");
-        var infoAlerts = await query.CountAsync(a => a.Level == "info");
-
-        var alertsByType = new Dictionary<string, int>();
-        var typeGroups = await query.GroupBy(a => a.AlertType)
-            .Select(g => new { Type = g.Key, Count = g.Count() })
-            .ToListAsync();
-        foreach (var group in typeGroups)
-        {
-            alertsByType[group.Type] = group.Count;
-        }
-
+        var summary = await _alertRecordRepository.GetAlertSummaryAsync(startTime, endTime, appCode);
+        
         return new AlertSummaryDto
         {
-            TotalAlerts = totalAlerts,
-            PendingAlerts = pendingAlerts,
-            ProcessingAlerts = processingAlerts,
-            ResolvedAlerts = resolvedAlerts,
-            IgnoredAlerts = ignoredAlerts,
-            CriticalAlerts = criticalAlerts,
-            WarningAlerts = warningAlerts,
-            InfoAlerts = infoAlerts,
-            AlertsByType = alertsByType
+            TotalAlerts = summary.TotalAlerts,
+            PendingAlerts = summary.PendingAlerts,
+            ProcessingAlerts = summary.ProcessingAlerts,
+            ResolvedAlerts = summary.ResolvedAlerts,
+            IgnoredAlerts = summary.IgnoredAlerts,
+            CriticalAlerts = summary.CriticalAlerts,
+            WarningAlerts = summary.WarningAlerts,
+            InfoAlerts = summary.InfoAlerts,
+            AlertsByType = summary.AlertsByType
         };
     }
 
@@ -463,37 +279,49 @@ public class AlertService : IAlertService
     /// </summary>
     public async Task CheckAlertRulesAsync(DeviceDataRecord data)
     {
-        // TODO: 实现告警规则引擎
-        // 1. 根据设备类型和传感器配置获取告警规则
-        // 2. 检查传感器数据是否超过阈值
-        // 3. 如果超过阈值，创建告警记录
-        // 4. 通过SignalR推送告警通知
-
-        // 示例：温度告警
-        if (data.Temperature.HasValue && data.Temperature.Value > 35)
+        try
         {
-            var alert = new AlertRecord
+            await _unitOfWork.BeginTransactionAsync();
+
+            // TODO: 实现告警规则引擎
+            // 1. 根据设备类型和传感器配置获取告警规则
+            // 2. 检查传感器数据是否超过阈值
+            // 3. 如果超过阈值，创建告警记录
+            // 4. 通过SignalR推送告警通知
+
+            // 示例：温度告警
+            if (data.Temperature.HasValue && data.Temperature.Value > 35)
             {
-                AlertNo = $"ALT{DateTime.UtcNow:yyyyMMddHHmmss}",
-                DeviceName = data.Device?.Name ?? "未知设备",
-                DeviceCode = data.Device?.SerialNumber,
-                AlertType = "temperature",
-                Level = data.Temperature.Value > 40 ? "critical" : "warning",
-                Value = data.Temperature.Value,
-                Threshold = 35.0,
-                AlertTime = DateTime.UtcNow,
-                Status = "pending",
-                DeviceId = data.DeviceId,
-                AreaId = data.Device?.AreaId,
-                AppCode = data.AppCode
-            };
+                var alert = new AlertRecord
+                {
+                    AlertNo = $"ALT{DateTime.UtcNow:yyyyMMddHHmmss}",
+                    DeviceName = data.Device?.Name ?? "未知设备",
+                    DeviceCode = data.Device?.SerialNumber,
+                    AlertType = "temperature",
+                    Level = data.Temperature.Value > 40 ? "critical" : "warning",
+                    Value = data.Temperature.Value,
+                    Threshold = 35.0,
+                    AlertTime = DateTime.UtcNow,
+                    Status = "pending",
+                    DeviceId = data.DeviceId,
+                    AreaId = data.Device?.AreaId,
+                    AppCode = data.AppCode
+                };
 
-            _dbContext.AlertRecords.Add(alert);
-            await _dbContext.SaveChangesAsync();
+                await _alertRecordRepository.AddAsync(alert);
+                await _unitOfWork.CommitAsync();
 
-            // TODO: SignalR推送告警
+                // TODO: SignalR推送告警
+            }
+
+            // 可以添加更多告警规则...
+
+            await _unitOfWork.CommitAsync();
         }
-
-        // 可以添加更多告警规则...
+        catch
+        {
+            await _unitOfWork.RollbackAsync();
+            throw;
+        }
     }
 }

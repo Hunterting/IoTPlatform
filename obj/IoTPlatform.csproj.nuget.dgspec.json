@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "g:\\IoTPlatform\\IoTPlatform.csproj": {}
+    "G:\\IoTPlatform\\IoTPlatform.csproj": {}
   },
   "projects": {
-    "g:\\IoTPlatform\\IoTPlatform.csproj": {
+    "G:\\IoTPlatform\\IoTPlatform.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "g:\\IoTPlatform\\IoTPlatform.csproj",
+        "projectUniqueName": "G:\\IoTPlatform\\IoTPlatform.csproj",
         "projectName": "IoTPlatform",
-        "projectPath": "g:\\IoTPlatform\\IoTPlatform.csproj",
+        "projectPath": "G:\\IoTPlatform\\IoTPlatform.csproj",
         "packagesPath": "C:\\Users\\HEyiz\\.nuget\\packages\\",
-        "outputPath": "g:\\IoTPlatform\\obj\\",
+        "outputPath": "G:\\IoTPlatform\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages",
@@ -55,6 +55,10 @@
               "target": "Package",
               "version": "[12.0.1, )"
             },
+            "BCrypt.Net-Next": {
+              "target": "Package",
+              "version": "[4.0.3, )"
+            },
             "FluentValidation.AspNetCore": {
               "target": "Package",
               "version": "[11.3.0, )"
@@ -88,6 +92,14 @@
             "Serilog.AspNetCore": {
               "target": "Package",
               "version": "[8.0.3, )"
+            },
+            "Serilog.Sinks.Console": {
+              "target": "Package",
+              "version": "[5.0.1, )"
+            },
+            "Serilog.Sinks.File": {
+              "target": "Package",
+              "version": "[5.0.0, )"
             },
             "StackExchange.Redis": {
               "target": "Package",

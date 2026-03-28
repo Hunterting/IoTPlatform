@@ -1,22 +1,28 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 角色服务实现
+/// 角色服务实现（使用仓储模式）
 /// </summary>
 public class RoleService : IRoleService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IRoleRepository _roleRepository;
+    private readonly IUserRepository _userRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public RoleService(AppDbContext dbContext)
+    public RoleService(
+        IRoleRepository roleRepository,
+        IUserRepository userRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _roleRepository = roleRepository;
+        _userRepository = userRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -24,13 +30,10 @@ public class RoleService : IRoleService
     /// </summary>
     public async Task<PagedResponse<RoleDto>> GetRolesAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.Roles.AsQueryable();
-
         // 超级管理员可以查看所有角色，其他角色只能查看所属租户的角色
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(r => r.AppCode == appCode || r.AppCode == null);
-        }
+        var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
+
+        var query = _roleRepository.GetQueryable(queryAppCode);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -45,23 +48,25 @@ public class RoleService : IRoleService
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(r => new RoleDto
-            {
-                Id = r.Id,
-                Code = r.Code,
-                Name = r.Name,
-                Description = r.Description,
-                Permissions = r.Permissions,
-                PermissionList = ParsePermissions(r.Permissions),
-                DataScope = r.DataScope,
-                AppCode = r.AppCode,
-                IsSystem = r.IsSystem,
-                CreatedAt = r.CreatedAt,
-                UpdatedAt = r.UpdatedAt
-            })
             .ToListAsync();
 
-        return PagedResponse<RoleDto>.Create(roles, totalCount, page, pageSize);
+        // 转换为DTO
+        var roleDtos = roles.Select(r => new RoleDto
+        {
+            Id = r.Id,
+            Code = r.Code,
+            Name = r.Name,
+            Description = r.Description,
+            Permissions = r.Permissions,
+            PermissionList = ParsePermissions(r.Permissions),
+            DataScope = r.DataScope,
+            AppCode = r.AppCode,
+            IsSystem = r.IsSystem,
+            CreatedAt = r.CreatedAt,
+            UpdatedAt = r.UpdatedAt
+        }).ToList();
+
+        return PagedResponse<RoleDto>.Create(roleDtos, totalCount, page, pageSize);
     }
 
     /// <summary>
@@ -69,15 +74,9 @@ public class RoleService : IRoleService
     /// </summary>
     public async Task<RoleDto?> GetRoleAsync(long id, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.Roles.AsQueryable();
+        var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
 
-        // 权限过滤
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(r => r.AppCode == appCode || r.AppCode == null);
-        }
-
-        var role = await query.FirstOrDefaultAsync(r => r.Id == id);
+        var role = await _roleRepository.GetByIdAsync(id, appCode: queryAppCode);
         if (role == null) return null;
 
         return new RoleDto
@@ -102,7 +101,7 @@ public class RoleService : IRoleService
     public async Task<RoleDto> CreateRoleAsync(CreateRoleRequest request)
     {
         // 检查角色代码是否已存在
-        var exists = await _dbContext.Roles.AnyAsync(r => r.Code == request.Code);
+        var exists = await _roleRepository.CodeExistsAsync(request.Code);
         if (exists)
         {
             throw new InvalidOperationException("角色代码已存在");
@@ -126,8 +125,8 @@ public class RoleService : IRoleService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Roles.Add(role);
-        await _dbContext.SaveChangesAsync();
+        await _roleRepository.AddAsync(role);
+        await _unitOfWork.SaveChangesAsync();
 
         return new RoleDto
         {
@@ -150,7 +149,7 @@ public class RoleService : IRoleService
     /// </summary>
     public async Task<RoleDto> UpdateRoleAsync(long id, UpdateRoleRequest request, string? appCode, string? currentUserRole)
     {
-        var role = await _dbContext.Roles.FindAsync(id);
+        var role = await _roleRepository.GetByIdAsync(id);
         if (role == null)
         {
             throw new InvalidOperationException("角色不存在");
@@ -179,7 +178,8 @@ public class RoleService : IRoleService
             role.Permissions = JsonSerializer.Serialize(request.Permissions);
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _roleRepository.UpdateAsync(role);
+        await _unitOfWork.SaveChangesAsync();
 
         return new RoleDto
         {
@@ -202,7 +202,7 @@ public class RoleService : IRoleService
     /// </summary>
     public async Task DeleteRoleAsync(long id, string? appCode, string? currentUserRole)
     {
-        var role = await _dbContext.Roles.FindAsync(id);
+        var role = await _roleRepository.GetByIdAsync(id);
         if (role == null)
         {
             throw new InvalidOperationException("角色不存在");
@@ -221,14 +221,14 @@ public class RoleService : IRoleService
         }
 
         // 检查是否有用户使用该角色
-        var hasUsers = await _dbContext.Users.AnyAsync(u => u.Role == role.Code);
+        var hasUsers = await _userRepository.ExistsAsync(u => u.Role == role.Code);
         if (hasUsers)
         {
             throw new InvalidOperationException("角色已被用户使用，无法删除");
         }
 
-        _dbContext.Roles.Remove(role);
-        await _dbContext.SaveChangesAsync();
+        await _roleRepository.DeleteAsync(role);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -236,7 +236,7 @@ public class RoleService : IRoleService
     /// </summary>
     public async Task<List<string>> GetRolePermissionsAsync(long roleId)
     {
-        var role = await _dbContext.Roles.FindAsync(roleId);
+        var role = await _roleRepository.GetByIdAsync(roleId);
         if (role == null)
         {
             throw new InvalidOperationException("角色不存在");

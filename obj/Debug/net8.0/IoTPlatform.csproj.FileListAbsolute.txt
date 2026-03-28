@@ -1,0 +1,9 @@
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.csproj.AssemblyReference.cache
+G:\IoTPlatform\obj\Debug\net8.0\rpswa.dswa.cache.json
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.GeneratedMSBuildEditorConfig.editorconfig
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.AssemblyInfoInputs.cache
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.AssemblyInfo.cs
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.csproj.CoreCompileInputs.cache
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.MvcApplicationPartsAssemblyInfo.cs
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.MvcApplicationPartsAssemblyInfo.cache
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.sourcelink.json

@@ -1,5 +1,9 @@
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Threading.Tasks;
 
 namespace IoTPlatform.Data;
 
@@ -477,5 +481,62 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Category);
             entity.HasIndex(e => e.AppCode);
         });
+    }
+
+        /// <summary>
+        /// 初始化种子数据
+        /// </summary>
+        public async Task SeedDataAsync(IServiceProvider serviceProvider)
+        {
+            try
+            {
+                var logger = serviceProvider.GetRequiredService<ILogger<AppDbContext>>();
+                logger.LogInformation("开始初始化数据库种子数据...");
+
+                // 检查数据库是否已存在数据
+                var hasData = await this.Users.AnyAsync();
+                if (hasData)
+                {
+                    logger.LogInformation("数据库中已有数据，跳过种子数据初始化");
+                    return;
+                }
+
+                // 初始化种子数据
+                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, logger);
+                await seeder.InitializeAllAsync();
+
+                logger.LogInformation("数据库种子数据初始化完成");
+            }
+            catch (Exception ex)
+            {
+                var logger = serviceProvider.GetRequiredService<ILogger<AppDbContext>>();
+                logger.LogError(ex, "初始化种子数据时发生错误");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// 开发环境专用种子数据初始化
+        /// </summary>
+        public async Task SeedDataForDevelopmentAsync(IServiceProvider serviceProvider)
+        {
+            try
+            {
+                var logger = serviceProvider.GetRequiredService<ILogger<AppDbContext>>();
+                logger.LogInformation("开始初始化开发环境数据库种子数据...");
+
+                // 开发环境：清空数据库并重新初始化
+                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, logger);
+                await seeder.InitializeForDevelopmentAsync();
+
+                logger.LogInformation("开发环境数据库种子数据初始化完成");
+            }
+            catch (Exception ex)
+            {
+                var logger = serviceProvider.GetRequiredService<ILogger<AppDbContext>>();
+                logger.LogError(ex, "初始化开发环境种子数据时发生错误");
+                throw;
+            }
+        }
     }
 }

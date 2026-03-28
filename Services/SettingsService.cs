@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
@@ -7,15 +7,19 @@ using Microsoft.EntityFrameworkCore;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 系统设置服务实现
+/// 系统设置服务实现（使用仓储模式）
 /// </summary>
 public class SettingsService : ISettingsService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ISystemSettingRepository _settingsRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public SettingsService(AppDbContext dbContext)
+    public SettingsService(
+        ISystemSettingRepository settingsRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _settingsRepository = settingsRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -23,7 +27,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<PagedResponse<SettingDto>> GetSettingsAsync(int page, int pageSize, string? category, string? keyword, string? appCode)
     {
-        var query = _dbContext.SystemSettings.AsQueryable();
+        var query = _settingsRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -74,15 +78,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<SettingDto?> GetSettingAsync(string key, string? appCode)
     {
-        var query = _dbContext.SystemSettings.AsQueryable();
-
-        // 租户数据隔离
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(s => s.AppCode == appCode);
-        }
-
-        var setting = await query.FirstOrDefaultAsync(s => s.Key == key);
+        var setting = await _settingsRepository.GetByKeyAsync(key, appCode);
         if (setting == null) return null;
 
         return new SettingDto
@@ -104,18 +100,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<Dictionary<string, string?>> GetSettingsByCategoryAsync(string category, string? appCode)
     {
-        var query = _dbContext.SystemSettings.AsQueryable();
-
-        // 租户数据隔离
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(s => s.AppCode == appCode);
-        }
-
-        // 分类筛选
-        query = query.Where(s => s.Category == category);
-
-        var settings = await query.ToListAsync();
+        var settings = await _settingsRepository.GetByCategoryAsync(category, appCode);
         var result = new Dictionary<string, string?>();
 
         foreach (var setting in settings)
@@ -131,9 +116,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<SettingDto> CreateSettingAsync(CreateSettingRequest request)
     {
-        // 检查键是否已存在
-        var exists = await _dbContext.SystemSettings
-            .AnyAsync(s => s.Key == request.Key && s.AppCode == request.AppCode);
+        var exists = await _settingsRepository.KeyExistsAsync(request.Key, request.AppCode);
         if (exists)
         {
             throw new InvalidOperationException("设置键已存在");
@@ -151,8 +134,8 @@ public class SettingsService : ISettingsService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.SystemSettings.Add(setting);
-        await _dbContext.SaveChangesAsync();
+        await _settingsRepository.AddAsync(setting);
+        await _unitOfWork.SaveChangesAsync();
 
         return new SettingDto
         {
@@ -173,8 +156,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<SettingDto> UpdateSettingAsync(string key, UpdateSettingRequest request, string? appCode)
     {
-        var setting = await _dbContext.SystemSettings
-            .FirstOrDefaultAsync(s => s.Key == key && (string.IsNullOrEmpty(appCode) || s.AppCode == appCode));
+        var setting = await _settingsRepository.GetByKeyAsync(key, appCode);
 
         if (setting == null)
         {
@@ -192,7 +174,8 @@ public class SettingsService : ISettingsService
         setting.ValueType = request.ValueType;
         setting.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _settingsRepository.UpdateAsync(setting);
+        await _unitOfWork.SaveChangesAsync();
 
         return new SettingDto
         {
@@ -213,8 +196,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task DeleteSettingAsync(string key, string? appCode)
     {
-        var setting = await _dbContext.SystemSettings
-            .FirstOrDefaultAsync(s => s.Key == key && (string.IsNullOrEmpty(appCode) || s.AppCode == appCode));
+        var setting = await _settingsRepository.GetByKeyAsync(key, appCode);
 
         if (setting == null)
         {
@@ -227,7 +209,7 @@ public class SettingsService : ISettingsService
             throw new UnauthorizedAccessException("无权删除该设置");
         }
 
-        _dbContext.SystemSettings.Remove(setting);
-        await _dbContext.SaveChangesAsync();
+        await _settingsRepository.DeleteAsync(setting);
+        await _unitOfWork.SaveChangesAsync();
     }
 }

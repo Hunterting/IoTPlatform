@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
@@ -8,16 +8,26 @@ using Microsoft.EntityFrameworkCore;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 数据规则服务实现
+/// 数据规则服务实现（使用仓储模式）
 /// </summary>
 public class DataRuleService : IDataRuleService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IDataRuleRepository _dataRuleRepository;
+    private readonly IDeviceRepository _deviceRepository;
+    private readonly IAreaRepository _areaRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly RuleEngine _ruleEngine;
 
-    public DataRuleService(AppDbContext dbContext)
+    public DataRuleService(
+        IDataRuleRepository dataRuleRepository,
+        IDeviceRepository deviceRepository,
+        IAreaRepository areaRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _dataRuleRepository = dataRuleRepository;
+        _deviceRepository = deviceRepository;
+        _areaRepository = areaRepository;
+        _unitOfWork = unitOfWork;
         _ruleEngine = new RuleEngine();
     }
 
@@ -26,10 +36,9 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode)
     {
-        var query = _dbContext.DataRules
+        var query = _dataRuleRepository.Query()
             .Include(d => d.Device)
-            .Include(d => d.Area)
-            .AsQueryable();
+            .Include(d => d.Area);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -87,10 +96,9 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<DataRuleDto?> GetDataRuleAsync(long id, string? appCode)
     {
-        var query = _dbContext.DataRules
+        var query = _dataRuleRepository.Query()
             .Include(d => d.Device)
-            .Include(d => d.Area)
-            .AsQueryable();
+            .Include(d => d.Area);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -146,12 +154,14 @@ public class DataRuleService : IDataRuleService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.DataRules.Add(rule);
-        await _dbContext.SaveChangesAsync();
+        await _dataRuleRepository.AddAsync(rule);
+        await _unitOfWork.SaveChangesAsync();
 
         // 重新加载以包含关联数据
-        await _dbContext.Entry(rule).Reference(d => d.Device).LoadAsync();
-        await _dbContext.Entry(rule).Reference(d => d.Area).LoadAsync();
+        rule = await _dataRuleRepository.Query()
+            .Include(d => d.Device)
+            .Include(d => d.Area)
+            .FirstOrDefaultAsync(d => d.Id == rule.Id);
 
         return new DataRuleDto
         {
@@ -180,7 +190,10 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<DataRuleDto> UpdateDataRuleAsync(long id, UpdateDataRuleRequest request, string? appCode)
     {
-        var rule = await _dbContext.DataRules.Include(d => d.Device).Include(d => d.Area).FirstOrDefaultAsync(d => d.Id == id);
+        var rule = await _dataRuleRepository.Query()
+            .Include(d => d.Device)
+            .Include(d => d.Area)
+            .FirstOrDefaultAsync(d => d.Id == id);
         if (rule == null)
         {
             throw new InvalidOperationException("数据规则不存在");
@@ -203,7 +216,8 @@ public class DataRuleService : IDataRuleService
         rule.Description = request.Description ?? rule.Description;
         rule.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _dataRuleRepository.UpdateAsync(rule);
+        await _unitOfWork.SaveChangesAsync();
 
         return new DataRuleDto
         {
@@ -232,7 +246,7 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task DeleteDataRuleAsync(long id, string? appCode)
     {
-        var rule = await _dbContext.DataRules.FindAsync(id);
+        var rule = await _dataRuleRepository.GetByIdAsync(id);
         if (rule == null)
         {
             throw new InvalidOperationException("数据规则不存在");
@@ -244,8 +258,8 @@ public class DataRuleService : IDataRuleService
             throw new UnauthorizedAccessException("无权删除该数据规则");
         }
 
-        _dbContext.DataRules.Remove(rule);
-        await _dbContext.SaveChangesAsync();
+        await _dataRuleRepository.DeleteAsync(rule);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>

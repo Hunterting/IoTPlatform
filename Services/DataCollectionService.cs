@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -6,22 +6,31 @@ using Serilog;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 数据采集服务实现
+/// 数据采集服务实现（使用仓储模式）
 /// </summary>
 public class DataCollectionService : IDataCollectionService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IRepository<DeviceDataRecord> _dataRecordRepository;
+    private readonly IDataRuleRepository _dataRuleRepository;
+    private readonly IAlertRecordRepository _alertRecordRepository;
     private readonly IDataRuleService _dataRuleService;
     private readonly IAlertService _alertService;
+    private readonly IUnitOfWork _unitOfWork;
 
     public DataCollectionService(
-        AppDbContext dbContext,
+        IRepository<DeviceDataRecord> dataRecordRepository,
+        IDataRuleRepository dataRuleRepository,
+        IAlertRecordRepository alertRecordRepository,
         IDataRuleService dataRuleService,
-        IAlertService alertService)
+        IAlertService alertService,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _dataRecordRepository = dataRecordRepository;
+        _dataRuleRepository = dataRuleRepository;
+        _alertRecordRepository = alertRecordRepository;
         _dataRuleService = dataRuleService;
         _alertService = alertService;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -40,16 +49,17 @@ public class DataCollectionService : IDataCollectionService
                 AppCode = appCode
             };
 
-            _dbContext.DeviceDataRecords.Add(dataRecord);
-            await _dbContext.SaveChangesAsync();
+            await _dataRecordRepository.AddAsync(dataRecord);
+            await _unitOfWork.SaveChangesAsync();
 
             Log.Information("Device data saved: DeviceId={DeviceId}, AppCode={AppCode}", deviceId, appCode);
 
             // 2. 获取活跃的数据规则
-            var activeRules = await _dbContext.DataRules
+            var query = _dataRuleRepository.Query()
                 .Where(r => r.IsActive && r.AppCode == appCode)
-                .Where(r => !r.DeviceId.HasValue || r.DeviceId == deviceId)
-                .ToListAsync();
+                .Where(r => !r.DeviceId.HasValue || r.DeviceId == deviceId);
+
+            var activeRules = await query.ToListAsync();
 
             // 3. 执行规则
             foreach (var rule in activeRules)
@@ -106,7 +116,7 @@ public class DataCollectionService : IDataCollectionService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.AlertRecords.Add(alert);
-        await _dbContext.SaveChangesAsync();
+        await _alertRecordRepository.AddAsync(alert);
+        await _unitOfWork.SaveChangesAsync();
     }
 }

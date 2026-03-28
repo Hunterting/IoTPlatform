@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
@@ -8,15 +8,19 @@ using System.Text.Json;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// ETL任务服务实现
+/// ETL任务服务实现（使用仓储模式）
 /// </summary>
 public class ETLTaskService : IETLTaskService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IETLTaskRepository _etlTaskRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public ETLTaskService(AppDbContext dbContext)
+    public ETLTaskService(
+        IETLTaskRepository etlTaskRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _etlTaskRepository = etlTaskRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -24,7 +28,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task<PagedResponse<ETLTaskDto>> GetETLTasksAsync(int page, int pageSize, string? keyword, string? taskType, string? appCode)
     {
-        var query = _dbContext.ETLTasks.AsQueryable();
+        var query = _etlTaskRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -79,7 +83,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task<ETLTaskDto?> GetETLTaskAsync(long id, string? appCode)
     {
-        var query = _dbContext.ETLTasks.AsQueryable();
+        var query = _etlTaskRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -129,8 +133,8 @@ public class ETLTaskService : IETLTaskService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.ETLTasks.Add(task);
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.AddAsync(task);
+        await _unitOfWork.SaveChangesAsync();
 
         return new ETLTaskDto
         {
@@ -156,7 +160,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task<ETLTaskDto> UpdateETLTaskAsync(long id, UpdateETLTaskRequest request, string? appCode)
     {
-        var task = await _dbContext.ETLTasks.FindAsync(id);
+        var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
         {
             throw new InvalidOperationException("ETL任务不存在");
@@ -177,7 +181,8 @@ public class ETLTaskService : IETLTaskService
         task.Description = request.Description ?? task.Description;
         task.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.UpdateAsync(task);
+        await _unitOfWork.SaveChangesAsync();
 
         return new ETLTaskDto
         {
@@ -203,7 +208,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task DeleteETLTaskAsync(long id, string? appCode)
     {
-        var task = await _dbContext.ETLTasks.FindAsync(id);
+        var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
         {
             throw new InvalidOperationException("ETL任务不存在");
@@ -221,8 +226,8 @@ public class ETLTaskService : IETLTaskService
             throw new InvalidOperationException("任务正在运行，无法删除。请先停止任务。");
         }
 
-        _dbContext.ETLTasks.Remove(task);
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.DeleteAsync(task);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -230,7 +235,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task StartETLTaskAsync(long id, string? appCode)
     {
-        var task = await _dbContext.ETLTasks.FindAsync(id);
+        var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
         {
             throw new InvalidOperationException("ETL任务不存在");
@@ -246,7 +251,8 @@ public class ETLTaskService : IETLTaskService
         task.Status = "active";
         task.NextRunTime = DateTime.UtcNow.AddMinutes(1); // 临时设置
         task.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.UpdateAsync(task);
+        await _unitOfWork.SaveChangesAsync();
 
         // TODO: 这里应该将任务添加到调度队列
     }
@@ -256,7 +262,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task StopETLTaskAsync(long id, string? appCode)
     {
-        var task = await _dbContext.ETLTasks.FindAsync(id);
+        var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
         {
             throw new InvalidOperationException("ETL任务不存在");
@@ -270,7 +276,8 @@ public class ETLTaskService : IETLTaskService
 
         task.Status = "paused";
         task.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.UpdateAsync(task);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -287,6 +294,7 @@ public class ETLTaskService : IETLTaskService
         task.LastRunTime = DateTime.UtcNow;
         task.Status = "completed";
         task.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
+        await _etlTaskRepository.UpdateAsync(task);
+        await _unitOfWork.SaveChangesAsync();
     }
 }

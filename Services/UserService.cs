@@ -1,22 +1,33 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
-using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 用户服务实现
+/// 用户服务实现（使用仓储模式）
 /// </summary>
 public class UserService : IUserService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IUserRepository _userRepository;
+    private readonly ICustomerRepository _customerRepository;
+    private readonly ILogRepository _logRepository;
+    private readonly IWorkOrderRepository _workOrderRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public UserService(AppDbContext dbContext)
+    public UserService(
+        IUserRepository userRepository,
+        ICustomerRepository customerRepository,
+        ILogRepository logRepository,
+        IWorkOrderRepository workOrderRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _userRepository = userRepository;
+        _customerRepository = customerRepository;
+        _logRepository = logRepository;
+        _workOrderRepository = workOrderRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -24,13 +35,15 @@ public class UserService : IUserService
     /// </summary>
     public async Task<PagedResponse<UserDto>> GetUsersAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.Users.Include(u => u.Customer).AsQueryable();
-
-        // 超级管理员可以查看所有用户，其他角色只能查看所属租户的用户
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
+        // 确定查询的appCode
+        var queryAppCode = appCode;
+        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(u => u.AppCode == appCode);
+            queryAppCode = null;
         }
+
+        // 构建查询条件
+        var query = _userRepository.GetQueryable(queryAppCode);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -45,28 +58,41 @@ public class UserService : IUserService
             .OrderByDescending(u => u.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(u => new UserDto
+            .ToListAsync();
+
+        // 转换为DTO
+        var userDtos = new List<UserDto>();
+        foreach (var user in users)
+        {
+            customer? customer = null;
+            if (user.CustomerId.HasValue)
             {
-                Id = u.Id,
-                Name = u.Name,
-                Email = u.Email,
-                Role = u.Role,
-                CustomerId = u.CustomerId,
-                CustomerName = u.Customer != null ? u.Customer.Name : null,
-                AppCode = u.AppCode,
-                Avatar = u.Avatar,
-                AllowedAreaIds = !string.IsNullOrEmpty(u.AllowedAreaIds)
-                    ? u.AllowedAreaIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                customer = await _customerRepository.GetByIdAsync(user.CustomerId.Value);
+            }
+
+            var userDto = new UserDto
+            {
+                Id = user.Id,
+                Name = user.Name,
+                Email = user.Email,
+                Role = user.Role,
+                CustomerId = user.CustomerId,
+                CustomerName = customer?.Name,
+                AppCode = user.AppCode,
+                Avatar = user.Avatar,
+                AllowedAreaIds = !string.IsNullOrEmpty(user.AllowedAreaIds)
+                    ? user.AllowedAreaIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
                         .Select(id => long.Parse(id.Trim()))
                         .ToList()
                     : null,
-                IsActive = u.IsActive,
-                CreatedAt = u.CreatedAt,
-                UpdatedAt = u.UpdatedAt
-            })
-            .ToListAsync();
+                IsActive = user.IsActive,
+                CreatedAt = user.CreatedAt,
+                UpdatedAt = user.UpdatedAt
+            };
+            userDtos.Add(userDto);
+        }
 
-        return PagedResponse<UserDto>.Create(users, totalCount, page, pageSize);
+        return PagedResponse<UserDto>.Create(userDtos, totalCount, page, pageSize);
     }
 
     /// <summary>
@@ -74,24 +100,14 @@ public class UserService : IUserService
     /// </summary>
     public async Task<UserDto?> GetUserAsync(long id, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.Users
-            .Include(u => u.Customer)
-            .AsQueryable();
-
-        // 权限过滤
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
+        var queryAppCode = appCode;
+        if (currentUserRole == Configuration.Roles.SUPER_ADMIN)
         {
-            query = query.Where(u => u.AppCode == appCode);
+            queryAppCode = null;
         }
 
-        var user = await query.FirstOrDefaultAsync(u => u.Id == id);
+        var user = await _userRepository.GetUserDetailsAsync(id, queryAppCode);
         if (user == null) return null;
-
-        // 获取最后登录时间
-        var lastLogin = await _dbContext.LoginLogs
-            .Where(l => l.UserId == id && l.Status == "success")
-            .OrderByDescending(l => l.LoginTime)
-            .FirstOrDefaultAsync();
 
         return new UserDto
         {
@@ -120,7 +136,7 @@ public class UserService : IUserService
     public async Task<UserDto> CreateUserAsync(CreateUserRequest request)
     {
         // 检查邮箱是否已存在
-        var exists = await _dbContext.Users.AnyAsync(u => u.Email == request.Email);
+        var exists = await _userRepository.EmailExistsAsync(request.Email);
         if (exists)
         {
             throw new InvalidOperationException("邮箱已存在");
@@ -130,7 +146,7 @@ public class UserService : IUserService
         Models.Customer? customer = null;
         if (request.CustomerId.HasValue)
         {
-            customer = await _dbContext.Customers.FindAsync(request.CustomerId.Value);
+            customer = await _customerRepository.GetByIdAsync(request.CustomerId.Value);
             if (customer == null)
             {
                 throw new InvalidOperationException("客户不存在");
@@ -155,8 +171,8 @@ public class UserService : IUserService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Users.Add(user);
-        await _dbContext.SaveChangesAsync();
+        await _userRepository.AddAsync(user);
+        await _unitOfWork.SaveChangesAsync();
 
         return new UserDto
         {
@@ -184,7 +200,7 @@ public class UserService : IUserService
     /// </summary>
     public async Task<UserDto> UpdateUserAsync(long id, UpdateUserRequest request, string? appCode, string? currentUserRole)
     {
-        var user = await _dbContext.Users.Include(u => u.Customer).FirstOrDefaultAsync(u => u.Id == id);
+        var user = await _userRepository.GetByIdAsync(id);
         if (user == null)
         {
             throw new InvalidOperationException("用户不存在");
@@ -197,8 +213,7 @@ public class UserService : IUserService
         }
 
         // 检查邮箱是否被其他用户使用
-        var emailExists = await _dbContext.Users
-            .AnyAsync(u => u.Email == request.Email && u.Id != id);
+        var emailExists = await _userRepository.EmailExistsAsync(request.Email, id);
         if (emailExists)
         {
             throw new InvalidOperationException("邮箱已被其他用户使用");
@@ -217,7 +232,15 @@ public class UserService : IUserService
             user.Role = request.Role;
         }
 
-        await _dbContext.SaveChangesAsync();
+        await _userRepository.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 获取客户信息用于DTO
+        Customer? customer = null;
+        if (user.CustomerId.HasValue)
+        {
+            customer = await _customerRepository.GetByIdAsync(user.CustomerId.Value);
+        }
 
         return new UserDto
         {
@@ -226,7 +249,7 @@ public class UserService : IUserService
             Email = user.Email,
             Role = user.Role,
             CustomerId = user.CustomerId,
-            CustomerName = user.Customer?.Name,
+            CustomerName = customer?.Name,
             AppCode = user.AppCode,
             Avatar = user.Avatar,
             AllowedAreaIds = !string.IsNullOrEmpty(user.AllowedAreaIds)
@@ -245,7 +268,7 @@ public class UserService : IUserService
     /// </summary>
     public async Task DeleteUserAsync(long id, string? appCode, string? currentUserRole)
     {
-        var user = await _dbContext.Users.FindAsync(id);
+        var user = await _userRepository.GetByIdAsync(id);
         if (user == null)
         {
             throw new InvalidOperationException("用户不存在");
@@ -258,17 +281,16 @@ public class UserService : IUserService
         }
 
         // 检查是否有关联数据（工单、操作日志等）
-        var hasWorkOrders = await _dbContext.WorkOrders.AnyAsync(w => w.CreatedBy == id);
-        var hasAlertLogs = await _dbContext.AlertProcessLogs.AnyAsync(l => l.ProcessedBy == id);
-        var hasOperationLogs = await _dbContext.OperationLogs.AnyAsync(l => l.UserId == id);
+        var hasWorkOrders = await _workOrderRepository.ExistsAsync(w => w.CreatedBy == id);
+        var hasAlertLogs = await _logRepository.ExistsAsync(l => l.UserId == id);
 
-        if (hasWorkOrders || hasAlertLogs || hasOperationLogs)
+        if (hasWorkOrders || hasAlertLogs)
         {
             throw new InvalidOperationException("用户有关联数据，无法删除");
         }
 
-        _dbContext.Users.Remove(user);
-        await _dbContext.SaveChangesAsync();
+        await _userRepository.DeleteAsync(user);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -276,7 +298,7 @@ public class UserService : IUserService
     /// </summary>
     public async Task ChangePasswordAsync(long id, string oldPassword, string newPassword, string? appCode, string? currentUserRole)
     {
-        var user = await _dbContext.Users.FindAsync(id);
+        var user = await _userRepository.GetByIdAsync(id);
         if (user == null)
         {
             throw new InvalidOperationException("用户不存在");
@@ -292,9 +314,8 @@ public class UserService : IUserService
         }
 
         // 设置新密码
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
-        user.UpdatedAt = DateTime.UtcNow;
-
-        await _dbContext.SaveChangesAsync();
+        var passwordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        await _userRepository.UpdatePasswordAsync(id, passwordHash);
+        await _unitOfWork.SaveChangesAsync();
     }
 }

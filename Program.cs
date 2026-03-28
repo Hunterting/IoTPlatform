@@ -1,5 +1,10 @@
 using System.Text;
 using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Implementations;
+using IoTPlatform.Data.SeedData;
+using IoTPlatform.DTOs.Profiles;
+using IoTPlatform.Hubs;
 using IoTPlatform.Infrastructure.Cache;
 using IoTPlatform.Infrastructure.JWT;
 using IoTPlatform.Infrastructure.Middleware;
@@ -43,6 +48,36 @@ builder.Services.AddDbContext<AppDbContext>(options =>
                 errorNumbersToAdd: null);
         });
 });
+
+// 注册AutoMapper
+builder.Services.AddAutoMapper(typeof(MappingProfile));
+
+// 注册仓储服务
+builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+builder.Services.AddScoped<ICustomerRepository, CustomerRepository>();
+builder.Services.AddScoped<IProjectRepository, ProjectRepository>();
+builder.Services.AddScoped<IAreaRepository, AreaRepository>();
+builder.Services.AddScoped<IDeviceRepository, DeviceRepository>();
+builder.Services.AddScoped<IAlertRecordRepository, AlertRecordRepository>();
+builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
+builder.Services.AddScoped<IArchiveRepository, ArchiveRepository>();
+builder.Services.AddScoped<IDictionaryRepository, DictionaryRepository>();
+builder.Services.AddScoped<ISystemSettingRepository, SystemSettingRepository>();
+builder.Services.AddScoped<ILogRepository, LogRepository>();
+builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
+builder.Services.AddScoped<IDataRuleRepository, DataRuleRepository>();
+builder.Services.AddScoped<IProtocolConfigRepository, ProtocolConfigRepository>();
+builder.Services.AddScoped<IETLTaskRepository, ETLTaskRepository>();
+
+// 注册种子数据服务
+builder.Services.AddScoped<DataSeeder>();
+builder.Services.AddScoped<SeedRoles>();
+builder.Services.AddScoped<SeedUsers>();
+builder.Services.AddScoped<SeedCustomers>();
+builder.Services.AddScoped<SeedDictionaries>();
 
 // 注册服务
 builder.Services.AddScoped<IoTPlatform.Services.IAuthService, IoTPlatform.Services.AuthService>();
@@ -148,6 +183,25 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// 初始化种子数据（如果是首次运行）
+if (app.Environment.IsDevelopment())
+{
+    using (var scope = app.Services.CreateScope())
+    {
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        try
+        {
+            // 使用Task.Run来避免顶级语句中的await问题
+            await Task.Run(async () => await context.SeedDataForDevelopmentAsync(scope.ServiceProvider));
+        }
+        catch (Exception ex)
+        {
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "初始化开发环境种子数据时发生错误");
+        }
+    }
+}
 
 // 配置HTTP请求管道
 

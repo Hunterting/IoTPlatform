@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
@@ -8,15 +8,19 @@ using System.Text.Json;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 协议配置服务实现
+/// 协议配置服务实现（使用仓储模式）
 /// </summary>
 public class ProtocolConfigService : IProtocolConfigService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IProtocolConfigRepository _protocolConfigRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public ProtocolConfigService(AppDbContext dbContext)
+    public ProtocolConfigService(
+        IProtocolConfigRepository protocolConfigRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _protocolConfigRepository = protocolConfigRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -24,7 +28,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode)
     {
-        var query = _dbContext.ProtocolConfigs.AsQueryable();
+        var query = _protocolConfigRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -79,7 +83,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task<ProtocolConfigDto?> GetProtocolConfigAsync(long id, string? appCode)
     {
-        var query = _dbContext.ProtocolConfigs.AsQueryable();
+        var query = _protocolConfigRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -131,8 +135,8 @@ public class ProtocolConfigService : IProtocolConfigService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.ProtocolConfigs.Add(config);
-        await _dbContext.SaveChangesAsync();
+        await _protocolConfigRepository.AddAsync(config);
+        await _unitOfWork.SaveChangesAsync();
 
         return new ProtocolConfigDto
         {
@@ -154,7 +158,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task<ProtocolConfigDto> UpdateProtocolConfigAsync(long id, UpdateProtocolConfigRequest request, string? appCode)
     {
-        var config = await _dbContext.ProtocolConfigs.FindAsync(id);
+        var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
         {
             throw new InvalidOperationException("协议配置不存在");
@@ -178,7 +182,8 @@ public class ProtocolConfigService : IProtocolConfigService
             : config.Config;
         config.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _protocolConfigRepository.UpdateAsync(config);
+        await _unitOfWork.SaveChangesAsync();
 
         return new ProtocolConfigDto
         {
@@ -200,7 +205,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task DeleteProtocolConfigAsync(long id, string? appCode)
     {
-        var config = await _dbContext.ProtocolConfigs.FindAsync(id);
+        var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
         {
             throw new InvalidOperationException("协议配置不存在");
@@ -218,8 +223,8 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议处于活跃状态，无法删除。请先停止协议。");
         }
 
-        _dbContext.ProtocolConfigs.Remove(config);
-        await _dbContext.SaveChangesAsync();
+        await _protocolConfigRepository.DeleteAsync(config);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -227,7 +232,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task StartProtocolAsync(long id, string? appCode)
     {
-        var config = await _dbContext.ProtocolConfigs.FindAsync(id);
+        var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
         {
             throw new InvalidOperationException("协议配置不存在");
@@ -242,7 +247,8 @@ public class ProtocolConfigService : IProtocolConfigService
         // TODO: 这里应该调用MQTT客户端服务或其他协议适配器启动协议
         config.Status = "active";
         config.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
+        await _protocolConfigRepository.UpdateAsync(config);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -250,7 +256,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task StopProtocolAsync(long id, string? appCode)
     {
-        var config = await _dbContext.ProtocolConfigs.FindAsync(id);
+        var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
         {
             throw new InvalidOperationException("协议配置不存在");
@@ -265,6 +271,7 @@ public class ProtocolConfigService : IProtocolConfigService
         // TODO: 这里应该调用MQTT客户端服务或其他协议适配器停止协议
         config.Status = "inactive";
         config.UpdatedAt = DateTime.UtcNow;
-        await _dbContext.SaveChangesAsync();
+        await _protocolConfigRepository.UpdateAsync(config);
+        await _unitOfWork.SaveChangesAsync();
     }
 }

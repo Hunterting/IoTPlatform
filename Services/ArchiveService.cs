@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
@@ -7,15 +7,22 @@ using Microsoft.EntityFrameworkCore;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 档案服务实现
+/// 档案服务实现（使用仓储模式）
 /// </summary>
 public class ArchiveService : IArchiveService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IArchiveRepository _archiveRepository;
+    private readonly IDeviceRepository _deviceRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public ArchiveService(AppDbContext dbContext)
+    public ArchiveService(
+        IArchiveRepository archiveRepository,
+        IDeviceRepository deviceRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _archiveRepository = archiveRepository;
+        _deviceRepository = deviceRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -23,7 +30,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode)
     {
-        var query = _dbContext.Archives.Include(a => a.Area).AsQueryable();
+        var query = _archiveRepository.Query().Include(a => a.Area);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -85,7 +92,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<ArchiveDto?> GetArchiveAsync(long id, string? appCode)
     {
-        var query = _dbContext.Archives.Include(a => a.Area).AsQueryable();
+        var query = _archiveRepository.Query().Include(a => a.Area);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -139,11 +146,13 @@ public class ArchiveService : IArchiveService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Archives.Add(archive);
-        await _dbContext.SaveChangesAsync();
+        await _archiveRepository.AddAsync(archive);
+        await _unitOfWork.SaveChangesAsync();
 
         // 重新加载以包含关联数据
-        await _dbContext.Entry(archive).Reference(a => a.Area).LoadAsync();
+        archive = await _archiveRepository.Query()
+            .Include(a => a.Area)
+            .FirstOrDefaultAsync(a => a.Id == archive.Id);
 
         return new ArchiveDto
         {
@@ -170,7 +179,9 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<ArchiveDto> UpdateArchiveAsync(long id, UpdateArchiveRequest request, string? appCode)
     {
-        var archive = await _dbContext.Archives.Include(a => a.Area).FirstOrDefaultAsync(a => a.Id == id);
+        var archive = await _archiveRepository.Query()
+            .Include(a => a.Area)
+            .FirstOrDefaultAsync(a => a.Id == id);
         if (archive == null)
         {
             throw new InvalidOperationException("档案不存在");
@@ -194,7 +205,8 @@ public class ArchiveService : IArchiveService
         archive.SceneConfig = request.SceneConfig;
         archive.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _archiveRepository.UpdateAsync(archive);
+        await _unitOfWork.SaveChangesAsync();
 
         return new ArchiveDto
         {
@@ -221,7 +233,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task DeleteArchiveAsync(long id, string? appCode)
     {
-        var archive = await _dbContext.Archives.FindAsync(id);
+        var archive = await _archiveRepository.GetByIdAsync(id);
         if (archive == null)
         {
             throw new InvalidOperationException("档案不存在");
@@ -234,14 +246,14 @@ public class ArchiveService : IArchiveService
         }
 
         // 检查是否有设备标记关联
-        var hasMarkers = await _dbContext.ArchiveDeviceMarkers.AnyAsync(m => m.ArchiveId == id);
+        var hasMarkers = await _archiveRepository.Query().AnyAsync(m => m.ArchiveId == id);
         if (hasMarkers)
         {
             throw new InvalidOperationException("档案存在设备标记，无法删除");
         }
 
-        _dbContext.Archives.Remove(archive);
-        await _dbContext.SaveChangesAsync();
+        await _archiveRepository.DeleteAsync(archive);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -249,12 +261,8 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<List<ArchiveDeviceMarkerDto>> GetArchiveMarkersAsync(long archiveId, string? appCode)
     {
-        var query = _dbContext.ArchiveDeviceMarkers
-            .Include(m => m.Device)
-            .AsQueryable();
-
         // 权限检查：验证档案所属租户
-        var archive = await _dbContext.Archives.FindAsync(archiveId);
+        var archive = await _archiveRepository.GetByIdAsync(archiveId);
         if (archive == null)
         {
             throw new InvalidOperationException("档案不存在");
@@ -265,23 +273,6 @@ public class ArchiveService : IArchiveService
             throw new UnauthorizedAccessException("无权查看该档案标记");
         }
 
-        var markers = await query
-            .Where(m => m.ArchiveId == archiveId)
-            .Select(m => new ArchiveDeviceMarkerDto
-            {
-                Id = m.Id,
-                ArchiveId = m.ArchiveId,
-                DeviceId = m.DeviceId,
-                DeviceName = m.Device != null ? m.Device.Name : m.Name,
-                DeviceType = m.DeviceType,
-                Model = m.Model,
-                X = m.X,
-                Y = m.Y,
-                Z = m.Z,
-                Sensors = m.Sensors
-            })
-            .ToListAsync();
-
-        return markers;
+        return await _archiveRepository.GetMarkersAsync(archiveId);
     }
 }

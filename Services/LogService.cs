@@ -1,4 +1,4 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
@@ -6,15 +6,15 @@ using Microsoft.EntityFrameworkCore;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 日志服务实现
+/// 日志服务实现（使用仓储模式）
 /// </summary>
 public class LogService : ILogService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly ILogRepository _logRepository;
 
-    public LogService(AppDbContext dbContext)
+    public LogService(ILogRepository logRepository)
     {
-        _dbContext = dbContext;
+        _logRepository = logRepository;
     }
 
     /// <summary>
@@ -22,13 +22,7 @@ public class LogService : ILogService
     /// </summary>
     public async Task<PagedResponse<OperationLogDto>> GetOperationLogsAsync(int page, int pageSize, string? module, string? action, long? userId, DateTime? startTime, DateTime? endTime, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.OperationLogs.AsQueryable();
-
-        // 超级管理员可以查看所有租户日志，其他角色只能查看所属租户日志
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(l => l.AppCode == appCode);
-        }
+        var query = _logRepository.GetOperationLogsQuery(appCode, currentUserRole);
 
         // 模块筛选
         if (!string.IsNullOrEmpty(module))
@@ -91,13 +85,7 @@ public class LogService : ILogService
     /// </summary>
     public async Task<PagedResponse<LoginLogDto>> GetLoginLogsAsync(int page, int pageSize, long? userId, string? status, DateTime? startTime, DateTime? endTime, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.LoginLogs.AsQueryable();
-
-        // 超级管理员可以查看所有租户日志，其他角色只能查看所属租户日志
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(l => l.AppCode == appCode);
-        }
+        var query = _logRepository.GetLoginLogsQuery(appCode, currentUserRole);
 
         // 用户筛选
         if (userId.HasValue)
@@ -151,13 +139,7 @@ public class LogService : ILogService
     /// </summary>
     public async Task<OperationLogDto?> GetOperationLogAsync(long id, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.OperationLogs.AsQueryable();
-
-        // 超级管理员可以查看所有租户日志，其他角色只能查看所属租户日志
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(l => l.AppCode == appCode);
-        }
+        var query = _logRepository.GetOperationLogsQuery(appCode, currentUserRole);
 
         var log = await query.FirstOrDefaultAsync(l => l.Id == id);
         if (log == null) return null;
@@ -185,13 +167,7 @@ public class LogService : ILogService
     /// </summary>
     public async Task<LoginLogDto?> GetLoginLogAsync(long id, string? appCode, string? currentUserRole)
     {
-        var query = _dbContext.LoginLogs.AsQueryable();
-
-        // 超级管理员可以查看所有租户日志，其他角色只能查看所属租户日志
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(l => l.AppCode == appCode);
-        }
+        var query = _logRepository.GetLoginLogsQuery(appCode, currentUserRole);
 
         var log = await query.FirstOrDefaultAsync(l => l.Id == id);
         if (log == null) return null;

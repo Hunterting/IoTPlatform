@@ -1,21 +1,30 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
-using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 区域服务实现
+/// 区域服务实现（使用仓储模式）
 /// </summary>
 public class AreaService : IAreaService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IAreaRepository _areaRepository;
+    private readonly ICustomerRepository _customerRepository;
+    private readonly IDeviceRepository _deviceRepository;
+    private readonly IUnitOfWork _unitOfWork;
 
-    public AreaService(AppDbContext dbContext)
+    public AreaService(
+        IAreaRepository areaRepository,
+        ICustomerRepository customerRepository,
+        IDeviceRepository deviceRepository,
+        IUnitOfWork unitOfWork)
     {
-        _dbContext = dbContext;
+        _areaRepository = areaRepository;
+        _customerRepository = customerRepository;
+        _deviceRepository = deviceRepository;
+        _unitOfWork = unitOfWork;
     }
 
     /// <summary>
@@ -23,22 +32,8 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task<PagedResponse<AreaDto>> GetAreasAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.Areas
-            .Include(a => a.Parent)
-            .Include(a => a.Customer)
-            .AsQueryable();
-
-        // 超级管理员可以查看所有区域，其他角色只能查看所属租户的区域
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        // 区域权限过滤
-        if (allowedAreaIds != null && allowedAreaIds.Count > 0)
-        {
-            query = query.Where(a => allowedAreaIds.Contains(a.Id));
-        }
+        var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
+        var query = _areaRepository.GetQueryable(queryAppCode, allowedAreaIds);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -54,26 +49,44 @@ public class AreaService : IAreaService
             .ThenByDescending(a => a.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(a => new AreaDto
-            {
-                Id = a.Id,
-                Name = a.Name,
-                Type = a.Type,
-                Image = a.Image,
-                ParentId = a.ParentId,
-                ParentName = a.Parent != null ? a.Parent.Name : null,
-                CustomerId = a.CustomerId,
-                CustomerName = a.Customer != null ? a.Customer.Name : null,
-                AppCode = a.AppCode,
-                Description = a.Description,
-                DeviceCount = a.DeviceCount,
-                SortOrder = a.SortOrder,
-                CreatedAt = a.CreatedAt,
-                UpdatedAt = a.UpdatedAt
-            })
             .ToListAsync();
 
-        return PagedResponse<AreaDto>.Create(areas, totalCount, page, pageSize);
+        // 转换为DTO
+        var areaDtos = new List<AreaDto>();
+        foreach (var area in areas)
+        {
+            Area? parent = null;
+            Customer? customer = null;
+            if (area.ParentId.HasValue)
+            {
+                parent = await _areaRepository.GetByIdAsync(area.ParentId.Value);
+            }
+            if (area.CustomerId.HasValue)
+            {
+                customer = await _customerRepository.GetByIdAsync(area.CustomerId.Value);
+            }
+
+            var areaDto = new AreaDto
+            {
+                Id = area.Id,
+                Name = area.Name,
+                Type = area.Type,
+                Image = area.Image,
+                ParentId = area.ParentId,
+                ParentName = parent?.Name,
+                CustomerId = area.CustomerId,
+                CustomerName = customer?.Name,
+                AppCode = area.AppCode,
+                Description = area.Description,
+                DeviceCount = area.DeviceCount,
+                SortOrder = area.SortOrder,
+                CreatedAt = area.CreatedAt,
+                UpdatedAt = area.UpdatedAt
+            };
+            areaDtos.Add(areaDto);
+        }
+
+        return PagedResponse<AreaDto>.Create(areaDtos, totalCount, page, pageSize);
     }
 
     /// <summary>
@@ -81,25 +94,20 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task<AreaDto?> GetAreaAsync(long id, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.Areas
-            .Include(a => a.Parent)
-            .Include(a => a.Customer)
-            .AsQueryable();
-
-        // 权限过滤
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        // 区域权限过滤
-        if (allowedAreaIds != null && allowedAreaIds.Count > 0)
-        {
-            query = query.Where(a => allowedAreaIds.Contains(a.Id));
-        }
-
-        var area = await query.FirstOrDefaultAsync(a => a.Id == id);
+        var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
+        var area = await _areaRepository.GetByIdAsync(id, appCode: queryAppCode, allowedAreaIds: allowedAreaIds);
         if (area == null) return null;
+
+        Area? parent = null;
+        Customer? customer = null;
+        if (area.ParentId.HasValue)
+        {
+            parent = await _areaRepository.GetByIdAsync(area.ParentId.Value);
+        }
+        if (area.CustomerId.HasValue)
+        {
+            customer = await _customerRepository.GetByIdAsync(area.CustomerId.Value);
+        }
 
         return new AreaDto
         {
@@ -108,9 +116,9 @@ public class AreaService : IAreaService
             Type = area.Type,
             Image = area.Image,
             ParentId = area.ParentId,
-            ParentName = area.Parent?.Name,
+            ParentName = parent?.Name,
             CustomerId = area.CustomerId,
-            CustomerName = area.Customer?.Name,
+            CustomerName = customer?.Name,
             AppCode = area.AppCode,
             Description = area.Description,
             DeviceCount = area.DeviceCount,
@@ -129,7 +137,7 @@ public class AreaService : IAreaService
         Models.Customer? customer = null;
         if (request.CustomerId.HasValue)
         {
-            customer = await _dbContext.Customers.FindAsync(request.CustomerId.Value);
+            customer = await _customerRepository.GetByIdAsync(request.CustomerId.Value);
             if (customer == null)
             {
                 throw new InvalidOperationException("客户不存在");
@@ -140,7 +148,7 @@ public class AreaService : IAreaService
         Area? parentArea = null;
         if (request.ParentId.HasValue)
         {
-            parentArea = await _dbContext.Areas.FindAsync(request.ParentId.Value);
+            parentArea = await _areaRepository.GetByIdAsync(request.ParentId.Value);
             if (parentArea == null)
             {
                 throw new InvalidOperationException("父区域不存在");
@@ -162,10 +170,8 @@ public class AreaService : IAreaService
             UpdatedAt = DateTime.UtcNow
         };
 
-        _dbContext.Areas.Add(area);
-        await _dbContext.SaveChangesAsync();
-
-        // 更新父区域的设备计数（如有需要）
+        await _areaRepository.AddAsync(area);
+        await _unitOfWork.SaveChangesAsync();
 
         return new AreaDto
         {
@@ -191,10 +197,7 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task<AreaDto> UpdateAreaAsync(long id, UpdateAreaRequest request, string? appCode, string? currentUserRole)
     {
-        var area = await _dbContext.Areas
-            .Include(a => a.Parent)
-            .Include(a => a.Customer)
-            .FirstOrDefaultAsync(a => a.Id == id);
+        var area = await _areaRepository.GetByIdAsync(id);
         if (area == null)
         {
             throw new InvalidOperationException("区域不存在");
@@ -212,7 +215,20 @@ public class AreaService : IAreaService
         area.SortOrder = request.SortOrder;
         area.UpdatedAt = DateTime.UtcNow;
 
-        await _dbContext.SaveChangesAsync();
+        await _areaRepository.UpdateAsync(area);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 获取关联数据
+        Area? parent = null;
+        Customer? customer = null;
+        if (area.ParentId.HasValue)
+        {
+            parent = await _areaRepository.GetByIdAsync(area.ParentId.Value);
+        }
+        if (area.CustomerId.HasValue)
+        {
+            customer = await _customerRepository.GetByIdAsync(area.CustomerId.Value);
+        }
 
         return new AreaDto
         {
@@ -221,9 +237,9 @@ public class AreaService : IAreaService
             Type = area.Type,
             Image = area.Image,
             ParentId = area.ParentId,
-            ParentName = area.Parent?.Name,
+            ParentName = parent?.Name,
             CustomerId = area.CustomerId,
-            CustomerName = area.Customer?.Name,
+            CustomerName = customer?.Name,
             AppCode = area.AppCode,
             Description = area.Description,
             DeviceCount = area.DeviceCount,
@@ -238,7 +254,7 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task DeleteAreaAsync(long id, string? appCode, string? currentUserRole)
     {
-        var area = await _dbContext.Areas.FindAsync(id);
+        var area = await _areaRepository.GetByIdAsync(id);
         if (area == null)
         {
             throw new InvalidOperationException("区域不存在");
@@ -251,21 +267,21 @@ public class AreaService : IAreaService
         }
 
         // 检查是否有子区域
-        var hasChildren = await _dbContext.Areas.AnyAsync(a => a.ParentId == id);
+        var hasChildren = await _areaRepository.ExistsAsync(a => a.ParentId == id);
         if (hasChildren)
         {
             throw new InvalidOperationException("区域包含子区域，无法删除");
         }
 
         // 检查是否有关联设备
-        var hasDevices = await _dbContext.AreaDevices.AnyAsync(ad => ad.AreaId == id);
+        var hasDevices = await _deviceRepository.ExistsAsync(d => d.AreaId == id);
         if (hasDevices)
         {
             throw new InvalidOperationException("区域包含设备，无法删除");
         }
 
-        _dbContext.Areas.Remove(area);
-        await _dbContext.SaveChangesAsync();
+        await _areaRepository.DeleteAsync(area);
+        await _unitOfWork.SaveChangesAsync();
     }
 
     /// <summary>
@@ -273,19 +289,8 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task<List<AreaTreeNodeDto>> GetAreaTreeAsync(string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.Areas.AsQueryable();
-
-        // 权限过滤
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
-
-        // 区域权限过滤
-        if (allowedAreaIds != null && allowedAreaIds.Count > 0)
-        {
-            query = query.Where(a => allowedAreaIds.Contains(a.Id));
-        }
+        var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
+        var query = _areaRepository.GetQueryable(queryAppCode, allowedAreaIds);
 
         var allAreas = await query
             .OrderBy(a => a.SortOrder)
@@ -328,37 +333,28 @@ public class AreaService : IAreaService
     /// </summary>
     public async Task<List<AreaDto>> GetChildAreasAsync(long parentId, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _dbContext.Areas
-            .Where(a => a.ParentId == parentId);
-
-        // 租户过滤
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(a => a.AppCode == appCode);
-        }
+        var areas = await _areaRepository.GetChildrenAsync(parentId, appCode);
 
         // 区域权限过滤
+        var filteredAreas = areas.ToList();
         if (allowedAreaIds != null && allowedAreaIds.Count > 0)
         {
-            query = query.Where(a => allowedAreaIds.Contains(a.Id));
+            filteredAreas = areas.Where(a => allowedAreaIds.Contains(a.Id)).ToList();
         }
 
-        return await query
-            .OrderBy(a => a.SortOrder)
-            .Select(a => new AreaDto
-            {
-                Id = a.Id,
-                Name = a.Name,
-                Type = a.Type,
-                Image = a.Image,
-                ParentId = a.ParentId,
-                AppCode = a.AppCode,
-                Description = a.Description,
-                DeviceCount = a.DeviceCount,
-                SortOrder = a.SortOrder,
-                CreatedAt = a.CreatedAt,
-                UpdatedAt = a.UpdatedAt
-            })
-            .ToListAsync();
+        return filteredAreas.Select(a => new AreaDto
+        {
+            Id = a.Id,
+            Name = a.Name,
+            Type = a.Type,
+            Image = a.Image,
+            ParentId = a.ParentId,
+            AppCode = a.AppCode,
+            Description = a.Description,
+            DeviceCount = a.DeviceCount,
+            SortOrder = a.SortOrder,
+            CreatedAt = a.CreatedAt,
+            UpdatedAt = a.UpdatedAt
+        }).ToList();
     }
 }

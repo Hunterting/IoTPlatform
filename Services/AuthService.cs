@@ -1,10 +1,9 @@
-using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Infrastructure.Cache;
 using IoTPlatform.Infrastructure.JWT;
 using IoTPlatform.Models;
-using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
 
@@ -19,20 +18,32 @@ public interface IAuthService
 }
 
 /// <summary>
-/// 认证服务实现
+/// 认证服务实现（使用仓储模式）
 /// </summary>
 public class AuthService : IAuthService
 {
-    private readonly AppDbContext _dbContext;
+    private readonly IUserRepository _userRepository;
+    private readonly ICustomerRepository _customerRepository;
+    private readonly IDeviceRepository _deviceRepository;
+    private readonly ILogRepository _logRepository;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly JwtHelper _jwtHelper;
     private readonly IRedisCacheService _cache;
 
     public AuthService(
-        AppDbContext dbContext,
+        IUserRepository userRepository,
+        ICustomerRepository customerRepository,
+        IDeviceRepository deviceRepository,
+        ILogRepository logRepository,
+        IUnitOfWork unitOfWork,
         JwtHelper jwtHelper,
         IRedisCacheService cache)
     {
-        _dbContext = dbContext;
+        _userRepository = userRepository;
+        _customerRepository = customerRepository;
+        _deviceRepository = deviceRepository;
+        _logRepository = logRepository;
+        _unitOfWork = unitOfWork;
         _jwtHelper = jwtHelper;
         _cache = cache;
     }
@@ -43,11 +54,9 @@ public class AuthService : IAuthService
     public async Task<LoginResponse> LoginAsync(LoginRequest request)
     {
         // 查找用户
-        var user = await _dbContext.Users
-            .Include(u => u.Customer)
-            .FirstOrDefaultAsync(u => u.Email == request.Email && u.IsActive);
+        var user = await _userRepository.GetByEmailAsync(request.Email);
 
-        if (user == null)
+        if (user == null || !user.IsActive)
         {
             throw new UnauthorizedAccessException("邮箱或密码错误");
         }
@@ -58,6 +67,20 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("邮箱或密码错误");
         }
 
+        // 获取客户信息
+        Customer? customer = null;
+        if (user.CustomerId.HasValue)
+        {
+            customer = await _customerRepository.GetByIdAsync(user.CustomerId.Value);
+        }
+
+        // 获取设备数量
+        int deviceCount = 0;
+        if (customer != null)
+        {
+            deviceCount = await _deviceRepository.CountAsync(d => d.AppCode == customer.AppCode);
+        }
+
         // 生成JWT Token
         var allowedAreaIdsStr = user.AllowedAreaIds;
         var token = _jwtHelper.GenerateToken(
@@ -65,7 +88,7 @@ public class AuthService : IAuthService
             user.Email,
             user.Role,
             user.CustomerId,
-            user.Customer?.AppCode,
+            customer?.AppCode,
             allowedAreaIdsStr);
 
         // 解析允许的区域ID
@@ -90,20 +113,19 @@ public class AuthService : IAuthService
 
         // 构建当前客户DTO
         CustomerDto? currentCustomer = null;
-        if (user.Customer != null)
+        if (customer != null)
         {
-            var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == user.Customer.AppCode);
             currentCustomer = new CustomerDto
             {
-                Id = user.Customer.Id,
-                Name = user.Customer.Name,
-                Code = user.Customer.Code,
-                AppCode = user.Customer.AppCode,
-                Contact = user.Customer.Contact,
-                Phone = user.Customer.Phone,
-                Address = user.Customer.Address,
-                Status = user.Customer.Status,
-                CreatedAt = user.Customer.CreatedAt,
+                Id = customer.Id,
+                Name = customer.Name,
+                Code = customer.Code,
+                AppCode = customer.AppCode,
+                Contact = customer.Contact,
+                Phone = customer.Phone,
+                Address = customer.Address,
+                Status = customer.Status,
+                CreatedAt = customer.CreatedAt,
                 DeviceCount = deviceCount
             };
         }
@@ -124,9 +146,7 @@ public class AuthService : IAuthService
     /// </summary>
     public async Task<LoginResponse?> GetCurrentUserAsync(long userId)
     {
-        var user = await _dbContext.Users
-            .Include(u => u.Customer)
-            .FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await _userRepository.GetUserDetailsAsync(userId);
 
         if (user == null) return null;
 
@@ -152,7 +172,7 @@ public class AuthService : IAuthService
         CustomerDto? currentCustomer = null;
         if (user.Customer != null)
         {
-            var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == user.Customer.AppCode);
+            var deviceCount = await _deviceRepository.CountAsync(d => d.AppCode == user.Customer.AppCode);
             currentCustomer = new CustomerDto
             {
                 Id = user.Customer.Id,
@@ -180,9 +200,7 @@ public class AuthService : IAuthService
     /// </summary>
     public async Task<LoginResponse?> SwitchCustomerAsync(long userId, long customerId)
     {
-        var user = await _dbContext.Users
-            .Include(u => u.Customer)
-            .FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await _userRepository.GetByIdAsync(userId);
 
         if (user == null) return null;
         if (user.Role != "super_admin")
@@ -190,10 +208,10 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("只有超级管理员可以切换客户");
         }
 
-        var customer = await _dbContext.Customers.FirstOrDefaultAsync(c => c.Id == customerId);
+        var customer = await _customerRepository.GetByIdAsync(customerId);
         if (customer == null) return null;
 
-        var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
+        var deviceCount = await _deviceRepository.CountAsync(d => d.AppCode == customer.AppCode);
 
         var allowedAreaIdsStr = user.AllowedAreaIds;
         List<long>? allowedAreaIds = null;
@@ -252,17 +270,14 @@ public class AuthService : IAuthService
     {
         try
         {
-            var log = new LoginLog
-            {
-                UserId = user.Id,
-                Email = user.Email,
-                UserName = user.Name,
-                Status = success ? "success" : "failed",
-                LoginTime = DateTime.UtcNow
-            };
-
-            _dbContext.LoginLogs.Add(log);
-            await _dbContext.SaveChangesAsync();
+            await _logRepository.LogLoginAsync(
+                userId: user.Id,
+                email: user.Email,
+                userName: user.Name,
+                ipAddress: null,
+                userAgent: null,
+                status: success ? "success" : "failed"
+            );
         }
         catch
         {
