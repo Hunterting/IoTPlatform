@@ -1,7 +1,9 @@
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
+using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
 
@@ -49,7 +51,7 @@ public class UserService : IUserService
         if (!string.IsNullOrEmpty(keyword))
         {
             query = query.Where(u =>
-                u.Name.Contains(keyword) ||
+                u.FullName.Contains(keyword) ||
                 u.Email.Contains(keyword));
         }
 
@@ -73,7 +75,7 @@ public class UserService : IUserService
             var userDto = new UserDto
             {
                 Id = user.Id,
-                Name = user.Name,
+                Name = user.FullName,
                 Email = user.Email,
                 Role = user.Role,
                 CustomerId = user.CustomerId,
@@ -112,7 +114,7 @@ public class UserService : IUserService
         return new UserDto
         {
             Id = user.Id,
-            Name = user.Name,
+            Name = user.FullName,
             Email = user.Email,
             Role = user.Role,
             CustomerId = user.CustomerId,
@@ -158,9 +160,9 @@ public class UserService : IUserService
 
         var user = new User
         {
-            Name = request.Name,
+            FullName = request.Name,
             Email = request.Email,
-            PasswordHash = passwordHash,
+            Password = passwordHash,
             Role = request.Role,
             CustomerId = request.CustomerId,
             AppCode = customer?.AppCode,
@@ -219,14 +221,14 @@ public class UserService : IUserService
             throw new InvalidOperationException("邮箱已被其他用户使用");
         }
 
-        user.Name = request.Name;
+        user.FullName = request.Name;
         user.Email = request.Email;
         user.Avatar = request.Avatar;
         user.AllowedAreaIds = request.AllowedAreaIds;
         user.IsActive = request.IsActive;
         user.UpdatedAt = DateTime.UtcNow;
 
-        // 角色更新需要谨慎，这里只允许超级管理员修改
+        // 角色更新需要谨慎,这里只允许超级管理员修改
         if (!string.IsNullOrEmpty(request.Role) && currentUserRole == Configuration.Roles.SUPER_ADMIN)
         {
             user.Role = request.Role;
@@ -245,7 +247,7 @@ public class UserService : IUserService
         return new UserDto
         {
             Id = user.Id,
-            Name = user.Name,
+            Name = user.FullName,
             Email = user.Email,
             Role = user.Role,
             CustomerId = user.CustomerId,
@@ -308,7 +310,7 @@ public class UserService : IUserService
         // 这里简化处理，允许修改
 
         // 验证旧密码
-        if (!BCrypt.Net.BCrypt.Verify(oldPassword, user.PasswordHash))
+        if (!BCrypt.Net.BCrypt.Verify(oldPassword, user.Password))
         {
             throw new UnauthorizedAccessException("原密码错误");
         }

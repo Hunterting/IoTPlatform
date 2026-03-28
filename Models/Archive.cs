@@ -17,6 +17,7 @@ public class Archive
     public DateTime? Date { get; set; }
     [MaxLength(50)] public string? Category { get; set; }
     public bool Is3DModel { get; set; }
+    public long? ProjectId { get; set; }
     public long? AreaId { get; set; }
     [MaxLength(500)] public string? ImageUrl { get; set; }
     [MaxLength(500)] public string? FilePath { get; set; }

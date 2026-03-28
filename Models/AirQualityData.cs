@@ -20,8 +20,10 @@ public class AirQualityData
     public double? Humidity { get; set; }
     public double? CO2 { get; set; }
     public double? OilFume { get; set; }
+    public DateTime RecordTime { get; set; } = DateTime.UtcNow;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string? AppCode { get; set; }
 
+    [ForeignKey("DeviceId")] public virtual Device? Device { get; set; }
     [ForeignKey("AreaId")] public virtual Area? Area { get; set; }
 }

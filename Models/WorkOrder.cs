@@ -31,6 +31,7 @@ public class WorkOrder
     public DateTime? ClosedTime { get; set; }
     [MaxLength(2000)] public string? ResolveDescription { get; set; }
     [MaxLength(100)] public string? ProjectName { get; set; }
+    [MaxLength(100)] public string? CreatedBy { get; set; }
     public string? AppCode { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

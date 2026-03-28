@@ -1,6 +1,7 @@
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
+using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,9 +34,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _workOrderRepository.Query()
-            .Include(w => w.Device)
-            .Include(w => w.Area);
+        var query = _workOrderRepository.Query().Include(w => w.Device).Include(w => w.Area).Include(w => w.Customer);
 
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -218,6 +217,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = workOrder.Id,
             Operator = request.Reporter ?? "System",
+            OperatorName = request.Reporter ?? "System",
             Action = "create",
             Comment = request.Description,
             CreatedAt = DateTime.UtcNow
@@ -260,7 +260,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> UpdateWorkOrderAsync(long id, UpdateWorkOrderRequest request)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -275,33 +275,8 @@ public class WorkOrderService : IWorkOrderService
         await _workOrderRepository.UpdateAsync(workOrder);
         await _unitOfWork.SaveChangesAsync();
 
-        return new WorkOrderDto
-        {
-            Id = workOrder.Id,
-            OrderNo = workOrder.OrderNo,
-            Title = workOrder.Title,
-            Type = workOrder.Type,
-            Priority = workOrder.Priority,
-            Status = workOrder.Status,
-            CustomerId = workOrder.CustomerId,
-            DeviceId = workOrder.DeviceId,
-            AreaId = workOrder.AreaId,
-            DeviceName = workOrder.DeviceName,
-            DeviceCode = workOrder.DeviceCode,
-            AreaName = workOrder.AreaName,
-            Description = workOrder.Description,
-            Reporter = workOrder.Reporter,
-            ReportTime = workOrder.ReportTime,
-            Assignee = workOrder.Assignee,
-            AssignTime = workOrder.AssignTime,
-            EstimatedTime = workOrder.EstimatedTime,
-            ResolvedTime = workOrder.ResolvedTime,
-            ClosedTime = workOrder.ClosedTime,
-            ResolveDescription = workOrder.ResolveDescription,
-            ProjectName = workOrder.ProjectName,
-            CreatedAt = workOrder.CreatedAt,
-            UpdatedAt = workOrder.UpdatedAt
-        };
+
+        return MapToDto(workOrder);
     }
 
     /// <summary>
@@ -309,7 +284,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> AssignWorkOrderAsync(long id, string assignee)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -325,6 +300,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = id,
             Operator = assignee,
+            OperatorName = assignee,
             Action = "assign",
             Comment = $"工单已分配给 {assignee}",
             CreatedAt = DateTime.UtcNow
@@ -342,7 +318,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> StartWorkOrderAsync(long id)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -356,6 +332,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = id,
             Operator = workOrder.Assignee ?? "System",
+            OperatorName = workOrder.Assignee ?? "System",
             Action = "start",
             Comment = "工单开始处理",
             CreatedAt = DateTime.UtcNow
@@ -373,7 +350,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> ResolveWorkOrderAsync(long id, string resolveDescription)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -389,6 +366,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = id,
             Operator = workOrder.Assignee ?? "System",
+            OperatorName = workOrder.Assignee ?? "System",
             Action = "resolve",
             Comment = resolveDescription,
             CreatedAt = DateTime.UtcNow
@@ -406,7 +384,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> CloseWorkOrderAsync(long id)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -426,6 +404,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = id,
             Operator = "System",
+            OperatorName = "System",
             Action = "close",
             Comment = "工单已关闭",
             CreatedAt = DateTime.UtcNow
@@ -443,7 +422,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto> RejectWorkOrderAsync(long id, string reason)
     {
-        var workOrder = await _workOrderRepository.GetByIdAsync(id);
+        var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
@@ -457,6 +436,7 @@ public class WorkOrderService : IWorkOrderService
         {
             WorkOrderId = id,
             Operator = "System",
+            OperatorName = "System",
             Action = "reject",
             Comment = reason,
             CreatedAt = DateTime.UtcNow
@@ -474,7 +454,16 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<List<WorkOrderLogDto>> GetWorkOrderLogsAsync(long workOrderId)
     {
-        return await _workOrderRepository.GetLogsAsync(workOrderId);
+        var logs = await _workOrderRepository.GetLogsAsync(workOrderId);
+        return logs.Select(l => new WorkOrderLogDto
+        {
+            Id = l.Id,
+            WorkOrderId = l.WorkOrderId,
+            Operator = l.Operator,
+            Action = l.Action,
+            Comment = l.Comment,
+            CreatedAt = l.CreatedAt
+        }).ToList();
     }
 
     /// <summary>
@@ -482,7 +471,17 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<List<WorkOrderAttachmentDto>> GetWorkOrderAttachmentsAsync(long workOrderId)
     {
-        return await _workOrderRepository.GetAttachmentsAsync(workOrderId);
+        var attachments = await _workOrderRepository.GetAttachmentsAsync(workOrderId);
+        return attachments.Select(a => new WorkOrderAttachmentDto
+        {
+            Id = a.Id,
+            WorkOrderId = a.WorkOrderId,
+            FileName = a.FileName,
+            FileUrl = a.FileUrl,
+            FileSize = a.FileSize,
+            FileType = a.FileType,
+            CreatedAt = a.CreatedAt
+        }).ToList();
     }
 
     /// <summary>
@@ -490,7 +489,17 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderAttachmentDto> AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string fileSize, string fileType)
     {
-        return await _workOrderRepository.AddAttachmentAsync(workOrderId, fileName, fileUrl, fileSize, fileType);
+        var attachment = await _workOrderRepository.AddAttachmentAsync(workOrderId, fileName, fileUrl, fileSize, fileType);
+        return new WorkOrderAttachmentDto
+        {
+            Id = attachment.Id,
+            WorkOrderId = attachment.WorkOrderId,
+            FileName = attachment.FileName,
+            FileUrl = attachment.FileUrl,
+            FileSize = attachment.FileSize,
+            FileType = attachment.FileType,
+            CreatedAt = attachment.CreatedAt
+        };
     }
 
     /// <summary>
@@ -515,6 +524,7 @@ public class WorkOrderService : IWorkOrderService
             Priority = workOrder.Priority,
             Status = workOrder.Status,
             CustomerId = workOrder.CustomerId,
+            CustomerName = workOrder.Customer?.Name ?? string.Empty,
             DeviceId = workOrder.DeviceId,
             AreaId = workOrder.AreaId,
             DeviceName = workOrder.DeviceName,

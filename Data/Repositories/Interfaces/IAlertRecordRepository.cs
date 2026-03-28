@@ -1,4 +1,5 @@
 using IoTPlatform.Models;
+using IoTPlatform.DTOs.Responses;
 
 namespace IoTPlatform.Data.Repositories.Interfaces;
 
@@ -120,6 +121,53 @@ public interface IAlertRecordRepository : IRepository<AlertRecord>
     /// <param name="appCode">应用代码</param>
     /// <returns>紧急告警数量</returns>
     Task<int> GetCriticalAlertCountAsync(string? appCode = null);
+
+    /// <summary>
+    /// 获取告警列表（带详情和分页）
+    /// </summary>
+    /// <param name="status">状态</param>
+    /// <param name="level">级别</param>
+    /// <param name="alertType">告警类型</param>
+    /// <param name="appCode">应用代码</param>
+    /// <param name="allowedAreaIds">允许的区域ID列表</param>
+    /// <param name="page">页码</param>
+    /// <param name="pageSize">页大小</param>
+    /// <returns>分页结果</returns>
+    Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(string? status = null, string? level = null, string? alertType = null, string? appCode = null, List<long>? allowedAreaIds = null, int page = 1, int pageSize = 20);
+
+    /// <summary>
+    /// 获取告警详情（带权限检查）
+    /// </summary>
+    /// <param name="id">告警ID</param>
+    /// <param name="appCode">应用代码</param>
+    /// <param name="allowedAreaIds">允许的区域ID列表</param>
+    /// <returns>告警对象或null</returns>
+    Task<AlertRecord?> GetAlertWithDetailsAsync(long id, string? appCode = null, List<long>? allowedAreaIds = null);
+
+    /// <summary>
+    /// 获取告警日志
+    /// </summary>
+    /// <param name="alertId">告警ID</param>
+    /// <returns>告警日志列表</returns>
+    Task<IEnumerable<AlertProcessLog>> GetAlertLogsAsync(long alertId);
+
+    /// <summary>
+    /// 获取告警摘要
+    /// </summary>
+    /// <param name="startTime">开始时间</param>
+    /// <param name="endTime">结束时间</param>
+    /// <param name="appCode">应用代码</param>
+    /// <returns>告警摘要</returns>
+    Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null);
+}
+
+/// <summary>
+/// 分页结果
+/// </summary>
+public class PagedResult<T>
+{
+    public List<T> Data { get; set; } = new();
+    public int TotalCount { get; set; }
 }
 
 /// <summary>

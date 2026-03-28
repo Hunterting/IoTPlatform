@@ -112,7 +112,7 @@ public class ApiResponse : ApiResponse<object>
     /// <summary>
     /// 成功响应
     /// </summary>
-    public static ApiResponse Success(string message = "操作成功")
+    public new static ApiResponse Success(string message = "操作成功")
     {
         return new ApiResponse
         {
@@ -124,7 +124,7 @@ public class ApiResponse : ApiResponse<object>
     /// <summary>
     /// 成功响应（带数据）
     /// </summary>
-    public static ApiResponse Success(object data, string message = "操作成功")
+    public new static ApiResponse Success(object data, string message = "操作成功")
     {
         return new ApiResponse
         {

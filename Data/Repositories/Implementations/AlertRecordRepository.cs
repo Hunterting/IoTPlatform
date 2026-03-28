@@ -1,4 +1,5 @@
 using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -211,5 +212,137 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
     {
         var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null);
         return await query.CountAsync(a => a.Level == "critical" && (a.Status == "pending" || a.Status == "processing"));
+    }
+
+    public async Task<IEnumerable<AlertRecord>> GetAlertsWithDetailsAsync(string? appCode = null, DateTime? startTime = null, DateTime? endTime = null, int limit = 100)
+    {
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null);
+
+        if (startTime.HasValue)
+        {
+            query = query.Where(a => a.AlertTime >= startTime.Value);
+        }
+
+        if (endTime.HasValue)
+        {
+            query = query.Where(a => a.AlertTime <= endTime.Value);
+        }
+
+        return await query
+            .Include(a => a.Device)
+                .ThenInclude(d => d.Area)
+            .Include(a => a.ProcessLogs)
+            .OrderByDescending(a => a.AlertTime)
+            .Take(limit)
+            .ToListAsync();
+    }
+
+    public async Task<AlertRecord?> GetAlertWithDetailsAsync(long alertId, string? appCode = null)
+    {
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null);
+        return await query
+            .Include(a => a.Device)
+                .ThenInclude(d => d.Area)
+            .Include(a => a.ProcessLogs)
+            .Include(a => a.WorkOrders)
+            .FirstOrDefaultAsync(a => a.Id == alertId);
+    }
+
+    public async Task<IEnumerable<AlertProcessLog>> GetAlertLogsAsync(long alertId)
+    {
+        return await _context.AlertProcessLogs
+            .Where(l => l.AlertId == alertId)
+            .OrderBy(l => l.CreatedAt)
+            .ToListAsync();
+    }
+
+    public async Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null)
+    {
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null);
+
+        if (startTime.HasValue)
+        {
+            query = query.Where(a => a.AlertTime >= startTime.Value);
+        }
+
+        if (endTime.HasValue)
+        {
+            query = query.Where(a => a.AlertTime <= endTime.Value);
+        }
+
+        var alerts = await query.ToListAsync();
+
+        var summary = new AlertSummaryDto
+        {
+            TotalAlerts = alerts.Count,
+            PendingAlerts = alerts.Count(a => a.Status == "pending"),
+            ProcessingAlerts = alerts.Count(a => a.Status == "processing"),
+            ResolvedAlerts = alerts.Count(a => a.Status == "resolved"),
+            IgnoredAlerts = alerts.Count(a => a.Status == "ignored"),
+            CriticalAlerts = alerts.Count(a => a.Level == "critical"),
+            WarningAlerts = alerts.Count(a => a.Level == "warning"),
+            InfoAlerts = alerts.Count(a => a.Level == "info")
+        };
+
+        // 按告警类型统计
+        summary.AlertsByType = alerts
+            .GroupBy(a => a.AlertType)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        summary.LastUpdate = DateTime.UtcNow;
+
+        return summary;
+    }
+
+    public async Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(string? status = null, string? level = null, string? alertType = null, string? appCode = null, List<long>? allowedAreaIds = null, int page = 1, int pageSize = 20)
+    {
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds);
+
+        if (!string.IsNullOrEmpty(status))
+        {
+            query = query.Where(a => a.Status == status);
+        }
+
+        if (!string.IsNullOrEmpty(level))
+        {
+            query = query.Where(a => a.Level == level);
+        }
+
+        if (!string.IsNullOrEmpty(alertType))
+        {
+            query = query.Where(a => a.AlertType == alertType);
+        }
+
+        var totalCount = await query.CountAsync();
+
+        var alerts = await query
+            .Include(a => a.Device)
+                .ThenInclude(d => d.Area)
+            .Include(a => a.ProcessLogs)
+            .Include(a => a.WorkOrders)
+            .OrderByDescending(a => a.AlertTime)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return new PagedResult<AlertRecord>
+        {
+            Data = alerts,
+            TotalCount = totalCount
+        };
+    }
+
+    public async Task<AlertRecord?> GetAlertWithDetailsAsync(long id, string? appCode = null, List<long>? allowedAreaIds = null)
+    {
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds);
+        return await query
+            .Include(a => a.Device)
+                .ThenInclude(d => d.Area)
+            .Include(a => a.ProcessLogs)
+            .Include(a => a.WorkOrders)
+                .ThenInclude(w => w.Attachments)
+            .Include(a => a.WorkOrders)
+                .ThenInclude(w => w.ProcessLogs)
+            .FirstOrDefaultAsync(a => a.Id == id);
     }
 }

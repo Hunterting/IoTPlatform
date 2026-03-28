@@ -27,8 +27,8 @@ public class UnitOfWork : IUnitOfWork
     private IDictionaryRepository? _dictionaryRepository;
     private ISystemSettingRepository? _systemSettingRepository;
     private IETLTaskRepository? _etlTaskRepository;
-    private ILogRepository? _logRepository;
-    private IMonitoringRepository? _monitoringRepository;
+    // private ILogRepository? _logRepository;
+    // private IMonitoringRepository? _monitoringRepository;
 
     public UnitOfWork(AppDbContext context)
     {
@@ -54,8 +54,8 @@ public class UnitOfWork : IUnitOfWork
     public IDictionaryRepository DictionaryRepository => _dictionaryRepository ??= new DictionaryRepository(_context);
     public ISystemSettingRepository SystemSettingRepository => _systemSettingRepository ??= new SystemSettingRepository(_context);
     public IETLTaskRepository ETLTaskRepository => _etlTaskRepository ??= new ETLTaskRepository(_context);
-    public ILogRepository LogRepository => _logRepository ??= new LogRepository(_context);
-    public IMonitoringRepository MonitoringRepository => _monitoringRepository ??= new MonitoringRepository(_context);
+    // public ILogRepository LogRepository => _logRepository ??= new LogRepository(_context);
+    // public IMonitoringRepository MonitoringRepository => _monitoringRepository ??= new MonitoringRepository(_context);
 
     public async Task<int> SaveChangesAsync()
     {
@@ -78,7 +78,7 @@ public class UnitOfWork : IUnitOfWork
         {
             throw new InvalidOperationException("没有活动的事务");
         }
-        
+
         try
         {
             await _context.SaveChangesAsync();
@@ -91,13 +91,18 @@ public class UnitOfWork : IUnitOfWork
         }
     }
 
+    public async Task CommitAsync()
+    {
+        await CommitTransactionAsync();
+    }
+
     public async Task RollbackTransactionAsync()
     {
         if (_transaction == null)
         {
             throw new InvalidOperationException("没有活动的事务");
         }
-        
+
         try
         {
             await _transaction.RollbackAsync();
@@ -107,6 +112,11 @@ public class UnitOfWork : IUnitOfWork
             await _transaction.DisposeAsync();
             _transaction = null;
         }
+    }
+
+    public async Task RollbackAsync()
+    {
+        await RollbackTransactionAsync();
     }
 
     protected virtual void Dispose(bool disposing)

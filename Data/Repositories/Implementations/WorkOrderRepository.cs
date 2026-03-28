@@ -219,7 +219,7 @@ public class WorkOrderRepository : Repository<WorkOrder>, IWorkOrderRepository
             .ToListAsync();
     }
 
-    public async Task AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string? fileSize = null, string? fileType = null)
+    public async Task<WorkOrderAttachment> AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string? fileSize = null, string? fileType = null)
     {
         var attachment = new WorkOrderAttachment
         {
@@ -230,9 +230,20 @@ public class WorkOrderRepository : Repository<WorkOrder>, IWorkOrderRepository
             FileType = fileType,
             CreatedAt = DateTime.UtcNow
         };
-        
+
         await _context.WorkOrderAttachments.AddAsync(attachment);
         await _context.SaveChangesAsync();
+        return attachment;
+    }
+
+    public async Task DeleteAttachmentAsync(long attachmentId)
+    {
+        var attachment = await _context.WorkOrderAttachments.FindAsync(attachmentId);
+        if (attachment != null)
+        {
+            _context.WorkOrderAttachments.Remove(attachment);
+            await _context.SaveChangesAsync();
+        }
     }
 
     public async Task<WorkOrderStats> GetWorkOrderStatsAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null)
@@ -283,5 +294,15 @@ public class WorkOrderRepository : Repository<WorkOrder>, IWorkOrderRepository
     {
         var query = ApplyFilters(_context.WorkOrders.AsQueryable(), appCode, null);
         return await query.CountAsync(w => w.Priority == "urgent" && (w.Status == "pending" || w.Status == "assigned" || w.Status == "in_progress"));
+    }
+
+    public IQueryable<WorkOrder> Query(string? appCode = null)
+    {
+        var query = ApplyFilters(_context.WorkOrders.AsQueryable(), appCode, null);
+        return query
+            .Include(w => w.Device)
+            .Include(w => w.Area)
+            .Include(w => w.Logs)
+            .Include(w => w.Attachments);
     }
 }

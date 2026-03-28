@@ -34,12 +34,10 @@ public class MappingProfile : Profile
     private void ConfigureUserMappings()
     {
         CreateMap<CreateUserRequest, User>()
-            .ForMember(dest => dest.PasswordHash, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
 
         CreateMap<UpdateUserRequest, User>()
-            .ForMember(dest => dest.PasswordHash, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
 
@@ -54,10 +52,11 @@ public class MappingProfile : Profile
             .IncludeBase<User, UserDto>()
             .ForMember(dest => dest.LastLoginAt, opt => opt.Ignore()); // 需要从登录日志获取
 
-        // LoginResponse中的UserDto映射
-        CreateMap<User, LoginResponse.UserDto>()
-            .ForMember(dest => dest.AllowedAreaIds, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.AllowedAreaIds) 
+        // LoginResponse中的UserDto映射 - 使用UserDto而不是LoginResponse.UserDto
+        CreateMap<User, UserDto>()
+            .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer != null ? src.Customer.Name : null))
+            .ForMember(dest => dest.AllowedAreaIds, opt => opt.MapFrom(src =>
+                !string.IsNullOrEmpty(src.AllowedAreaIds)
                     ? src.AllowedAreaIds.Split(',').Select(long.Parse).ToList()
                     : null));
     }
@@ -65,8 +64,8 @@ public class MappingProfile : Profile
     private void ConfigureRoleMappings()
     {
         CreateMap<CreateRoleRequest, Role>()
-            .ForMember(dest => dest.Permissions, opt => opt.MapFrom(src => 
-                src.Permissions != null ? JsonSerializer.Serialize(src.Permissions) : null))
+            .ForMember(dest => dest.Permissions, opt => opt.MapFrom(src =>
+                src.Permissions != null ? JsonSerializer.Serialize(src.Permissions, (JsonSerializerOptions)null) : null))
             .ForMember(dest => dest.AppCode, opt => opt.Ignore())
             .ForMember(dest => dest.IsSystem, opt => opt.MapFrom(src => false))
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
@@ -74,17 +73,17 @@ public class MappingProfile : Profile
 
         CreateMap<UpdateRoleRequest, Role>()
             .ForMember(dest => dest.Code, opt => opt.Ignore())
-            .ForMember(dest => dest.Permissions, opt => opt.MapFrom(src => 
-                src.Permissions != null ? JsonSerializer.Serialize(src.Permissions) : null))
+            .ForMember(dest => dest.Permissions, opt => opt.MapFrom(src =>
+                src.Permissions != null ? JsonSerializer.Serialize(src.Permissions, (JsonSerializerOptions)null) : null))
             .ForMember(dest => dest.AppCode, opt => opt.Ignore())
             .ForMember(dest => dest.IsSystem, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
 
         CreateMap<Role, RoleDto>()
-            .ForMember(dest => dest.PermissionList, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.Permissions) 
-                    ? JsonSerializer.Deserialize<List<string>>(src.Permissions)
+            .ForMember(dest => dest.PermissionList, opt => opt.MapFrom(src =>
+                !string.IsNullOrEmpty(src.Permissions)
+                    ? JsonSerializer.Deserialize<List<string>>(src.Permissions, (JsonSerializerOptions)null)
                     : null));
     }
 
@@ -223,10 +222,10 @@ public class MappingProfile : Profile
     private void ConfigureProtocolConfigMappings()
     {
         CreateMap<CreateProtocolConfigRequest, ProtocolConfig>()
-            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src => 
-                src.DeviceIds != null ? JsonSerializer.Serialize(src.DeviceIds) : null))
-            .ForMember(dest => dest.Config, opt => opt.MapFrom(src => 
-                src.Config != null ? JsonSerializer.Serialize(src.Config) : null))
+            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src =>
+                src.DeviceIds != null ? JsonSerializer.Serialize(src.DeviceIds, (JsonSerializerOptions?)null) : null))
+            .ForMember(dest => dest.Config, opt => opt.MapFrom(src =>
+                src.Config != null ? JsonSerializer.Serialize(src.Config, (JsonSerializerOptions?)null) : null))
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => "active"))
             .ForMember(dest => dest.AppCode, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
@@ -234,22 +233,22 @@ public class MappingProfile : Profile
 
         CreateMap<UpdateProtocolConfigRequest, ProtocolConfig>()
             .ForMember(dest => dest.Type, opt => opt.Ignore())
-            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src => 
-                src.DeviceIds != null ? JsonSerializer.Serialize(src.DeviceIds) : null))
-            .ForMember(dest => dest.Config, opt => opt.MapFrom(src => 
-                src.Config != null ? JsonSerializer.Serialize(src.Config) : null))
+            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src =>
+                src.DeviceIds != null ? JsonSerializer.Serialize(src.DeviceIds, (JsonSerializerOptions?)null) : null))
+            .ForMember(dest => dest.Config, opt => opt.MapFrom(src =>
+                src.Config != null ? JsonSerializer.Serialize(src.Config, (JsonSerializerOptions?)null) : null))
             .ForMember(dest => dest.AppCode, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
 
         CreateMap<ProtocolConfig, ProtocolConfigDto>()
-            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.DeviceIds) 
-                    ? JsonSerializer.Deserialize<List<long>>(src.DeviceIds)
+            .ForMember(dest => dest.DeviceIds, opt => opt.MapFrom(src =>
+                !string.IsNullOrEmpty(src.DeviceIds)
+                    ? JsonSerializer.Deserialize<List<long>>(src.DeviceIds, (JsonSerializerOptions?)null)
                     : null))
-            .ForMember(dest => dest.Config, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.Config) 
-                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(src.Config)
+            .ForMember(dest => dest.Config, opt => opt.MapFrom(src =>
+                !string.IsNullOrEmpty(src.Config)
+                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(src.Config, (JsonSerializerOptions?)null)
                     : null));
     }
 
@@ -341,11 +340,11 @@ public class MappingProfile : Profile
         CreateMap<DeviceDataRecord, MonitoringDataDto>()
             .ForMember(dest => dest.DeviceName, opt => opt.MapFrom(src => src.Device != null ? src.Device.Name : null))
             .ForMember(dest => dest.AreaId, opt => opt.MapFrom(src => src.Device != null ? src.Device.AreaId : null))
-            .ForMember(dest => dest.AreaName, opt => opt.MapFrom(src => 
+            .ForMember(dest => dest.AreaName, opt => opt.MapFrom(src =>
                 src.Device != null && src.Device.Area != null ? src.Device.Area.Name : null))
-            .ForMember(dest => dest.SensorValues, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.SensorData) 
-                    ? JsonSerializer.Deserialize<Dictionary<string, double?>>(src.SensorData)
+            .ForMember(dest => dest.SensorValues, opt => opt.MapFrom(src =>
+                !string.IsNullOrEmpty(src.SensorData)
+                    ? JsonSerializer.Deserialize<Dictionary<string, double?>>(src.SensorData, (JsonSerializerOptions?)null)
                     : null));
 
         CreateMap<AirQualityData, AirQualityDataDto>();

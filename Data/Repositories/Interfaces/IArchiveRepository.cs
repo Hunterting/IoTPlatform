@@ -52,6 +52,13 @@ public interface IArchiveRepository : IRepository<Archive>
     /// <param name="archiveId">档案ID</param>
     /// <returns>设备标记列表</returns>
     Task<IEnumerable<ArchiveDeviceMarker>> GetDeviceMarkersAsync(long archiveId);
+
+    /// <summary>
+    /// 获取档案设备标记（别名方法）
+    /// </summary>
+    /// <param name="archiveId">档案ID</param>
+    /// <returns>设备标记列表</returns>
+    Task<IEnumerable<ArchiveDeviceMarker>> GetMarkersAsync(long archiveId) => GetDeviceMarkersAsync(archiveId);
     
     /// <summary>
     /// 添加档案设备标记

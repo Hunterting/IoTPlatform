@@ -66,8 +66,9 @@ builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
 builder.Services.AddScoped<IArchiveRepository, ArchiveRepository>();
 builder.Services.AddScoped<IDictionaryRepository, DictionaryRepository>();
 builder.Services.AddScoped<ISystemSettingRepository, SystemSettingRepository>();
-builder.Services.AddScoped<ILogRepository, LogRepository>();
-builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
+// TODO: LogRepository和MonitoringRepository不存在,需要实现
+// builder.Services.AddScoped<ILogRepository, LogRepository>();
+// builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
 builder.Services.AddScoped<IDataRuleRepository, DataRuleRepository>();
 builder.Services.AddScoped<IProtocolConfigRepository, ProtocolConfigRepository>();
 builder.Services.AddScoped<IETLTaskRepository, ETLTaskRepository>();

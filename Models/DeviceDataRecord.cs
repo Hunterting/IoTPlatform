@@ -12,6 +12,8 @@ public class DeviceDataRecord
 
     public long DeviceId { get; set; }
     public string? SensorData { get; set; }
+    public double? Temperature { get; set; }
+    public DateTime RecordTime { get; set; } = DateTime.UtcNow;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string? AppCode { get; set; }
 

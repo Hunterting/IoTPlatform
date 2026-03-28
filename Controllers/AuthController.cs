@@ -39,7 +39,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return ApiResponse<LoginResponse>.Error(ex.Message);
+            return Ok(ApiResponse<LoginResponse>.Error(ex.Message);
         }
     }
 
@@ -61,14 +61,14 @@ public class AuthController : ControllerBase
             var result = await _authService.GetCurrentUserAsync(userId);
             if (result == null)
             {
-                return ApiResponse<LoginResponse>.NotFound("用户不存在");
+                return Ok(ApiResponse<LoginResponse>.NotFound("用户不存在");
             }
 
             return ApiResponse<LoginResponse>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<LoginResponse>.Error(ex.Message);
+            return Ok(ApiResponse<LoginResponse>.Error(ex.Message);
         }
     }
 
@@ -85,7 +85,7 @@ public class AuthController : ControllerBase
             var roleClaim = User.FindFirst(ClaimTypes.Role);
             if (roleClaim?.Value != "super_admin")
             {
-                return ApiResponse<LoginResponse>.Forbidden("只有超级管理员可以切换客户");
+                return Ok(ApiResponse<LoginResponse>.Forbidden("只有超级管理员可以切换客户");
             }
 
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
@@ -97,7 +97,7 @@ public class AuthController : ControllerBase
             var result = await _authService.SwitchCustomerAsync(userId, request.CustomerId);
             if (result == null)
             {
-                return ApiResponse<LoginResponse>.NotFound("客户不存在");
+                return Ok(ApiResponse<LoginResponse>.NotFound("客户不存在");
             }
 
             return ApiResponse<LoginResponse>.Success(result, "切换成功");
@@ -108,7 +108,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return ApiResponse<LoginResponse>.Error(ex.Message);
+            return Ok(ApiResponse<LoginResponse>.Error(ex.Message);
         }
     }
 }

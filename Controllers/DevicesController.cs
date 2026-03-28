@@ -62,14 +62,14 @@ public class DevicesController : ControllerBase
             var result = await _deviceService.GetDeviceAsync(id, appCode, allowedAreaIds);
             if (result == null)
             {
-                return ApiResponse<DeviceDto>.NotFound("设备不存在");
+                return Ok(ApiResponse<DeviceDto>.NotFound("设备不存在");
             }
 
             return ApiResponse<DeviceDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DeviceDto>.Error(ex.Message);
+            return Ok(ApiResponse<DeviceDto>.Error(ex.Message);
         }
     }
 
@@ -87,14 +87,14 @@ public class DevicesController : ControllerBase
             var result = await _deviceService.GetDeviceDetailAsync(id, appCode, allowedAreaIds);
             if (result == null)
             {
-                return ApiResponse<DeviceDetailDto>.NotFound("设备不存在");
+                return Ok(ApiResponse<DeviceDetailDto>.NotFound("设备不存在");
             }
 
             return ApiResponse<DeviceDetailDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DeviceDetailDto>.Error(ex.Message);
+            return Ok(ApiResponse<DeviceDetailDto>.Error(ex.Message);
         }
     }
 
@@ -132,11 +132,11 @@ public class DevicesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DeviceDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DeviceDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DeviceDto>.Error(ex.Message);
+            return Ok(ApiResponse<DeviceDto>.Error(ex.Message);
         }
     }
 
@@ -154,11 +154,11 @@ public class DevicesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DeviceDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DeviceDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DeviceDto>.Error(ex.Message);
+            return Ok(ApiResponse<DeviceDto>.Error(ex.Message);
         }
     }
 
@@ -176,11 +176,11 @@ public class DevicesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message);
         }
     }
 

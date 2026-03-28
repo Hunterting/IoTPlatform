@@ -6,6 +6,7 @@ using IoTPlatform.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using IoTPlatform.Configuration;
 
 namespace IoTPlatform.Controllers;
 
@@ -58,14 +59,14 @@ public class DataRulesController : ControllerBase
             var result = await _dataRuleService.GetDataRuleAsync(id, appCode);
             if (result == null)
             {
-                return ApiResponse<DataRuleDto>.NotFound("数据规则不存在");
+                return Ok(ApiResponse<DataRuleDto>.NotFound("数据规则不存在");
             }
 
             return ApiResponse<DataRuleDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
         }
     }
 
@@ -83,11 +84,11 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DataRuleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
         }
     }
 
@@ -106,15 +107,15 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DataRuleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse<DataRuleDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
         }
     }
 
@@ -133,15 +134,15 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message);
         }
     }
 }

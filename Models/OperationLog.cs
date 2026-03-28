@@ -13,9 +13,11 @@ public class OperationLog
     public long UserId { get; set; }
     [MaxLength(100)] public string? UserName { get; set; }
     [MaxLength(50)] public string? Role { get; set; }
+    public DateTime OperationTime { get; set; } = DateTime.UtcNow;
     public DateTime Time { get; set; } = DateTime.UtcNow;
     [MaxLength(50)] public string? Module { get; set; }
-    [Required, MaxLength(50)] public string Action { get; set; } = string.Empty; // create, update, delete, query, export, import
+    [Required, MaxLength(50)] public string Operation { get; set; } = string.Empty; // create, update, delete, query, export, import
+    [MaxLength(50)] public string Action { get; set; } = string.Empty; // create, update, delete, query, export, import
     [MaxLength(200)] public string? Target { get; set; }
     [MaxLength(2000)] public string? Detail { get; set; }
     [MaxLength(50)] public string? IP { get; set; }

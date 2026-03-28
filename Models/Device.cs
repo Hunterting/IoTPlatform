@@ -36,4 +36,5 @@ public class Device
     public virtual ICollection<DeviceSensor>? Sensors { get; set; }
     public virtual ICollection<DeviceDataRecord>? DataRecords { get; set; }
     public virtual ICollection<AreaDevice>? AreaDevices { get; set; }
+    public virtual ICollection<AlertRecord>? AlertRecords { get; set; }
 }

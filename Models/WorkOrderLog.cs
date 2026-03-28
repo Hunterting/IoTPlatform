@@ -12,6 +12,7 @@ public class WorkOrderLog
 
     public long WorkOrderId { get; set; }
     [MaxLength(100)] public string? Operator { get; set; }
+    [MaxLength(100)] public string? OperatorName { get; set; }
     [Required, MaxLength(50)] public string Action { get; set; } = string.Empty; // create, assign, start, resolve, close, reject, remark
     [MaxLength(2000)] public string? Comment { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

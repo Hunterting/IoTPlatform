@@ -62,7 +62,7 @@ public class AuthService : IAuthService
         }
 
         // 验证密码
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.Password))
         {
             throw new UnauthorizedAccessException("邮箱或密码错误");
         }
@@ -104,7 +104,7 @@ public class AuthService : IAuthService
         var userDto = new UserDto
         {
             Id = user.Id,
-            Name = user.Name,
+            Name = user.FullName,
             Email = user.Email,
             Role = user.Role,
             Avatar = user.Avatar,
@@ -121,8 +121,9 @@ public class AuthService : IAuthService
                 Name = customer.Name,
                 Code = customer.Code,
                 AppCode = customer.AppCode,
-                Contact = customer.Contact,
-                Phone = customer.Phone,
+                ContactPerson = customer.ContactPerson,
+                ContactPhone = customer.ContactPhone,
+                ContactEmail = customer.ContactEmail,
                 Address = customer.Address,
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
@@ -179,8 +180,9 @@ public class AuthService : IAuthService
                 Name = user.Customer.Name,
                 Code = user.Customer.Code,
                 AppCode = user.Customer.AppCode,
-                Contact = user.Customer.Contact,
-                Phone = user.Customer.Phone,
+                ContactPerson = user.Customer.ContactPerson,
+                ContactPhone = user.Customer.ContactPhone,
+                ContactEmail = user.Customer.ContactEmail,
                 Address = user.Customer.Address,
                 Status = user.Customer.Status,
                 CreatedAt = user.Customer.CreatedAt,
@@ -225,7 +227,7 @@ public class AuthService : IAuthService
         var userDto = new UserDto
         {
             Id = user.Id,
-            Name = user.Name,
+            Name = user.FullName,
             Email = user.Email,
             Role = user.Role,
             Avatar = user.Avatar,
@@ -238,8 +240,8 @@ public class AuthService : IAuthService
             Name = customer.Name,
             Code = customer.Code,
             AppCode = customer.AppCode,
-            Contact = customer.Contact,
-            Phone = customer.Phone,
+            Contact = customer.ContactPerson,
+            Phone = customer.ContactPhone,
             Address = customer.Address,
             Status = customer.Status,
             CreatedAt = customer.CreatedAt,
@@ -273,7 +275,7 @@ public class AuthService : IAuthService
             await _logRepository.LogLoginAsync(
                 userId: user.Id,
                 email: user.Email,
-                userName: user.Name,
+                userName: user.FullName,
                 ipAddress: null,
                 userAgent: null,
                 status: success ? "success" : "failed"

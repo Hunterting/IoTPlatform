@@ -13,7 +13,7 @@ public class AlertRecord
     [Required, MaxLength(50)] public string AlertNo { get; set; } = string.Empty;
     [Required, MaxLength(200)] public string DeviceName { get; set; } = string.Empty;
     [MaxLength(50)] public string? DeviceCode { get; set; }
-    [MaxLength(200)] public string? Area { get; set; }
+    [MaxLength(200)] public string? AreaName { get; set; }
     [Required, MaxLength(50)] public string AlertType { get; set; } = string.Empty; // temperature, humidity, pm25, co2, smoke, gas, water_leak, device_offline
     [Required, MaxLength(20)] public string Level { get; set; } = "info"; // info, warning, critical
     public double? Value { get; set; }
@@ -32,4 +32,5 @@ public class AlertRecord
     [ForeignKey("DeviceId")] public virtual Device? Device { get; set; }
     [ForeignKey("AreaId")] public virtual Area? Area { get; set; }
     public virtual ICollection<AlertProcessLog>? ProcessLogs { get; set; }
+    public virtual ICollection<WorkOrder>? WorkOrders { get; set; }
 }

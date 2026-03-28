@@ -70,6 +70,14 @@ public interface IRepository<T> where T : class
     /// <param name="allowedAreaIds">允许访问的区域ID列表（用于区域权限过滤）</param>
     /// <returns>IQueryable查询对象</returns>
     IQueryable<T> GetQueryable(string? appCode = null, List<long>? allowedAreaIds = null);
+
+    /// <summary>
+    /// 获取查询对象（GetQueryable的别名方法）
+    /// </summary>
+    /// <param name="appCode">应用代码（用于多租户过滤）</param>
+    /// <param name="allowedAreaIds">允许访问的区域ID列表（用于区域权限过滤）</param>
+    /// <returns>IQueryable查询对象</returns>
+    IQueryable<T> Query(string? appCode = null, List<long>? allowedAreaIds = null) => GetQueryable(appCode, allowedAreaIds);
     
     /// <summary>
     /// 添加实体

@@ -132,7 +132,13 @@ public interface IWorkOrderRepository : IRepository<WorkOrder>
     /// <param name="fileUrl">文件URL</param>
     /// <param name="fileSize">文件大小</param>
     /// <param name="fileType">文件类型</param>
-    Task AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string? fileSize = null, string? fileType = null);
+    Task<WorkOrderAttachment> AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string? fileSize = null, string? fileType = null);
+
+    /// <summary>
+    /// 删除工单附件
+    /// </summary>
+    /// <param name="attachmentId">附件ID</param>
+    Task DeleteAttachmentAsync(long attachmentId);
     
     /// <summary>
     /// 获取工单统计信息

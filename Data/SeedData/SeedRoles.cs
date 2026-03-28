@@ -47,7 +47,7 @@ namespace IoTPlatform.Data.SeedData
                         Description = "系统超级管理员，拥有所有权限",
                         IsSystem = true,
                         IsDefault = false,
-                        Status = true,
+                        Status = "active",
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -60,7 +60,7 @@ namespace IoTPlatform.Data.SeedData
                         Description = "系统管理员，拥有大部分管理权限",
                         IsSystem = true,
                         IsDefault = true,
-                        Status = true,
+                        Status = "active",
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -73,7 +73,7 @@ namespace IoTPlatform.Data.SeedData
                         Description = "客户管理员，管理特定客户的数据",
                         IsSystem = false,
                         IsDefault = false,
-                        Status = true,
+                        Status = "active",
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -86,7 +86,7 @@ namespace IoTPlatform.Data.SeedData
                         Description = "运维工程师，负责设备监控和维护",
                         IsSystem = false,
                         IsDefault = false,
-                        Status = true,
+                        Status = "active",
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
@@ -99,7 +99,7 @@ namespace IoTPlatform.Data.SeedData
                         Description = "普通用户，拥有基本查看权限",
                         IsSystem = false,
                         IsDefault = false,
-                        Status = true,
+                        Status = "active",
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow

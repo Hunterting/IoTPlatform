@@ -37,16 +37,25 @@ namespace IoTPlatform.Data.SeedData
                 _logger.LogInformation("数据库确认完成");
 
                 // 按顺序初始化种子数据
-                var seedRoles = new SeedRoles(_logger);
+                var seedRoles = new SeedRoles(
+                    _serviceProvider.GetRequiredService<ILogger<SeedRoles>>()
+                );
                 await seedRoles.InitializeAsync(context);
 
-                var seedCustomers = new SeedCustomers(_logger);
+                var seedCustomers = new SeedCustomers(
+                    _serviceProvider.GetRequiredService<ILogger<SeedCustomers>>()
+                );
                 await seedCustomers.InitializeAsync(context);
 
-                var seedUsers = new SeedUsers(_logger);
+                var seedUsers = new SeedUsers(
+                    _serviceProvider.GetRequiredService<ILogger<SeedUsers>>()
+                );
                 await seedUsers.InitializeAsync(context);
 
-                var seedDictionaries = new SeedDictionaries(_logger);
+                // 字典初始化
+                var seedDictionaries = new SeedDictionaries(
+                    _serviceProvider.GetRequiredService<ILogger<SeedDictionaries>>()
+                );
                 await seedDictionaries.InitializeAsync(context);
 
                 _logger.LogInformation("所有种子数据初始化完成");
@@ -102,7 +111,7 @@ namespace IoTPlatform.Data.SeedData
             context.Users.RemoveRange(context.Users);
             context.Roles.RemoveRange(context.Roles);
             context.Customers.RemoveRange(context.Customers);
-            context.Dictionaries.RemoveRange(context.Dictionaries);
+            context.DictionaryItems.RemoveRange(context.DictionaryItems);
 
             await context.SaveChangesAsync();
 

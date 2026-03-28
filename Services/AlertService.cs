@@ -1,7 +1,9 @@
+using AutoMapper;
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
+using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 
 namespace IoTPlatform.Services;
@@ -70,7 +72,7 @@ public class AlertService : IAlertService
                 AlertNo = alertNo,
                 DeviceName = request.DeviceName,
                 DeviceCode = request.DeviceCode,
-                Area = request.Area,
+                AreaName = request.Area,
                 AlertType = request.AlertType,
                 Level = request.Level,
                 Value = request.Value,

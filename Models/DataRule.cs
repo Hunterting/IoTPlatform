@@ -16,6 +16,7 @@ public class DataRule
     public double? MinValue { get; set; }
     public double? MaxValue { get; set; }
     [MaxLength(20)] public string? Level { get; set; } // info, warning, critical
+    public int Priority { get; set; }
     public bool IsActive { get; set; }
     public long? DeviceId { get; set; }
     public long? AreaId { get; set; }

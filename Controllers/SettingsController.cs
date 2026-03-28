@@ -6,6 +6,7 @@ using IoTPlatform.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using IoTPlatform.Configuration;
 
 namespace IoTPlatform.Controllers;
 
@@ -58,14 +59,14 @@ public class SettingsController : ControllerBase
             var result = await _settingsService.GetSettingAsync(key, appCode);
             if (result == null)
             {
-                return ApiResponse<SettingDto>.NotFound("设置不存在");
+                return Ok(ApiResponse<SettingDto>.NotFound("设置不存在");
             }
 
             return ApiResponse<SettingDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
         }
     }
 
@@ -101,11 +102,11 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<SettingDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
         }
     }
 
@@ -124,15 +125,15 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<SettingDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse<SettingDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
         }
     }
 
@@ -151,15 +152,15 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message);
         }
     }
 }

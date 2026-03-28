@@ -50,11 +50,11 @@ public class AppDbContext : DbContext
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
 
-    // 日志和字典
-    public DbSet<LoginLog> LoginLogs { get; set; }
-    public DbSet<OperationLog> OperationLogs { get; set; }
-    public DbSet<DictionaryItem> DictionaryItems { get; set; }
-    public DbSet<DictionaryTypeConfig> DictionaryTypes { get; set; }
+        // 日志和字典
+        public DbSet<LoginLog> LoginLogs { get; set; }
+        public DbSet<OperationLog> OperationLogs { get; set; }
+        public DbSet<DictionaryItem> DictionaryItems { get; set; }
+        public DbSet<DictionaryTypeConfig> DictionaryTypeConfigs { get; set; }
 
     // 监控数据
     public DbSet<AirQualityData> AirQualityData { get; set; }
@@ -502,7 +502,8 @@ public class AppDbContext : DbContext
                 }
 
                 // 初始化种子数据
-                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, logger);
+                var dataSeederLogger = serviceProvider.GetRequiredService<ILogger<IoTPlatform.Data.SeedData.DataSeeder>>();
+                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, dataSeederLogger);
                 await seeder.InitializeAllAsync();
 
                 logger.LogInformation("数据库种子数据初始化完成");
@@ -526,7 +527,8 @@ public class AppDbContext : DbContext
                 logger.LogInformation("开始初始化开发环境数据库种子数据...");
 
                 // 开发环境：清空数据库并重新初始化
-                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, logger);
+                var dataSeederLogger = serviceProvider.GetRequiredService<ILogger<IoTPlatform.Data.SeedData.DataSeeder>>();
+                var seeder = new IoTPlatform.Data.SeedData.DataSeeder(serviceProvider, dataSeederLogger);
                 await seeder.InitializeForDevelopmentAsync();
 
                 logger.LogInformation("开发环境数据库种子数据初始化完成");
@@ -539,4 +541,3 @@ public class AppDbContext : DbContext
             }
         }
     }
-}

@@ -19,6 +19,8 @@ public class ArchiveDeviceMarker
     public double Y { get; set; }
     public double Z { get; set; }
     public string? Sensors { get; set; } // JSON array of sensor info
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey("ArchiveId")] public virtual Archive? Archive { get; set; }
     [ForeignKey("DeviceId")] public virtual Device? Device { get; set; }

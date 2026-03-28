@@ -19,8 +19,13 @@ public class ETLTask
     [MaxLength(20)] public string? Status { get; set; } // active, paused, completed, failed
     public DateTime? LastRunTime { get; set; }
     public DateTime? NextRunTime { get; set; }
+    public bool IsActive { get; set; } = true;
+    [MaxLength(20)] public string? LastRunAt { get; set; }
+    [MaxLength(20)] public string? NextRunAt { get; set; }
     public string? AppCode { get; set; }
     [MaxLength(1000)] public string? Description { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    public virtual DataRule? DataRule { get; set; }
 }

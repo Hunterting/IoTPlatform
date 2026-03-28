@@ -13,9 +13,10 @@ public class DeviceHub : Hub
     public override async Task OnConnectedAsync()
     {
         var appCode = Context.GetHttpContext()?.User.FindFirst("AppCode")?.Value;
+        var connectionId = Context.ConnectionId;
         if (!string.IsNullOrEmpty(appCode))
         {
-            await Groups.AddToGroupAsync(appCode);
+            await Groups.AddToGroupAsync(connectionId, appCode);
         }
         await base.OnConnectedAsync();
     }
@@ -26,9 +27,10 @@ public class DeviceHub : Hub
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var appCode = Context.GetHttpContext()?.User.FindFirst("AppCode")?.Value;
+        var connectionId = Context.ConnectionId;
         if (!string.IsNullOrEmpty(appCode))
         {
-            await Groups.RemoveFromGroupAsync(appCode);
+            await Groups.RemoveFromGroupAsync(connectionId, appCode);
         }
         await base.OnDisconnectedAsync(exception);
     }

@@ -12,6 +12,7 @@ public class WorkOrderDto
     public string Priority { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public long? CustomerId { get; set; }
+    public string? CustomerName { get; set; }
     public long? DeviceId { get; set; }
     public long? AreaId { get; set; }
     public string? DeviceName { get; set; }

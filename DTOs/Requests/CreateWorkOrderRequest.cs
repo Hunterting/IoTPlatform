@@ -23,7 +23,13 @@ public class CreateWorkOrderRequest
 
     public long? DeviceId { get; set; }
 
+    [MaxLength(200)] public string? DeviceName { get; set; }
+
+    [MaxLength(50)] public string? DeviceCode { get; set; }
+
     public long? AreaId { get; set; }
+
+    [MaxLength(200)] public string? AreaName { get; set; }
 
     [MaxLength(2000, ErrorMessage = "描述长度不能超过2000字符")]
     public string? Description { get; set; }

@@ -25,6 +25,7 @@ public class EnvironmentData
     public double? Formaldehyde { get; set; }
     public double? Smoke { get; set; }
     public double? TVOC { get; set; }
+    public DateTime RecordTime { get; set; } = DateTime.UtcNow;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     public string? AppCode { get; set; }
 

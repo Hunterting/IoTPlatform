@@ -15,6 +15,7 @@ public class WorkOrderAttachment
     [MaxLength(500)] public string? FileUrl { get; set; }
     [MaxLength(20)] public string? FileSize { get; set; }
     [MaxLength(50)] public string? FileType { get; set; }
+    public long FileSizeBytes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     [ForeignKey("WorkOrderId")] public virtual WorkOrder? WorkOrder { get; set; }

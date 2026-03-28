@@ -58,7 +58,7 @@ namespace IoTPlatform.Data.SeedData
                         FullName = "系统管理员",
                         Email = "admin@iotplatform.com",
                         Phone = "13800138000",
-                        Status = true,
+                        Status = "active",
                         IsSuperAdmin = true,
                         RoleId = 1, // 超级管理员角色
                         AppCode = "system",
@@ -75,7 +75,7 @@ namespace IoTPlatform.Data.SeedData
                         FullName = "客户经理",
                         Email = "manager@iotplatform.com",
                         Phone = "13800138001",
-                        Status = true,
+                        Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 2, // 系统管理员角色
                         AppCode = "customer_001",
@@ -92,7 +92,7 @@ namespace IoTPlatform.Data.SeedData
                         FullName = "运维工程师1",
                         Email = "operator1@iotplatform.com",
                         Phone = "13800138002",
-                        Status = true,
+                        Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 4, // 运维工程师角色
                         AppCode = "customer_001",
@@ -109,7 +109,7 @@ namespace IoTPlatform.Data.SeedData
                         FullName = "普通用户1",
                         Email = "user1@iotplatform.com",
                         Phone = "13800138003",
-                        Status = true,
+                        Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 5, // 普通用户角色
                         AppCode = "customer_001",

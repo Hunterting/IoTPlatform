@@ -1,6 +1,5 @@
 using MQTTnet;
 using MQTTnet.Client;
-using MQTTnet.Client.Options;
 using MQTTnet.Protocol;
 using System.Text;
 

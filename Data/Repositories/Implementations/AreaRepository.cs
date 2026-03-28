@@ -44,18 +44,18 @@ public class AreaRepository : Repository<Area>, IAreaRepository
     public async Task<IEnumerable<Area>> GetPathAsync(long areaId, string? appCode = null)
     {
         var path = new List<Area>();
-        var currentId = areaId;
-        
-        while (currentId.HasValue)
+        long? currentId = areaId;
+
+        while (currentId != null)
         {
             var query = ApplyFilters(_context.Areas.AsQueryable(), appCode, null);
-            var area = await query.FirstOrDefaultAsync(a => a.Id == currentId.Value);
+            var area = await query.FirstOrDefaultAsync(a => a.Id == currentId);
             if (area == null) break;
-            
+
             path.Insert(0, area);
             currentId = area.ParentId;
         }
-        
+
         return path;
     }
 
@@ -114,9 +114,10 @@ public class AreaRepository : Repository<Area>, IAreaRepository
         var area = await _context.Areas
             .Where(a => a.Id == areaId)
             .Include(a => a.Devices)
+            .ThenInclude(ad => ad.Device)
             .FirstOrDefaultAsync();
-        
-        return area?.Devices ?? Enumerable.Empty<Device>();
+
+        return area?.Devices?.Select(ad => ad.Device).Where(d => d != null).Cast<Device>() ?? Enumerable.Empty<Device>();
     }
 
     public async Task<IEnumerable<Archive>> GetArchivesAsync(long areaId)

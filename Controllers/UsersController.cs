@@ -62,14 +62,14 @@ public class UsersController : ControllerBase
             var result = await _userService.GetUserAsync(id, appCode, role);
             if (result == null)
             {
-                return ApiResponse<UserDto>.NotFound("用户不存在");
+                return Ok(ApiResponse<UserDto>.NotFound("用户不存在");
             }
 
             return ApiResponse<UserDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message);
         }
     }
 
@@ -87,11 +87,11 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<UserDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message);
         }
     }
 
@@ -112,15 +112,15 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<UserDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse<UserDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<UserDto>.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message);
         }
     }
 
@@ -141,15 +141,15 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 
@@ -169,25 +169,25 @@ public class UsersController : ControllerBase
             var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             // 只能修改自己的密码或超级管理员可以修改
-            if (role != Roles.SUPER_ADMIN && currentUserId != id.ToString())
+            if (role != "super_admin" && currentUserId != id.ToString())
             {
-                return ApiResponse.Forbidden("无权修改该用户密码");
+                return Ok(ApiResponse.Forbidden("无权修改该用户密码"));
             }
 
             await _userService.ChangePasswordAsync(id, request.OldPassword, request.NewPassword, appCode, role);
-            return ApiResponse.Success("密码修改成功");
+            return Ok(ApiResponse.Success("密码修改成功"));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Unauthorized(ex.Message);
+            return Ok(ApiResponse.Unauthorized(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }

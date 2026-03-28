@@ -17,6 +17,8 @@ public class Role
     [Required][MaxLength(10)] public string DataScope { get; set; } = "CUSTOM"; // ALL, CUSTOM
     public string? AppCode { get; set; }
     public bool IsSystem { get; set; } // true for default roles that cannot be deleted
+    public bool IsDefault { get; set; } // true for default roles
+    public string Status { get; set; } = "active"; // active, inactive
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

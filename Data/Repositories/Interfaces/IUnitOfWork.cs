@@ -27,11 +27,21 @@ public interface IUnitOfWork : IDisposable
     /// 提交事务
     /// </summary>
     Task CommitTransactionAsync();
-    
+
+    /// <summary>
+    /// 提交事务（别名方法）
+    /// </summary>
+    Task CommitAsync();
+
     /// <summary>
     /// 回滚事务
     /// </summary>
     Task RollbackTransactionAsync();
+
+    /// <summary>
+    /// 回滚事务（别名方法）
+    /// </summary>
+    Task RollbackAsync();
     
     /// <summary>
     /// 获取用户仓储
@@ -102,14 +112,14 @@ public interface IUnitOfWork : IDisposable
     /// 获取ETL任务仓储
     /// </summary>
     IETLTaskRepository ETLTaskRepository { get; }
-    
+
     /// <summary>
     /// 获取日志仓储
     /// </summary>
-    ILogRepository LogRepository { get; }
-    
+    // ILogRepository LogRepository { get; }
+
     /// <summary>
     /// 获取监控数据仓储
     /// </summary>
-    IMonitoringRepository MonitoringRepository { get; }
+    // IMonitoringRepository MonitoringRepository { get; }
 }

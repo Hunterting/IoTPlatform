@@ -6,6 +6,7 @@ using IoTPlatform.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
+using IoTPlatform.Configuration;
 
 namespace IoTPlatform.Controllers;
 
@@ -59,14 +60,14 @@ public class DictionariesController : ControllerBase
             var result = await _dictionaryService.GetDictionaryTypeAsync(id, appCode);
             if (result == null)
             {
-                return ApiResponse<DictionaryTypeDto>.NotFound("字典类型不存在");
+                return Ok(ApiResponse<DictionaryTypeDto>.NotFound("字典类型不存在");
             }
 
             return ApiResponse<DictionaryTypeDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryTypeDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.Error(ex.Message);
         }
     }
 
@@ -84,11 +85,11 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DictionaryTypeDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryTypeDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.Error(ex.Message);
         }
     }
 
@@ -107,15 +108,15 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DictionaryTypeDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse<DictionaryTypeDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryTypeDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryTypeDto>.Error(ex.Message);
         }
     }
 
@@ -134,15 +135,15 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message);
         }
     }
 
@@ -180,14 +181,14 @@ public class DictionariesController : ControllerBase
             var result = await _dictionaryService.GetDictionaryItemAsync(id, appCode);
             if (result == null)
             {
-                return ApiResponse<DictionaryItemDto>.NotFound("字典项不存在");
+                return Ok(ApiResponse<DictionaryItemDto>.NotFound("字典项不存在");
             }
 
             return ApiResponse<DictionaryItemDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryItemDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.Error(ex.Message);
         }
     }
 
@@ -205,11 +206,11 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DictionaryItemDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryItemDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.Error(ex.Message);
         }
     }
 
@@ -228,15 +229,15 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse<DictionaryItemDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse<DictionaryItemDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse<DictionaryItemDto>.Error(ex.Message);
+            return Ok(ApiResponse<DictionaryItemDto>.Error(ex.Message);
         }
     }
 
@@ -255,15 +256,15 @@ public class DictionariesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message);
         }
         catch (Exception ex)
         {
-            return ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message);
         }
     }
 

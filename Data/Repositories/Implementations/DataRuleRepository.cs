@@ -74,6 +74,17 @@ public class DataRuleRepository : Repository<DataRule>, IDataRuleRepository
         }
     }
 
+    public async Task UpdateStatusAsync(long ruleId, bool isActive)
+    {
+        var rule = await _context.DataRules.FindAsync(ruleId);
+        if (rule != null)
+        {
+            rule.IsActive = isActive;
+            rule.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
+    }
+
     public async Task<bool> NameExistsAsync(string name, string? appCode = null, long? excludeRuleId = null)
     {
         var query = ApplyFilters(_context.DataRules.AsQueryable(), appCode, null);
@@ -98,15 +109,42 @@ public class DataRuleRepository : Repository<DataRule>, IDataRuleRepository
             .ToListAsync();
     }
 
-    public async Task<(int TotalRules, int ActiveRules, int CriticalRules)> GetDataRuleStatsAsync(string? appCode = null)
+    public async Task<DataRuleStats> GetDataRuleStatsAsync(string? appCode = null)
     {
         var query = ApplyFilters(_context.DataRules.AsQueryable(), appCode, null);
         var rules = await query.ToListAsync();
+
+        return new DataRuleStats
+        {
+            TotalRules = rules.Count,
+            ActiveRules = rules.Count(r => r.IsActive),
+            InactiveRules = rules.Count(r => !r.IsActive),
+            AlertRules = rules.Count(r => r.RuleType == "alert"),
+            TransformRules = rules.Count(r => r.RuleType == "transform"),
+            ValidationRules = rules.Count(r => r.RuleType == "validation"),
+            CriticalRules = rules.Count(r => r.Level == "critical"),
+            WarningRules = rules.Count(r => r.Level == "warning"),
+            InfoRules = rules.Count(r => r.Level == "info"),
+            LastUpdate = DateTime.UtcNow
+        };
+    }
+
+    public async Task<IEnumerable<DataRule>> GetApplicableRulesAsync(long deviceId, string? dataType = null, string? appCode = null)
+    {
+        var query = ApplyFilters(_context.DataRules.AsQueryable(), appCode, null);
         
-        return (
-            rules.Count,
-            rules.Count(r => r.IsActive),
-            rules.Count(r => r.Level == "critical")
-        );
+        var device = await _context.Devices.FindAsync(deviceId);
+        var areaId = device?.AreaId;
+        
+        return await query
+            .Where(r => r.IsActive &&
+                (r.DeviceId == null || r.DeviceId == deviceId) &&
+                (r.AreaId == null || r.AreaId == areaId) &&
+                (string.IsNullOrEmpty(dataType) || r.DataType == dataType))
+            .Include(r => r.Device)
+            .Include(r => r.Area)
+            .OrderBy(r => r.Priority)
+            .ThenBy(r => r.Id)
+            .ToListAsync();
     }
 }

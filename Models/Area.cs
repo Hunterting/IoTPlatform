@@ -26,4 +26,5 @@ public class Area
     [ForeignKey("CustomerId")] public virtual Customer? Customer { get; set; }
     public virtual ICollection<Area>? Children { get; set; }
     public virtual ICollection<AreaDevice>? Devices { get; set; }
+    public virtual ICollection<Archive>? Archives { get; set; }
 }
