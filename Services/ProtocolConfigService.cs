@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -29,7 +29,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode)
     {
-        var query = _protocolConfigRepository.Query();
+        var query = _protocolConfigRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -84,7 +84,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public async Task<ProtocolConfigDto?> GetProtocolConfigAsync(long id, string? appCode)
     {
-        var query = _protocolConfigRepository.Query();
+        var query = _protocolConfigRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))

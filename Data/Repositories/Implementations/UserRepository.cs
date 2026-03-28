@@ -20,10 +20,10 @@ public class UserRepository : Repository<User>, IUserRepository
             .FirstOrDefaultAsync(u => u.Email == email);
     }
 
-    public async Task<bool> ValidatePasswordAsync(string email, string passwordHash)
+    public async Task<bool> ValidatePasswordAsync(string email, string password)
     {
         var user = await GetByEmailAsync(email);
-        return user != null && user.PasswordHash == passwordHash;
+        return user != null && user.Password == password;
     }
 
     public async Task<IEnumerable<User>> GetByRoleAsync(string role, string? appCode = null)
@@ -50,12 +50,12 @@ public class UserRepository : Repository<User>, IUserRepository
         return await query.AnyAsync(u => u.Email == email);
     }
 
-    public async Task UpdatePasswordAsync(long userId, string passwordHash)
+    public async Task UpdatePasswordAsync(long userId, string password)
     {
         var user = await _context.Users.FindAsync(userId);
         if (user != null)
         {
-            user.PasswordHash = passwordHash;
+            user.Password = password;
             user.UpdatedAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
         }

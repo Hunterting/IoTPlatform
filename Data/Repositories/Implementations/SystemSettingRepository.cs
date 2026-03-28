@@ -14,7 +14,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
 
         public async Task<SystemSetting?> GetByKeyAsync(string key, string? appCode = null)
         {
-            var query = _dbSet.Where(s => s.SettingKey == key);
+            var query = _dbSet.Where(s => s.Key == key);
 
             if (!string.IsNullOrEmpty(appCode))
             {
@@ -41,7 +41,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
 
         public async Task<bool> KeyExistsAsync(string key, string? appCode = null, long? excludeSettingId = null)
         {
-            var query = _dbSet.Where(s => s.SettingKey == key);
+            var query = _dbSet.Where(s => s.Key == key);
 
             if (!string.IsNullOrEmpty(appCode))
             {
@@ -65,8 +65,8 @@ namespace IoTPlatform.Data.Repositories.Implementations
             {
                 setting = new SystemSetting
                 {
-                    SettingKey = key,
-                    SettingValue = defaultValue ?? string.Empty,
+                    Key = key,
+                    Value = defaultValue ?? string.Empty,
                     Description = description,
                     Category = category,
                     ValueType = valueType,
@@ -87,7 +87,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
         {
             var setting = await GetByKeyAsync(key, appCode);
 
-            if (setting == null || string.IsNullOrEmpty(setting.SettingValue))
+            if (setting == null || string.IsNullOrEmpty(setting.Value))
             {
                 return defaultValue;
             }
@@ -96,18 +96,18 @@ namespace IoTPlatform.Data.Repositories.Implementations
             {
                 if (typeof(T) == typeof(string))
                 {
-                    return (T)(object)setting.SettingValue;
+                    return (T)(object)setting.Value;
                 }
                 else if (typeof(T) == typeof(int))
                 {
-                    if (int.TryParse(setting.SettingValue, out int intValue))
+                    if (int.TryParse(setting.Value, out int intValue))
                     {
                         return (T)(object)intValue;
                     }
                 }
                 else if (typeof(T) == typeof(bool))
                 {
-                    if (bool.TryParse(setting.SettingValue, out bool boolValue))
+                    if (bool.TryParse(setting.Value, out bool boolValue))
                     {
                         return (T)(object)boolValue;
                     }
@@ -134,7 +134,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
             }
             catch
             {
-                // 转换失败，返回默认值
+                // 转换失败，返回默认�?
             }
 
             return defaultValue;
@@ -228,8 +228,8 @@ namespace IoTPlatform.Data.Repositories.Implementations
                 {
                     setting = new SystemSetting
                     {
-                        SettingKey = kvp.Key,
-                        SettingValue = kvp.Value,
+                        Key = kvp.Key,
+                        Value = kvp.Value,
                         AppCode = appCode,
                         IsActive = true,
                         CreatedAt = DateTime.UtcNow,
@@ -239,7 +239,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
                 }
                 else
                 {
-                    setting.SettingValue = kvp.Value;
+                    setting.Value = kvp.Value;
                     setting.UpdatedAt = DateTime.UtcNow;
                 }
             }

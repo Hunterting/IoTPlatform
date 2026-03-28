@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -29,7 +29,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task<PagedResponse<ETLTaskDto>> GetETLTasksAsync(int page, int pageSize, string? keyword, string? taskType, string? appCode)
     {
-        var query = _etlTaskRepository.Query();
+        var query = _etlTaskRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -84,7 +84,7 @@ public class ETLTaskService : IETLTaskService
     /// </summary>
     public async Task<ETLTaskDto?> GetETLTaskAsync(long id, string? appCode)
     {
-        var query = _etlTaskRepository.Query();
+        var query = _etlTaskRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))

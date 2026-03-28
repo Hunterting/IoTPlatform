@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -34,7 +34,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds)
     {
-        var baseQuery = _workOrderRepository.Query();
+        var baseQuery = _workOrderRepository.GetQueryable();
         
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -110,7 +110,7 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto?> GetWorkOrderAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var baseQuery = _workOrderRepository.Query();
+        var baseQuery = _workOrderRepository.GetQueryable();
         
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))

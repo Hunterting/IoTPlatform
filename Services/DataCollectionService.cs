@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
@@ -55,7 +55,7 @@ public class DataCollectionService : IDataCollectionService
             Log.Information("Device data saved: DeviceId={DeviceId}, AppCode={AppCode}", deviceId, appCode);
 
             // 2. 获取活跃的数据规则
-            var query = _dataRuleRepository.Query()
+            var query = _dataRuleRepository.GetQueryable()
                 .Where(r => r.IsActive && r.AppCode == appCode)
                 .Where(r => !r.DeviceId.HasValue || r.DeviceId == deviceId);
 
@@ -99,18 +99,18 @@ public class DataCollectionService : IDataCollectionService
         // 创建告警记录
         var alert = new AlertRecord
         {
+            AlertNo = Guid.NewGuid().ToString("N").Substring(0, 32),
             DeviceId = deviceId,
             AreaId = rule.AreaId,
-            Type = alertType,
+            AlertType = alertType,
             Level = alertLevel,
-            Message = $"规则 [{rule.Name}] 触发：数据超出阈值",
-            Detail = dataRecord.SensorData,
+            Remark = $"规则 [{rule.Name}] 触发：数据超出阈值",
             Status = "pending",
-            Severity = "medium",
             Value = sensorData.ContainsKey(rule.DataType ?? "")
-                ? sensorData[rule.DataType ?? ""].ToString()
+                ? double.Parse(sensorData[rule.DataType ?? ""]?.ToString() ?? "0")
                 : null,
-            Unit = null,
+            Threshold = rule.MaxValue ?? rule.MinValue,
+            AlertTime = DateTime.UtcNow,
             AppCode = rule.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

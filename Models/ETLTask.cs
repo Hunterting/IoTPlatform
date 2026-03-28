@@ -12,6 +12,7 @@ public class ETLTask
 
     [Required][MaxLength(100)] public string Name { get; set; } = string.Empty;
     [MaxLength(50)] public string? TaskType { get; set; } // transform, aggregation, export
+    [MaxLength(50)] public string? TriggerType { get; set; } // manual, scheduled, event
     [MaxLength(1000)] public string? SourceConfig { get; set; } // JSON
     [MaxLength(1000)] public string? TargetConfig { get; set; } // JSON
     [MaxLength(1000)] public string? TransformRule { get; set; } // JSON
@@ -19,13 +20,15 @@ public class ETLTask
     [MaxLength(20)] public string? Status { get; set; } // active, paused, completed, failed
     public DateTime? LastRunTime { get; set; }
     public DateTime? NextRunTime { get; set; }
+    public DateTime? CompletedAt { get; set; }
     public bool IsActive { get; set; } = true;
     [MaxLength(20)] public string? LastRunAt { get; set; }
     [MaxLength(20)] public string? NextRunAt { get; set; }
     public string? AppCode { get; set; }
+    public long? DataRuleId { get; set; }
     [MaxLength(1000)] public string? Description { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    public virtual DataRule? DataRule { get; set; }
+    [ForeignKey("DataRuleId")] public virtual DataRule? DataRule { get; set; }
 }

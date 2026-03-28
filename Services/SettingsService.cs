@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -28,7 +28,7 @@ public class SettingsService : ISettingsService
     /// </summary>
     public async Task<PagedResponse<SettingDto>> GetSettingsAsync(int page, int pageSize, string? category, string? keyword, string? appCode)
     {
-        var query = _settingsRepository.Query();
+        var query = _settingsRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))

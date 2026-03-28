@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -37,7 +37,7 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode)
     {
-        var query = _dataRuleRepository.Query()
+        var query = _dataRuleRepository.GetQueryable()
             .Include(d => d.Device)
             .Include(d => d.Area);
 
@@ -97,7 +97,7 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<DataRuleDto?> GetDataRuleAsync(long id, string? appCode)
     {
-        var query = _dataRuleRepository.Query()
+        var query = _dataRuleRepository.GetQueryable()
             .Include(d => d.Device)
             .Include(d => d.Area);
 
@@ -159,7 +159,7 @@ public class DataRuleService : IDataRuleService
         await _unitOfWork.SaveChangesAsync();
 
         // 重新加载以包含关联数据
-        rule = await _dataRuleRepository.Query()
+        rule = await _dataRuleRepository.GetQueryable()
             .Include(d => d.Device)
             .Include(d => d.Area)
             .FirstOrDefaultAsync(d => d.Id == rule.Id);
@@ -191,7 +191,7 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<DataRuleDto> UpdateDataRuleAsync(long id, UpdateDataRuleRequest request, string? appCode)
     {
-        var rule = await _dataRuleRepository.Query()
+        var rule = await _dataRuleRepository.GetQueryable()
             .Include(d => d.Device)
             .Include(d => d.Area)
             .FirstOrDefaultAsync(d => d.Id == id);

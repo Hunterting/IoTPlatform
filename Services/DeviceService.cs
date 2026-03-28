@@ -1,8 +1,9 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
 
@@ -104,7 +105,7 @@ public class DeviceService : IDeviceService
     /// </summary>
     public async Task<DeviceDto?> GetDeviceAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _deviceRepository.Query()
+        var query = _deviceRepository.GetQueryable()
             .Include(d => d.Area)
             .Include(d => d.Project);
 
@@ -337,9 +338,9 @@ public class DeviceService : IDeviceService
         var areaId = device.AreaId;
 
         // 检查是否有关联数据
-        var hasDataRecords = await _deviceRepository.Query().AnyAsync(r => r.DeviceId == id);
-        var hasSensors = await _deviceRepository.Query().AnyAsync(s => s.Sensors != null && s.Sensors.Any());
-        var hasAreaDevices = _deviceRepository.Query().Any(d => d.AreaId == id);
+        var hasDataRecords = await _deviceRepository.GetQueryable().AnyAsync(r => r.DeviceId == id);
+        var hasSensors = await _deviceRepository.GetQueryable().AnyAsync(s => s.Sensors != null && s.Sensors.Any());
+        var hasAreaDevices = _deviceRepository.GetQueryable().Any(d => d.AreaId == id);
 
         if (hasDataRecords || hasSensors || hasAreaDevices)
         {
@@ -367,7 +368,7 @@ public class DeviceService : IDeviceService
             return new List<DeviceDto>();
         }
 
-        var query = _deviceRepository.Query()
+        var query = _deviceRepository.GetQueryable()
             .Include(d => d.Area)
             .Where(d => d.AreaId == areaId);
 
@@ -412,7 +413,7 @@ public class DeviceService : IDeviceService
     /// </summary>
     public async Task<DeviceDetailDto?> GetDeviceDetailAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _deviceRepository.Query()
+        var query = _deviceRepository.GetQueryable()
             .Include(d => d.Area)
             .Include(d => d.Project)
             .Include(d => d.Sensors);
@@ -476,7 +477,7 @@ public class DeviceService : IDeviceService
         var area = await _areaRepository.GetByIdAsync(areaId);
         if (area != null)
         {
-            var count = await _deviceRepository.Query()
+            var count = await _deviceRepository.GetQueryable()
                 .Where(d => d.AreaId == areaId)
                 .CountAsync();
             area.DeviceCount = count;

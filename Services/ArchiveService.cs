@@ -1,4 +1,4 @@
-using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -31,7 +31,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode)
     {
-        var baseQuery = _archiveRepository.Query();
+        var baseQuery = _archiveRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -95,7 +95,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<ArchiveDto?> GetArchiveAsync(long id, string? appCode)
     {
-        var baseQuery = _archiveRepository.Query();
+        var baseQuery = _archiveRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -154,7 +154,7 @@ public class ArchiveService : IArchiveService
         await _unitOfWork.SaveChangesAsync();
 
         // 重新加载以包含关联数据
-        archive = await _archiveRepository.Query()
+        archive = await _archiveRepository.GetQueryable()
             .Include(a => a.Area)
             .FirstOrDefaultAsync(a => a.Id == archive.Id);
 
@@ -183,7 +183,7 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<ArchiveDto> UpdateArchiveAsync(long id, UpdateArchiveRequest request, string? appCode)
     {
-        var archive = await _archiveRepository.Query()
+        var archive = await _archiveRepository.GetQueryable()
             .Include(a => a.Area)
             .FirstOrDefaultAsync(a => a.Id == id);
         if (archive == null)
@@ -247,13 +247,6 @@ public class ArchiveService : IArchiveService
         if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该档案");
-        }
-
-        // 检查是否有设备标记关联
-        var hasMarkers = await _archiveRepository.Query().AnyAsync(m => m.ArchiveId == id);
-        if (hasMarkers)
-        {
-            throw new InvalidOperationException("档案存在设备标记，无法删除");
         }
 
         await _archiveRepository.DeleteAsync(archive);

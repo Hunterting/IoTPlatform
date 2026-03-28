@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;

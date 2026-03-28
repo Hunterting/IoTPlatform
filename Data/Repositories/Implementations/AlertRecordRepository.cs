@@ -342,7 +342,7 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
             .Include(a => a.WorkOrders)
                 .ThenInclude(w => w.Attachments)
             .Include(a => a.WorkOrders)
-                .ThenInclude(w => w.ProcessLogs)
+                .ThenInclude(w => w.Logs)
             .FirstOrDefaultAsync(a => a.Id == id);
     }
 }
