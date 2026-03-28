@@ -55,8 +55,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
 
             return await query
                 .Include(t => t.DataRule)
-                .OrderBy(t => t.Priority)
-                .ThenBy(t => t.CreatedAt)
+                .OrderBy(t => t.CreatedAt)
                 .ToListAsync();
         }
 
@@ -66,14 +65,14 @@ namespace IoTPlatform.Data.Repositories.Implementations
             if (task != null)
             {
                 task.Status = status;
-                if (lastRunTime.HasValue)
-                {
-                    task.LastRunAt = lastRunTime.Value;
-                }
-                if (nextRunTime.HasValue)
-                {
-                    task.NextRunAt = nextRunTime.Value;
-                }
+            if (lastRunTime.HasValue)
+            {
+                task.LastRunTime = lastRunTime.Value;
+            }
+            if (nextRunTime.HasValue)
+            {
+                task.NextRunTime = nextRunTime.Value;
+            }
                 task.UpdatedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
             }
@@ -166,10 +165,10 @@ namespace IoTPlatform.Data.Repositories.Implementations
                 .ToListAsync();
         }
 
-        public async Task<ETLTask?> GetLatestByDataRuleIdAsync(Guid dataRuleId)
+        public async Task<ETLTask?> GetLatestByDataRuleIdAsync(long dataRuleId)
         {
             return await _dbSet
-                .Where(t => t.DataRuleId == dataRuleId)
+                .Where(t => t.Id == dataRuleId)
                 .Include(t => t.DataRule)
                 .OrderByDescending(t => t.CreatedAt)
                 .FirstOrDefaultAsync();
@@ -180,7 +179,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
             return await _dbSet.CountAsync(t => t.Status == "pending" || t.Status == "processing");
         }
 
-        public async Task<bool> UpdateTaskStatusAsync(Guid taskId, string status, string? errorMessage = null)
+        public async Task<bool> UpdateTaskStatusAsync(long taskId, string status, string? errorMessage = null)
         {
             var task = await GetByIdAsync(taskId);
             if (task == null)
@@ -189,7 +188,6 @@ namespace IoTPlatform.Data.Repositories.Implementations
             }
 
             task.Status = status;
-            task.ErrorMessage = errorMessage;
 
             if (status == "completed" || status == "failed")
             {

@@ -1,4 +1,4 @@
-using IoTPlatform.DTOs.Requests;
+﻿using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
@@ -39,7 +39,8 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<LoginResponse>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -61,14 +62,16 @@ public class AuthController : ControllerBase
             var result = await _authService.GetCurrentUserAsync(userId);
             if (result == null)
             {
-                return Ok(ApiResponse<LoginResponse>.NotFound("用户不存在"));
+                var response = ApiResponse.NotFound("用户不存在");
+            return Ok(response);
             }
 
             return ApiResponse<LoginResponse>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<LoginResponse>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -85,7 +88,8 @@ public class AuthController : ControllerBase
             var roleClaim = User.FindFirst(ClaimTypes.Role);
             if (roleClaim?.Value != "super_admin")
             {
-                return Ok(ApiResponse<LoginResponse>.Forbidden("只有超级管理员可以切换客户"));
+                var response = ApiResponse.Forbidden("只有超级管理员可以切换客户");
+            return Ok(response);
             }
 
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
@@ -97,7 +101,8 @@ public class AuthController : ControllerBase
             var result = await _authService.SwitchCustomerAsync(userId, request.CustomerId);
             if (result == null)
             {
-                return Ok(ApiResponse<LoginResponse>.NotFound("客户不存在"));
+                var response = ApiResponse.NotFound("客户不存在");
+            return Ok(response);
             }
 
             return ApiResponse<LoginResponse>.Success(result, "切换成功");
@@ -108,7 +113,8 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<LoginResponse>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 }

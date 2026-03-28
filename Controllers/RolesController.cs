@@ -1,4 +1,4 @@
-using IoTPlatform.Configuration;
+﻿using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
@@ -61,14 +61,16 @@ public class RolesController : ControllerBase
             var result = await _roleService.GetRoleAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<RoleDto>.NotFound("角色不存在"));
+                var response = ApiResponse.NotFound("角色不存在");
+            return Ok(response);
             }
 
             return ApiResponse<RoleDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -86,11 +88,13 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -111,15 +115,18 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<RoleDto>.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -140,15 +147,18 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 

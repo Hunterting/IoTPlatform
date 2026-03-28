@@ -146,7 +146,7 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
     public async Task<IEnumerable<AlertProcessLog>> GetProcessLogsAsync(long alertId)
     {
         return await _context.AlertProcessLogs
-            .Where(l => l.AlertId == alertId)
+            .Where(l => l.AlertRecordId == alertId)
             .OrderBy(l => l.CreatedAt)
             .ToListAsync();
     }
@@ -155,8 +155,8 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
     {
         var log = new AlertProcessLog
         {
-            AlertId = alertId,
-            OperatorName = operatorName,
+            AlertRecordId = alertId,
+            ProcessedBy = operatorName,
             Action = action,
             Comment = comment,
             CreatedAt = DateTime.UtcNow
@@ -251,7 +251,7 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
     public async Task<IEnumerable<AlertProcessLog>> GetAlertLogsAsync(long alertId)
     {
         return await _context.AlertProcessLogs
-            .Where(l => l.AlertId == alertId)
+            .Where(l => l.AlertRecordId == alertId)
             .OrderBy(l => l.CreatedAt)
             .ToListAsync();
     }

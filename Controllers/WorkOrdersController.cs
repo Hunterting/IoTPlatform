@@ -1,4 +1,4 @@
-using IoTPlatform.Configuration;
+﻿using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
@@ -63,14 +63,16 @@ public class WorkOrdersController : ControllerBase
             var result = await _workOrderService.GetWorkOrderAsync(id, appCode, allowedAreaIds);
             if (result == null)
             {
-                return Ok(ApiResponse<WorkOrderDto>.NotFound("工单不存在"));
+                var response = ApiResponse.NotFound("工单不存在");
+            return Ok(response);
             }
 
             return ApiResponse<WorkOrderDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -88,11 +90,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -110,11 +114,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -132,11 +138,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -154,11 +162,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -176,11 +186,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -198,11 +210,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -220,11 +234,13 @@ public class WorkOrdersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -278,7 +294,8 @@ public class WorkOrdersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<WorkOrderAttachmentDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -296,7 +313,8 @@ public class WorkOrdersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 

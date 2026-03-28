@@ -66,7 +66,7 @@ public class UserService : IUserService
         var userDtos = new List<UserDto>();
         foreach (var user in users)
         {
-            customer? customer = null;
+            Customer? customer = null;
             if (user.CustomerId.HasValue)
             {
                 customer = await _customerRepository.GetByIdAsync(user.CustomerId.Value);
@@ -283,7 +283,7 @@ public class UserService : IUserService
         }
 
         // 检查是否有关联数据（工单、操作日志等）
-        var hasWorkOrders = await _workOrderRepository.ExistsAsync(w => w.CreatedBy == id);
+        var hasWorkOrders = await _workOrderRepository.ExistsAsync(w => w.CreatedBy == user.Email);
         var hasAlertLogs = await _logRepository.ExistsAsync(l => l.UserId == id);
 
         if (hasWorkOrders || hasAlertLogs)

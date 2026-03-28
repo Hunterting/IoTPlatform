@@ -10,6 +10,7 @@ public class AirQualityData
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
     public long Id { get; set; }
 
+    public long? DeviceId { get; set; }
     public long? AreaId { get; set; }
     [MaxLength(200)] public string? AreaName { get; set; }
     public double? FreshAirVolume { get; set; }

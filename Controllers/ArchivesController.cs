@@ -1,4 +1,4 @@
-using IoTPlatform.DTOs.Requests;
+﻿using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -60,14 +60,16 @@ public class ArchivesController : ControllerBase
             var result = await _archiveService.GetArchiveAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<ArchiveDto>.NotFound("档案不存在"));
+                var response = ApiResponse.NotFound("档案不存在");
+            return Ok(response);
             }
 
             return ApiResponse<ArchiveDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -85,11 +87,13 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -108,15 +112,18 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -135,15 +142,18 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 

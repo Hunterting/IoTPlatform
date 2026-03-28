@@ -34,37 +34,39 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _workOrderRepository.Query().Include(w => w.Device).Include(w => w.Area).Include(w => w.Customer);
-
+        var baseQuery = _workOrderRepository.Query();
+        
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(w => w.AppCode == appCode);
+            baseQuery = baseQuery.Where(w => w.AppCode == appCode);
         }
 
         // 区域权限过滤
         if (allowedAreaIds != null && allowedAreaIds.Count > 0)
         {
-            query = query.Where(w => w.AreaId == null || allowedAreaIds.Contains(w.AreaId.Value));
+            baseQuery = baseQuery.Where(w => w.AreaId == null || allowedAreaIds.Contains(w.AreaId.Value));
         }
 
         // 状态过滤
         if (!string.IsNullOrEmpty(status))
         {
-            query = query.Where(w => w.Status == status);
+            baseQuery = baseQuery.Where(w => w.Status == status);
         }
 
         // 类型过滤
         if (!string.IsNullOrEmpty(type))
         {
-            query = query.Where(w => w.Type == type);
+            baseQuery = baseQuery.Where(w => w.Type == type);
         }
 
         // 优先级过滤
         if (!string.IsNullOrEmpty(priority))
         {
-            query = query.Where(w => w.Priority == priority);
+            baseQuery = baseQuery.Where(w => w.Priority == priority);
         }
+
+        var query = baseQuery.Include(w => w.Device).Include(w => w.Area).Include(w => w.Customer);
 
         var totalCount = await query.CountAsync();
         var workOrders = await query
@@ -108,21 +110,21 @@ public class WorkOrderService : IWorkOrderService
     /// </summary>
     public async Task<WorkOrderDto?> GetWorkOrderAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _workOrderRepository.Query()
-            .Include(w => w.Device)
-            .Include(w => w.Area);
-
+        var baseQuery = _workOrderRepository.Query();
+        
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(w => w.AppCode == appCode);
+            baseQuery = baseQuery.Where(w => w.AppCode == appCode);
         }
 
         // 区域权限过滤
         if (allowedAreaIds != null && allowedAreaIds.Count > 0)
         {
-            query = query.Where(w => w.AreaId == null || allowedAreaIds.Contains(w.AreaId.Value));
+            baseQuery = baseQuery.Where(w => w.AreaId == null || allowedAreaIds.Contains(w.AreaId.Value));
         }
+
+        var query = baseQuery.Include(w => w.Device).Include(w => w.Area);
 
         var workOrder = await query.FirstOrDefaultAsync(w => w.Id == id);
         if (workOrder == null) return null;

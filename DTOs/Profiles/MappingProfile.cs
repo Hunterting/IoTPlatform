@@ -44,9 +44,7 @@ public class MappingProfile : Profile
         CreateMap<User, UserDto>()
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer != null ? src.Customer.Name : null))
             .ForMember(dest => dest.AllowedAreaIds, opt => opt.MapFrom(src => 
-                !string.IsNullOrEmpty(src.AllowedAreaIds) 
-                    ? src.AllowedAreaIds.Split(',').Select(long.Parse).ToList()
-                    : null));
+                ParseAllowedAreaIds(src.AllowedAreaIds)));
 
         CreateMap<User, UserDetailDto>()
             .IncludeBase<User, UserDto>()
@@ -56,9 +54,17 @@ public class MappingProfile : Profile
         CreateMap<User, UserDto>()
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer != null ? src.Customer.Name : null))
             .ForMember(dest => dest.AllowedAreaIds, opt => opt.MapFrom(src =>
-                !string.IsNullOrEmpty(src.AllowedAreaIds)
-                    ? src.AllowedAreaIds.Split(',').Select(long.Parse).ToList()
-                    : null));
+                ParseAllowedAreaIds(src.AllowedAreaIds)));
+    }
+
+    private static List<long>? ParseAllowedAreaIds(string? allowedAreaIds)
+    {
+        if (string.IsNullOrEmpty(allowedAreaIds))
+            return null;
+        
+        return allowedAreaIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(id => long.Parse(id.Trim()))
+            .ToList();
     }
 
     private void ConfigureRoleMappings()

@@ -31,35 +31,37 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode)
     {
-        var query = _archiveRepository.Query().Include(a => a.Area);
+        var baseQuery = _archiveRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(a => a.AppCode == appCode || a.AppCodeTenant == appCode);
+            baseQuery = baseQuery.Where(a => a.AppCode == appCode || a.AppCodeTenant == appCode);
         }
 
         // 类型筛选
         if (!string.IsNullOrEmpty(type))
         {
-            query = query.Where(a => a.Type == type);
+            baseQuery = baseQuery.Where(a => a.Type == type);
         }
 
         // 区域筛选
         if (areaId.HasValue)
         {
-            query = query.Where(a => a.AreaId == areaId.Value);
+            baseQuery = baseQuery.Where(a => a.AreaId == areaId.Value);
         }
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
         {
-            query = query.Where(a =>
+            baseQuery = baseQuery.Where(a =>
                 a.Name.Contains(keyword) ||
                 (a.Category != null && a.Category.Contains(keyword)));
         }
 
-        var totalCount = await query.CountAsync();
+        var totalCount = await baseQuery.CountAsync();
+
+        var query = baseQuery.Include(a => a.Area);
 
         var archives = await query
             .OrderByDescending(a => a.CreatedAt)
@@ -93,14 +95,15 @@ public class ArchiveService : IArchiveService
     /// </summary>
     public async Task<ArchiveDto?> GetArchiveAsync(long id, string? appCode)
     {
-        var query = _archiveRepository.Query().Include(a => a.Area);
+        var baseQuery = _archiveRepository.Query();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(a => a.AppCode == appCode || a.AppCodeTenant == appCode);
+            baseQuery = baseQuery.Where(a => a.AppCode == appCode || a.AppCodeTenant == appCode);
         }
 
+        var query = baseQuery.Include(a => a.Area);
         var archive = await query.FirstOrDefaultAsync(a => a.Id == id);
         if (archive == null) return null;
 

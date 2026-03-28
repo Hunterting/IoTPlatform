@@ -1,4 +1,4 @@
-using IoTPlatform.DTOs.Requests;
+﻿using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -59,14 +59,16 @@ public class ProtocolConfigsController : ControllerBase
             var result = await _protocolConfigService.GetProtocolConfigAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<ProtocolConfigDto>.NotFound("协议配置不存在"));
+                var response = ApiResponse.NotFound("协议配置不存在");
+            return Ok(response);
             }
 
             return ApiResponse<ProtocolConfigDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -84,11 +86,13 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -107,15 +111,18 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -134,15 +141,18 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -161,15 +171,18 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -188,15 +201,18 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 }

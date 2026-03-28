@@ -1,4 +1,4 @@
-using IoTPlatform.Configuration;
+﻿using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
@@ -62,14 +62,16 @@ public class UsersController : ControllerBase
             var result = await _userService.GetUserAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<UserDto>.NotFound("用户不存在"));
+                var response = ApiResponse.NotFound("用户不存在");
+            return Ok(response);
             }
 
             return ApiResponse<UserDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -87,11 +89,13 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -112,15 +116,18 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<UserDto>.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -141,15 +148,18 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message));
+            var response = ApiResponse.Forbidden(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -171,23 +181,28 @@ public class UsersController : ControllerBase
             // 只能修改自己的密码或超级管理员可以修改
             if (role != "super_admin" && currentUserId != id.ToString())
             {
-                return Ok(ApiResponse.Forbidden("无权修改该用户密码"));
+                var forbiddenResponse = ApiResponse.Forbidden("无权修改该用户密码");
+                return Ok(forbiddenResponse);
             }
 
             await _userService.ChangePasswordAsync(id, request.OldPassword, request.NewPassword, appCode, role);
-            return Ok(ApiResponse.Success("密码修改成功"));
+            var response = ApiResponse.Success("密码修改成功");
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Unauthorized(ex.Message));
+            var response = ApiResponse.Unauthorized(ex.Message);
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message));
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 }

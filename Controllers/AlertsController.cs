@@ -41,11 +41,13 @@ public class AlertsController : ControllerBase
             var allowedAreaIds = GetAllowedAreaIds();
 
             var result = await _alertService.GetAlertsAsync(page, pageSize, status, level, alertType, appCode, allowedAreaIds);
-            return ApiResponse<PagedResponse<AlertDto>>.Success(result);
+            var response = ApiResponse<PagedResponse<AlertDto>>.Success(result);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return ApiResponse<PagedResponse<AlertDto>>.Error(ex.Message);
+            var response = ApiResponse<PagedResponse<AlertDto>>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -63,14 +65,17 @@ public class AlertsController : ControllerBase
             var result = await _alertService.GetAlertAsync(id, appCode, allowedAreaIds);
             if (result == null)
             {
-                return Ok(ApiResponse<AlertDto>.NotFound("告警不存在"));
+                var response = ApiResponse<AlertDto>.NotFound("告警不存在");
+                return Ok(response);
             }
 
-            return ApiResponse<AlertDto>.Success(result);
+            var response2 = ApiResponse<AlertDto>.Success(result);
+            return Ok(response2);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -84,15 +89,18 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.CreateAlertAsync(request);
-            return ApiResponse<AlertDto>.Success(result, "告警创建成功");
+            var response = ApiResponse<AlertDto>.Success(result, "告警创建成功");
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
+            var response = ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -106,15 +114,18 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.ProcessAlertAsync(id, request);
-            return ApiResponse<AlertDto>.Success(result, "告警处理成功");
+            var response = ApiResponse<AlertDto>.Success(result, "告警处理成功");
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
+            var response = ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -128,15 +139,18 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.AssignAlertAsync(id, request.Assignee);
-            return ApiResponse<AlertDto>.Success(result, "告警分配成功");
+            var response = ApiResponse<AlertDto>.Success(result, "告警分配成功");
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
+            var response = ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -150,15 +164,18 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.ResolveAlertAsync(id, request.Remark);
-            return ApiResponse<AlertDto>.Success(result, "告警已解决");
+            var response = ApiResponse<AlertDto>.Success(result, "告警已解决");
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
+            var response = ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -172,15 +189,18 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.IgnoreAlertAsync(id, request.Remark);
-            return ApiResponse<AlertDto>.Success(result, "告警已忽略");
+            var response = ApiResponse<AlertDto>.Success(result, "告警已忽略");
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
+            var response = ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
+            var response = ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -193,11 +213,13 @@ public class AlertsController : ControllerBase
         try
         {
             var result = await _alertService.GetAlertLogsAsync(id);
-            return ApiResponse<List<AlertProcessLogDto>>.Success(result);
+            var response = ApiResponse<List<AlertProcessLogDto>>.Success(result);
+            return Ok(response);
         }
         catch (Exception ex)
         {
-            return ApiResponse<List<AlertProcessLogDto>>.Error(ex.Message);
+            var response = ApiResponse<List<AlertProcessLogDto>>.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -218,7 +240,8 @@ public class AlertsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertSummaryDto>.Error(ex.Message));
+            var response = ApiResponse<AlertSummaryDto>.Error(ex.Message);
+            return Ok(response);
         }
     }
 

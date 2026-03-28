@@ -114,14 +114,14 @@ namespace IoTPlatform.Data.Repositories.Implementations
                 }
                 else if (typeof(T) == typeof(double))
                 {
-                    if (double.TryParse(setting.SettingValue, out double doubleValue))
+                    if (double.TryParse(setting.Value, out double doubleValue))
                     {
                         return (T)(object)doubleValue;
                     }
                 }
                 else if (typeof(T) == typeof(DateTime))
                 {
-                    if (DateTime.TryParse(setting.SettingValue, out DateTime dateTimeValue))
+                    if (DateTime.TryParse(setting.Value, out DateTime dateTimeValue))
                     {
                         return (T)(object)dateTimeValue;
                     }
@@ -129,7 +129,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
                 else
                 {
                     // 尝试JSON反序列化
-                    return JsonSerializer.Deserialize<T>(setting.SettingValue);
+                    return JsonSerializer.Deserialize<T>(setting.Value);
                 }
             }
             catch
@@ -162,13 +162,12 @@ namespace IoTPlatform.Data.Repositories.Implementations
             {
                 setting = new SystemSetting
                 {
-                    SettingKey = key,
-                    SettingValue = valueString,
+                    Key = key,
+                    Value = valueString,
                     Description = description,
                     Category = category,
                     ValueType = typeof(T).Name.ToLower(),
                     AppCode = appCode,
-                    IsActive = true,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -177,7 +176,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
             }
             else
             {
-                setting.SettingValue = valueString;
+                setting.Value = valueString;
                 if (!string.IsNullOrEmpty(description))
                 {
                     setting.Description = description;
@@ -194,7 +193,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
 
         public async Task<Dictionary<string, string?>> GetValuesAsync(IEnumerable<string> keys, string? appCode = null)
         {
-            var query = _dbSet.Where(s => keys.Contains(s.SettingKey));
+            var query = _dbSet.Where(s => keys.Contains(s.Key));
 
             if (!string.IsNullOrEmpty(appCode))
             {
@@ -202,14 +201,14 @@ namespace IoTPlatform.Data.Repositories.Implementations
             }
 
             var settings = await query
-                .Select(s => new { s.SettingKey, s.SettingValue })
+                .Select(s => new { s.Key, s.Value })
                 .ToListAsync();
 
             var result = new Dictionary<string, string?>();
             foreach (var key in keys)
             {
-                var setting = settings.FirstOrDefault(s => s.SettingKey == key);
-                result[key] = setting?.SettingValue;
+                var setting = settings.FirstOrDefault(s => s.Key == key);
+                result[key] = setting?.Value;
             }
 
             return result;

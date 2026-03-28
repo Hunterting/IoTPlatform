@@ -1,4 +1,4 @@
-using IoTPlatform.Configuration;
+﻿using IoTPlatform.Configuration;
 using IoTPlatform.Data;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -54,7 +54,7 @@ public class CustomersController : ControllerBase
                 query = query.Where(c =>
                     c.Name.Contains(keyword) ||
                     c.Code.Contains(keyword) ||
-                    c.Contact != null && c.Contact.Contains(keyword));
+                    c.ContactPerson != null && c.ContactPerson.Contains(keyword));
             }
 
             var totalCount = await query.CountAsync();
@@ -68,7 +68,7 @@ public class CustomersController : ControllerBase
                     Name = c.Name,
                     Code = c.Code,
                     AppCode = c.AppCode,
-                    Contact = c.Contact,
+                    Contact = c.ContactPerson,
                     Phone = c.Phone,
                     Address = c.Address,
                     Status = c.Status,
@@ -100,7 +100,8 @@ public class CustomersController : ControllerBase
 
             if (customer == null)
             {
-                return Ok(ApiResponse<CustomerDetailDto>.NotFound("客户不存在"));
+                var response = ApiResponse.NotFound("客户不存在");
+            return Ok(response);
             }
 
             // 权限检查
@@ -108,7 +109,8 @@ public class CustomersController : ControllerBase
             var appCode = User.FindFirst("AppCode")?.Value;
             if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
             {
-                return Ok(ApiResponse<CustomerDetailDto>.Forbidden("无权访问该客户"));
+                var response = ApiResponse.Forbidden("无权访问该客户");
+            return Ok(response);
             }
 
             var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
@@ -120,7 +122,7 @@ public class CustomersController : ControllerBase
                 Name = customer.Name,
                 Code = customer.Code,
                 AppCode = customer.AppCode,
-                Contact = customer.Contact,
+                Contact = customer.ContactPerson,
                 Phone = customer.Phone,
                 Address = customer.Address,
                 Status = customer.Status,
@@ -133,7 +135,8 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDetailDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -152,7 +155,8 @@ public class CustomersController : ControllerBase
 
             if (exists)
             {
-                return Ok(ApiResponse<CustomerDto>.BadRequest("客户代码或应用代码已存在"));
+                var response = ApiResponse.BadRequest("客户代码或应用代码已存在");
+            return Ok(response);
             }
 
             var customer = new Models.Customer
@@ -160,7 +164,7 @@ public class CustomersController : ControllerBase
                 Name = request.Name,
                 Code = request.Code,
                 AppCode = request.AppCode,
-                Contact = request.Contact,
+                ContactPerson = request.Contact,
                 Phone = request.Phone,
                 Address = request.Address,
                 Status = "active"
@@ -175,7 +179,7 @@ public class CustomersController : ControllerBase
                 Name = customer.Name,
                 Code = customer.Code,
                 AppCode = customer.AppCode,
-                Contact = customer.Contact,
+                Contact = customer.ContactPerson,
                 Phone = customer.Phone,
                 Address = customer.Address,
                 Status = customer.Status,
@@ -187,7 +191,8 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -203,7 +208,8 @@ public class CustomersController : ControllerBase
             var customer = await _dbContext.Customers.FindAsync(id);
             if (customer == null)
             {
-                return Ok(ApiResponse<CustomerDto>.NotFound("客户不存在"));
+                var response = ApiResponse.NotFound("客户不存在");
+            return Ok(response);
             }
 
             // 权限检查
@@ -211,11 +217,12 @@ public class CustomersController : ControllerBase
             var appCode = User.FindFirst("AppCode")?.Value;
             if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
             {
-                return Ok(ApiResponse<CustomerDto>.Forbidden("无权修改该客户"));
+                var response = ApiResponse.Forbidden("无权修改该客户");
+            return Ok(response);
             }
 
             customer.Name = request.Name;
-            customer.Contact = request.Contact;
+            customer.ContactPerson = request.Contact;
             customer.Phone = request.Phone;
             customer.Address = request.Address;
             customer.Status = request.Status;
@@ -231,7 +238,7 @@ public class CustomersController : ControllerBase
                 Name = customer.Name,
                 Code = customer.Code,
                 AppCode = customer.AppCode,
-                Contact = customer.Contact,
+                Contact = customer.ContactPerson,
                 Phone = customer.Phone,
                 Address = customer.Address,
                 Status = customer.Status,
@@ -243,7 +250,8 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
@@ -259,7 +267,8 @@ public class CustomersController : ControllerBase
             var customer = await _dbContext.Customers.FindAsync(id);
             if (customer == null)
             {
-                return Ok(ApiResponse.NotFound("客户不存在"));
+                var response = ApiResponse.NotFound("客户不存在");
+            return Ok(response);
             }
 
             // 检查是否有关联数据
@@ -269,7 +278,8 @@ public class CustomersController : ControllerBase
 
             if (hasDevices || hasUsers || hasProjects)
             {
-                return Ok(ApiResponse.BadRequest("客户有关联数据，无法删除"));
+                var response = ApiResponse.BadRequest("客户有关联数据，无法删除");
+            return Ok(response);
             }
 
             _dbContext.Customers.Remove(customer);
@@ -279,7 +289,8 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 }

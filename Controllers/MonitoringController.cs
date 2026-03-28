@@ -1,4 +1,4 @@
-using IoTPlatform.Configuration;
+﻿using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -104,7 +104,8 @@ public class MonitoringController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<MonitoringSummaryDto>.Error(ex.Message));
+            var response = ApiResponse.Error(ex.Message);
+            return Ok(response);
         }
     }
 
