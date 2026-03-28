@@ -63,14 +63,14 @@ public class AlertsController : ControllerBase
             var result = await _alertService.GetAlertAsync(id, appCode, allowedAreaIds);
             if (result == null)
             {
-                return Ok(ApiResponse<AlertDto>.NotFound("告警不存在");
+                return Ok(ApiResponse<AlertDto>.NotFound("告警不存在"));
             }
 
             return ApiResponse<AlertDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -88,11 +88,11 @@ public class AlertsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -110,11 +110,11 @@ public class AlertsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -132,11 +132,11 @@ public class AlertsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -154,11 +154,11 @@ public class AlertsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -176,11 +176,11 @@ public class AlertsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<AlertDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertDto>.Error(ex.Message));
         }
     }
 
@@ -218,7 +218,7 @@ public class AlertsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<AlertSummaryDto>.Error(ex.Message);
+            return Ok(ApiResponse<AlertSummaryDto>.Error(ex.Message));
         }
     }
 

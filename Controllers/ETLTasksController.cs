@@ -59,14 +59,14 @@ public class ETLTasksController : ControllerBase
             var result = await _etlTaskService.GetETLTaskAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<ETLTaskDto>.NotFound("ETL任务不存在");
+                return Ok(ApiResponse<ETLTaskDto>.NotFound("ETL任务不存在"));
             }
 
             return ApiResponse<ETLTaskDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message));
         }
     }
 
@@ -84,11 +84,11 @@ public class ETLTasksController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message));
         }
     }
 
@@ -107,15 +107,15 @@ public class ETLTasksController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message);
+            return Ok(ApiResponse<ETLTaskDto>.Error(ex.Message));
         }
     }
 
@@ -134,15 +134,15 @@ public class ETLTasksController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 
@@ -161,15 +161,15 @@ public class ETLTasksController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 
@@ -188,15 +188,15 @@ public class ETLTasksController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }

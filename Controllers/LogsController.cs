@@ -65,14 +65,14 @@ public class LogsController : ControllerBase
             var result = await _logService.GetOperationLogAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<OperationLogDto>.NotFound("操作日志不存在");
+                return Ok(ApiResponse<OperationLogDto>.NotFound("操作日志不存在"));
             }
 
             return ApiResponse<OperationLogDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<OperationLogDto>.Error(ex.Message);
+            return Ok(ApiResponse<OperationLogDto>.Error(ex.Message));
         }
     }
 
@@ -116,14 +116,14 @@ public class LogsController : ControllerBase
             var result = await _logService.GetLoginLogAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<LoginLogDto>.NotFound("登录日志不存在");
+                return Ok(ApiResponse<LoginLogDto>.NotFound("登录日志不存在"));
             }
 
             return ApiResponse<LoginLogDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<LoginLogDto>.Error(ex.Message);
+            return Ok(ApiResponse<LoginLogDto>.Error(ex.Message));
         }
     }
 }

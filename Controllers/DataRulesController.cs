@@ -59,14 +59,14 @@ public class DataRulesController : ControllerBase
             var result = await _dataRuleService.GetDataRuleAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<DataRuleDto>.NotFound("数据规则不存在");
+                return Ok(ApiResponse<DataRuleDto>.NotFound("数据规则不存在"));
             }
 
             return ApiResponse<DataRuleDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message));
         }
     }
 
@@ -84,11 +84,11 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message));
         }
     }
 
@@ -107,15 +107,15 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message);
+            return Ok(ApiResponse<DataRuleDto>.Error(ex.Message));
         }
     }
 
@@ -134,15 +134,15 @@ public class DataRulesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }

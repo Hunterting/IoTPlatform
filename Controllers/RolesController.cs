@@ -61,14 +61,14 @@ public class RolesController : ControllerBase
             var result = await _roleService.GetRoleAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<RoleDto>.NotFound("角色不存在");
+                return Ok(ApiResponse<RoleDto>.NotFound("角色不存在"));
             }
 
             return ApiResponse<RoleDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message);
+            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
         }
     }
 
@@ -86,11 +86,11 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message);
+            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
         }
     }
 
@@ -111,15 +111,15 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<RoleDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<RoleDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<RoleDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<RoleDto>.Error(ex.Message);
+            return Ok(ApiResponse<RoleDto>.Error(ex.Message));
         }
     }
 
@@ -140,15 +140,15 @@ public class RolesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 

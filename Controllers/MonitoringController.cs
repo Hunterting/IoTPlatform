@@ -104,7 +104,7 @@ public class MonitoringController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<MonitoringSummaryDto>.Error(ex.Message);
+            return Ok(ApiResponse<MonitoringSummaryDto>.Error(ex.Message));
         }
     }
 

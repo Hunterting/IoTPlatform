@@ -59,14 +59,14 @@ public class SettingsController : ControllerBase
             var result = await _settingsService.GetSettingAsync(key, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<SettingDto>.NotFound("设置不存在");
+                return Ok(ApiResponse<SettingDto>.NotFound("设置不存在"));
             }
 
             return ApiResponse<SettingDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message));
         }
     }
 
@@ -102,11 +102,11 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message));
         }
     }
 
@@ -125,15 +125,15 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<SettingDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<SettingDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<SettingDto>.Error(ex.Message);
+            return Ok(ApiResponse<SettingDto>.Error(ex.Message));
         }
     }
 
@@ -152,15 +152,15 @@ public class SettingsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }

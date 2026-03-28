@@ -60,14 +60,14 @@ public class ArchivesController : ControllerBase
             var result = await _archiveService.GetArchiveAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<ArchiveDto>.NotFound("档案不存在");
+                return Ok(ApiResponse<ArchiveDto>.NotFound("档案不存在"));
             }
 
             return ApiResponse<ArchiveDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
         }
     }
 
@@ -85,11 +85,11 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
         }
     }
 
@@ -108,15 +108,15 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message);
+            return Ok(ApiResponse<ArchiveDto>.Error(ex.Message));
         }
     }
 
@@ -135,15 +135,15 @@ public class ArchivesController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 

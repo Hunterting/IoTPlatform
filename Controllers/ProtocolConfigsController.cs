@@ -59,14 +59,14 @@ public class ProtocolConfigsController : ControllerBase
             var result = await _protocolConfigService.GetProtocolConfigAsync(id, appCode);
             if (result == null)
             {
-                return Ok(ApiResponse<ProtocolConfigDto>.NotFound("协议配置不存在");
+                return Ok(ApiResponse<ProtocolConfigDto>.NotFound("协议配置不存在"));
             }
 
             return ApiResponse<ProtocolConfigDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
         }
     }
 
@@ -84,11 +84,11 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
         }
     }
 
@@ -107,15 +107,15 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message);
+            return Ok(ApiResponse<ProtocolConfigDto>.Error(ex.Message));
         }
     }
 
@@ -134,15 +134,15 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 
@@ -161,15 +161,15 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 
@@ -188,15 +188,15 @@ public class ProtocolConfigsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse.BadRequest(ex.Message);
+            return Ok(ApiResponse.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse.Forbidden(ex.Message);
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }

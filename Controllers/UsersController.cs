@@ -62,14 +62,14 @@ public class UsersController : ControllerBase
             var result = await _userService.GetUserAsync(id, appCode, role);
             if (result == null)
             {
-                return Ok(ApiResponse<UserDto>.NotFound("用户不存在");
+                return Ok(ApiResponse<UserDto>.NotFound("用户不存在"));
             }
 
             return ApiResponse<UserDto>.Success(result);
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message));
         }
     }
 
@@ -87,11 +87,11 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message));
         }
     }
 
@@ -112,15 +112,15 @@ public class UsersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message);
+            return Ok(ApiResponse<UserDto>.BadRequest(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Ok(ApiResponse<UserDto>.Forbidden(ex.Message);
+            return Ok(ApiResponse<UserDto>.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<UserDto>.Error(ex.Message);
+            return Ok(ApiResponse<UserDto>.Error(ex.Message));
         }
     }
 

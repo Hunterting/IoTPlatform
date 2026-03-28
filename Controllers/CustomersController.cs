@@ -100,7 +100,7 @@ public class CustomersController : ControllerBase
 
             if (customer == null)
             {
-                return Ok(ApiResponse<CustomerDetailDto>.NotFound("客户不存在");
+                return Ok(ApiResponse<CustomerDetailDto>.NotFound("客户不存在"));
             }
 
             // 权限检查
@@ -108,7 +108,7 @@ public class CustomersController : ControllerBase
             var appCode = User.FindFirst("AppCode")?.Value;
             if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
             {
-                return Ok(ApiResponse<CustomerDetailDto>.Forbidden("无权访问该客户");
+                return Ok(ApiResponse<CustomerDetailDto>.Forbidden("无权访问该客户"));
             }
 
             var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
@@ -133,7 +133,7 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDetailDto>.Error(ex.Message);
+            return Ok(ApiResponse<CustomerDetailDto>.Error(ex.Message));
         }
     }
 
@@ -152,7 +152,7 @@ public class CustomersController : ControllerBase
 
             if (exists)
             {
-                return Ok(ApiResponse<CustomerDto>.BadRequest("客户代码或应用代码已存在");
+                return Ok(ApiResponse<CustomerDto>.BadRequest("客户代码或应用代码已存在"));
             }
 
             var customer = new Models.Customer
@@ -187,7 +187,7 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDto>.Error(ex.Message);
+            return Ok(ApiResponse<CustomerDto>.Error(ex.Message));
         }
     }
 
@@ -203,7 +203,7 @@ public class CustomersController : ControllerBase
             var customer = await _dbContext.Customers.FindAsync(id);
             if (customer == null)
             {
-                return Ok(ApiResponse<CustomerDto>.NotFound("客户不存在");
+                return Ok(ApiResponse<CustomerDto>.NotFound("客户不存在"));
             }
 
             // 权限检查
@@ -211,7 +211,7 @@ public class CustomersController : ControllerBase
             var appCode = User.FindFirst("AppCode")?.Value;
             if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
             {
-                return Ok(ApiResponse<CustomerDto>.Forbidden("无权修改该客户");
+                return Ok(ApiResponse<CustomerDto>.Forbidden("无权修改该客户"));
             }
 
             customer.Name = request.Name;
@@ -243,7 +243,7 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse<CustomerDto>.Error(ex.Message);
+            return Ok(ApiResponse<CustomerDto>.Error(ex.Message));
         }
     }
 
@@ -259,7 +259,7 @@ public class CustomersController : ControllerBase
             var customer = await _dbContext.Customers.FindAsync(id);
             if (customer == null)
             {
-                return Ok(ApiResponse.NotFound("客户不存在");
+                return Ok(ApiResponse.NotFound("客户不存在"));
             }
 
             // 检查是否有关联数据
@@ -269,7 +269,7 @@ public class CustomersController : ControllerBase
 
             if (hasDevices || hasUsers || hasProjects)
             {
-                return Ok(ApiResponse.BadRequest("客户有关联数据，无法删除");
+                return Ok(ApiResponse.BadRequest("客户有关联数据，无法删除"));
             }
 
             _dbContext.Customers.Remove(customer);
@@ -279,7 +279,7 @@ public class CustomersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return Ok(ApiResponse.Error(ex.Message);
+            return Ok(ApiResponse.Error(ex.Message));
         }
     }
 }
