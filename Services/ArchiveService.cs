@@ -270,6 +270,21 @@ public class ArchiveService : IArchiveService
             throw new UnauthorizedAccessException("无权查看该档案标记");
         }
 
-        return await _archiveRepository.GetMarkersAsync(archiveId);
+        var markers = await _archiveRepository.GetMarkersAsync(archiveId);
+
+        return markers.Select(m => new ArchiveDeviceMarkerDto
+        {
+            Id = m.Id,
+            ArchiveId = m.ArchiveId,
+            DeviceId = m.DeviceId,
+            Name = m.Name,
+            DeviceType = m.DeviceType,
+            Model = m.Model,
+            X = m.X,
+            Y = m.Y,
+            Z = m.Z,
+            Sensors = m.Sensors,
+            CreatedAt = m.CreatedAt
+        }).ToList();
     }
 }

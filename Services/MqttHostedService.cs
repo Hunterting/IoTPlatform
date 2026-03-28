@@ -60,22 +60,25 @@ public class MqttHostedService : BackgroundService
     /// <summary>
     /// 设备数据接收处理
     /// </summary>
-    private async Task OnDeviceDataReceived(object? sender, DeviceDataEventArgs e)
+    private void OnDeviceDataReceived(object? sender, DeviceDataEventArgs e)
     {
-        try
+        _ = Task.Run(async () =>
         {
-            _logger.LogDebug("Device data received: DeviceId={DeviceId}, AppCode={AppCode}", e.DeviceId, e.AppCode);
+            try
+            {
+                _logger.LogDebug("Device data received: DeviceId={DeviceId}, AppCode={AppCode}", e.DeviceId, e.AppCode);
 
-            // 调用数据采集服务处理数据
-            await _dataCollectionService.ProcessDeviceDataAsync(
-                e.DeviceId,
-                e.AppCode,
-                e.SensorData,
-                e.Timestamp);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error handling device data: DeviceId={DeviceId}", e.DeviceId);
-        }
+                // 调用数据采集服务处理数据
+                await _dataCollectionService.ProcessDeviceDataAsync(
+                    e.DeviceId,
+                    e.AppCode,
+                    e.SensorData,
+                    e.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling device data: DeviceId={DeviceId}", e.DeviceId);
+            }
+        });
     }
 }

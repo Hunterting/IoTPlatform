@@ -27,9 +27,7 @@ public class MonitoringService : IMonitoringService
     /// </summary>
     public async Task<PagedResponse<MonitoringDataDto>> GetMonitoringDataAsync(int page, int pageSize, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _monitoringRepository.GetQueryable()
-            .Include(d => d.Device)
-            .Include(d => d.Device.Area);
+        var query = _monitoringRepository.GetQueryable();
 
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -45,6 +43,8 @@ public class MonitoringService : IMonitoringService
 
         var totalCount = await query.CountAsync();
         var dataRecords = await query
+            .Include(d => d.Device)
+            .Include(d => d.Device.Area)
             .OrderByDescending(d => d.Timestamp)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)

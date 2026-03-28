@@ -63,18 +63,27 @@ public class ProtocolConfigService : IProtocolConfigService
                 Name = p.Name,
                 Type = p.Type,
                 Status = p.Status,
-                DeviceIds = !string.IsNullOrEmpty(p.DeviceIds)
-                    ? JsonSerializer.Deserialize<List<long>>(p.DeviceIds)
-                    : null,
-                Config = !string.IsNullOrEmpty(p.Config)
-                    ? JsonSerializer.Deserialize<Dictionary<string, object>>(p.Config)
-                    : null,
+                DeviceIdsJson = p.DeviceIds,
+                ConfigJson = p.Config,
                 Description = p.Description,
                 AppCode = p.AppCode,
                 CreatedAt = p.CreatedAt,
                 UpdatedAt = p.UpdatedAt
             })
             .ToListAsync();
+
+        // 手动解析JSON
+        foreach (var config in configs)
+        {
+            if (!string.IsNullOrEmpty(config.DeviceIdsJson))
+            {
+                config.DeviceIds = JsonSerializer.Deserialize<List<long>>(config.DeviceIdsJson, new JsonSerializerOptions());
+            }
+            if (!string.IsNullOrEmpty(config.ConfigJson))
+            {
+                config.Config = JsonSerializer.Deserialize<Dictionary<string, object>>(config.ConfigJson, new JsonSerializerOptions());
+            }
+        }
 
         return PagedResponse<ProtocolConfigDto>.Create(configs, totalCount, page, pageSize);
     }

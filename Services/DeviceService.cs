@@ -1,4 +1,5 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+﻿using IoTPlatform.Data;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -16,17 +17,20 @@ public class DeviceService : IDeviceService
     private readonly IAreaRepository _areaRepository;
     private readonly IProjectRepository _projectRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly AppDbContext _dbContext;
 
     public DeviceService(
         IDeviceRepository deviceRepository,
         IAreaRepository areaRepository,
         IProjectRepository projectRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        AppDbContext dbContext)
     {
         _deviceRepository = deviceRepository;
         _areaRepository = areaRepository;
         _projectRepository = projectRepository;
         _unitOfWork = unitOfWork;
+        _dbContext = dbContext;
     }
 
     /// <summary>
@@ -105,9 +109,7 @@ public class DeviceService : IDeviceService
     /// </summary>
     public async Task<DeviceDto?> GetDeviceAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _deviceRepository.GetQueryable()
-            .Include(d => d.Area)
-            .Include(d => d.Project);
+        var query = _deviceRepository.GetQueryable();
 
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -121,7 +123,10 @@ public class DeviceService : IDeviceService
             query = query.Where(d => d.AreaId == null || allowedAreaIds.Contains(d.AreaId.Value));
         }
 
-        var device = await query.FirstOrDefaultAsync(d => d.Id == id);
+        var device = await query
+            .Include(d => d.Area)
+            .Include(d => d.Project)
+            .FirstOrDefaultAsync(d => d.Id == id);
         if (device == null) return null;
 
         return new DeviceDto
@@ -338,7 +343,7 @@ public class DeviceService : IDeviceService
         var areaId = device.AreaId;
 
         // 检查是否有关联数据
-        var hasDataRecords = await _deviceRepository.GetQueryable().AnyAsync(r => r.DeviceId == id);
+        var hasDataRecords = await _dbContext.DeviceDataRecords.AnyAsync(r => r.DeviceId == id);
         var hasSensors = await _deviceRepository.GetQueryable().AnyAsync(s => s.Sensors != null && s.Sensors.Any());
         var hasAreaDevices = _deviceRepository.GetQueryable().Any(d => d.AreaId == id);
 
@@ -413,10 +418,7 @@ public class DeviceService : IDeviceService
     /// </summary>
     public async Task<DeviceDetailDto?> GetDeviceDetailAsync(long id, string? appCode, List<long>? allowedAreaIds)
     {
-        var query = _deviceRepository.GetQueryable()
-            .Include(d => d.Area)
-            .Include(d => d.Project)
-            .Include(d => d.Sensors);
+        var query = _deviceRepository.GetQueryable();
 
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -430,7 +432,11 @@ public class DeviceService : IDeviceService
             query = query.Where(d => d.AreaId == null || allowedAreaIds.Contains(d.AreaId.Value));
         }
 
-        var device = await query.FirstOrDefaultAsync(d => d.Id == id);
+        var device = await query
+            .Include(d => d.Area)
+            .Include(d => d.Project)
+            .Include(d => d.Sensors)
+            .FirstOrDefaultAsync(d => d.Id == id);
         if (device == null) return null;
 
         return new DeviceDetailDto

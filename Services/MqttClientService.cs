@@ -37,11 +37,9 @@ public class MqttClientService : IMqttClientService, IDisposable
             .WithTcpServer(mqttBroker, mqttPort)
             .WithCleanSession()
             .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
-            .WithAutomaticReconnectDelay(TimeSpan.FromSeconds(5))
-            .WithMaxReconnectDelay(TimeSpan.FromSeconds(30))
             .Build();
 
-        _mqttClient = new MqttFactory().CreateMqttClient(options);
+        _mqttClient = new MqttFactory().CreateMqttClient();
 
         _mqttClient.ApplicationMessageReceivedAsync += OnMessageReceivedAsync;
         _mqttClient.ConnectedAsync += OnConnectedAsync;

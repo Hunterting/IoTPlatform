@@ -120,14 +120,14 @@ public class LogService : ILogService
             .Select(l => new LoginLogDto
             {
                 Id = l.Id,
-                UserId = l.UserId,
+                UserId = l.UserId.HasValue ? l.UserId.Value : 0,
                 UserName = l.UserName,
                 Role = l.Role,
                 LoginTime = l.LoginTime,
                 IP = l.IP,
                 UserAgent = l.UserAgent,
                 Status = l.Status,
-                FailReason = l.FailReason,
+                FailReason = l.FailureReason,
                 AppCode = l.AppCode
             })
             .ToListAsync();
@@ -176,14 +176,14 @@ public class LogService : ILogService
         return new LoginLogDto
         {
             Id = log.Id,
-            UserId = log.UserId,
+            UserId = log.UserId.HasValue ? log.UserId.Value : 0,
             UserName = log.UserName,
             Role = log.Role,
             LoginTime = log.LoginTime,
             IP = log.IP,
             UserAgent = log.UserAgent,
             Status = log.Status,
-            FailReason = log.FailReason,
+            FailReason = log.FailureReason,
             AppCode = log.AppCode
         };
     }

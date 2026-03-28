@@ -13,10 +13,13 @@ public class LoginLog
     public long? UserId { get; set; }
     [MaxLength(200)] public string? Email { get; set; }
     [MaxLength(100)] public string? UserName { get; set; }
+    [MaxLength(100)] public string? Role { get; set; }
     [MaxLength(50)] public string? IpAddress { get; set; }
+    [MaxLength(50)] public string? IP { get; set; } // 别名
     [MaxLength(500)] public string? UserAgent { get; set; }
     [MaxLength(20)] public string? Status { get; set; } // success, failed
     [MaxLength(500)] public string? FailureReason { get; set; }
     public DateTime LoginTime { get; set; } = DateTime.UtcNow;
     [MaxLength(50)] public string? Location { get; set; }
+    public string? AppCode { get; set; }
 }

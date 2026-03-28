@@ -156,7 +156,7 @@ namespace IoTPlatform.Data.Repositories.Implementations
             };
         }
 
-        public async Task<List<ETLTask>> GetByDataRuleIdAsync(Guid dataRuleId)
+        public async Task<List<ETLTask>> GetByDataRuleIdAsync(long dataRuleId)
         {
             return await _dbSet
                 .Where(t => t.DataRuleId == dataRuleId)

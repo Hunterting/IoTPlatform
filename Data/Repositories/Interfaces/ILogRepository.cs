@@ -1,4 +1,5 @@
 using IoTPlatform.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Data.Repositories.Interfaces;
 
@@ -7,6 +8,15 @@ namespace IoTPlatform.Data.Repositories.Interfaces;
 /// </summary>
 public interface ILogRepository : IRepository<LoginLog>
 {
+    /// <summary>
+    /// 获取操作日志查询
+    /// </summary>
+    IQueryable<OperationLog> GetOperationLogsQuery(string? appCode = null, string? currentUserRole = null);
+
+    /// <summary>
+    /// 获取登录日志查询
+    /// </summary>
+    IQueryable<LoginLog> GetLoginLogsQuery(string? appCode = null, string? currentUserRole = null);
     /// <summary>
     /// 获取登录日志
     /// </summary>

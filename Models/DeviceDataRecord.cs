@@ -23,8 +23,13 @@ public class DeviceDataRecord
     public double? Formaldehyde { get; set; }
     public double? Smoke { get; set; }
     public double? TVOC { get; set; }
+    public double? ExhaustVolume { get; set; }
+    public double? SmokeConcentration { get; set; }
+    public double? OilFume { get; set; }
+    public double? Noise { get; set; }
     public long? AreaId { get; set; }
     public string? AreaName { get; set; }
+    public string? DeviceName { get; set; }
     public string? Status { get; set; }
     public string? Level { get; set; }
     public DateTime RecordTime { get; set; } = DateTime.UtcNow;

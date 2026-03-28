@@ -37,9 +37,7 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode)
     {
-        var query = _dataRuleRepository.GetQueryable()
-            .Include(d => d.Device)
-            .Include(d => d.Area);
+        var query = _dataRuleRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -64,6 +62,8 @@ public class DataRuleService : IDataRuleService
         var totalCount = await query.CountAsync();
 
         var rules = await query
+            .Include(d => d.Device)
+            .Include(d => d.Area)
             .OrderByDescending(d => d.CreatedAt)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
@@ -97,15 +97,17 @@ public class DataRuleService : IDataRuleService
     /// </summary>
     public async Task<DataRuleDto?> GetDataRuleAsync(long id, string? appCode)
     {
-        var query = _dataRuleRepository.GetQueryable()
-            .Include(d => d.Device)
-            .Include(d => d.Area);
+        var query = _dataRuleRepository.GetQueryable();
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
         {
             query = query.Where(d => d.AppCode == appCode);
         }
+
+        query = query
+            .Include(d => d.Device)
+            .Include(d => d.Area);
 
         var rule = await query.FirstOrDefaultAsync(d => d.Id == id);
         if (rule == null) return null;

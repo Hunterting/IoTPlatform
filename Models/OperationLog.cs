@@ -13,6 +13,7 @@ public class OperationLog
     public long UserId { get; set; }
     [MaxLength(100)] public string? UserName { get; set; }
     [MaxLength(50)] public string? Role { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime OperationTime { get; set; } = DateTime.UtcNow;
     public DateTime Time { get; set; } = DateTime.UtcNow;
     [MaxLength(50)] public string? Module { get; set; }

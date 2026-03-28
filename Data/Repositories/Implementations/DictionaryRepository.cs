@@ -13,6 +13,40 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
     {
     }
 
+    public IQueryable<DictionaryTypeConfig> GetTypesQuery(string? appCode = null)
+    {
+        var query = _context.DictionaryTypeConfigs.AsQueryable();
+
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            query = query.Where(d => d.AppCode == appCode);
+        }
+
+        return query.OrderByDescending(d => d.Id);
+    }
+
+    public IQueryable<DictionaryItem> GetItemsQuery(string? appCode = null, string? type = null, bool activeOnly = false)
+    {
+        var query = _context.DictionaryItems.AsQueryable();
+
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            query = query.Where(d => d.AppCode == appCode);
+        }
+
+        if (!string.IsNullOrEmpty(type))
+        {
+            query = query.Where(d => d.Type == type);
+        }
+
+        if (activeOnly)
+        {
+            query = query.Where(d => d.Status == "active");
+        }
+
+        return query.OrderByDescending(d => d.Id);
+    }
+
     public async Task<DictionaryTypeConfig?> GetDictionaryTypeByCodeAsync(string code, string? appCode = null)
     {
         var query = _context.DictionaryTypeConfigs.AsQueryable();
@@ -218,5 +252,63 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
     {
         var query = ApplyFilters(_context.DictionaryItems.AsQueryable(), appCode, null);
         return await query.CountAsync(d => d.Type == type && d.Status == "active");
+    }
+
+    public async Task<DictionaryTypeConfig?> GetTypeByIdAsync(long id)
+    {
+        return await _context.DictionaryTypeConfigs.FindAsync(id);
+    }
+
+    public async Task AddTypeAsync(DictionaryTypeConfig type)
+    {
+        _context.DictionaryTypeConfigs.Add(type);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateTypeAsync(DictionaryTypeConfig type)
+    {
+        _context.DictionaryTypeConfigs.Update(type);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task DeleteTypeAsync(DictionaryTypeConfig type)
+    {
+        _context.DictionaryTypeConfigs.Remove(type);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task<bool> TypeHasItemsAsync(string typeCode, string? appCode = null)
+    {
+        var query = _context.DictionaryItems.AsQueryable();
+
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            query = query.Where(d => d.AppCode == appCode);
+        }
+
+        return await query.AnyAsync(d => d.Type == typeCode);
+    }
+
+    public async Task<DictionaryItem?> GetItemByIdAsync(long id)
+    {
+        return await _context.DictionaryItems.FindAsync(id);
+    }
+
+    public async Task AddItemAsync(DictionaryItem item)
+    {
+        _context.DictionaryItems.Add(item);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateItemAsync(DictionaryItem item)
+    {
+        _context.DictionaryItems.Update(item);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task DeleteItemAsync(DictionaryItem item)
+    {
+        _context.DictionaryItems.Remove(item);
+        await _context.SaveChangesAsync();
     }
 }
