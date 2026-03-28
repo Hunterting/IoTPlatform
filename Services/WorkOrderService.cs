@@ -211,20 +211,10 @@ public class WorkOrderService : IWorkOrderService
         };
 
         await _workOrderRepository.AddAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
 
         // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = workOrder.Id,
-            Operator = request.Reporter ?? "System",
-            OperatorName = request.Reporter ?? "System",
-            Action = "create",
-            Comment = request.Description,
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
-        await _unitOfWork.SaveChangesAsync();
+        await _workOrderRepository.AddLogAsync(workOrder.Id, request.Reporter ?? "System", "create", request.Description);
 
         return new WorkOrderDto
         {
@@ -295,19 +285,11 @@ public class WorkOrderService : IWorkOrderService
         workOrder.AssignTime = DateTime.UtcNow;
         workOrder.UpdatedAt = DateTime.UtcNow;
 
-        // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = id,
-            Operator = assignee,
-            OperatorName = assignee,
-            Action = "assign",
-            Comment = $"工单已分配给 {assignee}",
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
         await _workOrderRepository.UpdateAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 记录日志
+        await _workOrderRepository.AddLogAsync(id, assignee, "assign", $"工单已分配给 {assignee}");
         await _unitOfWork.SaveChangesAsync();
 
         return MapToDto(workOrder);
@@ -327,19 +309,11 @@ public class WorkOrderService : IWorkOrderService
         workOrder.Status = "in_progress";
         workOrder.UpdatedAt = DateTime.UtcNow;
 
-        // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = id,
-            Operator = workOrder.Assignee ?? "System",
-            OperatorName = workOrder.Assignee ?? "System",
-            Action = "start",
-            Comment = "工单开始处理",
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
         await _workOrderRepository.UpdateAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 记录日志
+        await _workOrderRepository.AddLogAsync(id, workOrder.Assignee ?? "System", "start", "工单开始处理");
         await _unitOfWork.SaveChangesAsync();
 
         return MapToDto(workOrder);
@@ -361,19 +335,11 @@ public class WorkOrderService : IWorkOrderService
         workOrder.ResolvedTime = DateTime.UtcNow;
         workOrder.UpdatedAt = DateTime.UtcNow;
 
-        // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = id,
-            Operator = workOrder.Assignee ?? "System",
-            OperatorName = workOrder.Assignee ?? "System",
-            Action = "resolve",
-            Comment = resolveDescription,
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
         await _workOrderRepository.UpdateAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 记录日志
+        await _workOrderRepository.AddLogAsync(id, workOrder.Assignee ?? "System", "resolve", resolveDescription);
         await _unitOfWork.SaveChangesAsync();
 
         return MapToDto(workOrder);
@@ -399,19 +365,11 @@ public class WorkOrderService : IWorkOrderService
         workOrder.ClosedTime = DateTime.UtcNow;
         workOrder.UpdatedAt = DateTime.UtcNow;
 
-        // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = id,
-            Operator = "System",
-            OperatorName = "System",
-            Action = "close",
-            Comment = "工单已关闭",
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
         await _workOrderRepository.UpdateAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 记录日志
+        await _workOrderRepository.AddLogAsync(id, "System", "close", "工单已关闭");
         await _unitOfWork.SaveChangesAsync();
 
         return MapToDto(workOrder);
@@ -431,19 +389,11 @@ public class WorkOrderService : IWorkOrderService
         workOrder.Status = "rejected";
         workOrder.UpdatedAt = DateTime.UtcNow;
 
-        // 记录日志
-        var log = new WorkOrderLog
-        {
-            WorkOrderId = id,
-            Operator = "System",
-            OperatorName = "System",
-            Action = "reject",
-            Comment = reason,
-            CreatedAt = DateTime.UtcNow
-        };
-        _workOrderRepository.AddLogAsync(log);
-
         await _workOrderRepository.UpdateAsync(workOrder);
+        await _unitOfWork.SaveChangesAsync();
+
+        // 记录日志
+        await _workOrderRepository.AddLogAsync(id, "System", "reject", reason);
         await _unitOfWork.SaveChangesAsync();
 
         return MapToDto(workOrder);
