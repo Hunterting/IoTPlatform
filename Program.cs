@@ -66,9 +66,8 @@ builder.Services.AddScoped<IWorkOrderRepository, WorkOrderRepository>();
 builder.Services.AddScoped<IArchiveRepository, ArchiveRepository>();
 builder.Services.AddScoped<IDictionaryRepository, DictionaryRepository>();
 builder.Services.AddScoped<ISystemSettingRepository, SystemSettingRepository>();
-// TODO: LogRepository和MonitoringRepository不存在,需要实现
-// builder.Services.AddScoped<ILogRepository, LogRepository>();
-// builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
+builder.Services.AddScoped<ILogRepository, LogRepository>();
+builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
 builder.Services.AddScoped<IDataRuleRepository, DataRuleRepository>();
 builder.Services.AddScoped<IProtocolConfigRepository, ProtocolConfigRepository>();
 builder.Services.AddScoped<IETLTaskRepository, ETLTaskRepository>();
@@ -190,11 +189,20 @@ if (app.Environment.IsDevelopment())
 {
     using (var scope = app.Services.CreateScope())
     {
-        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         try
         {
-            // 使用Task.Run来避免顶级语句中的await问题
-            await Task.Run(async () => await context.SeedDataForDevelopmentAsync(scope.ServiceProvider));
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // 检查数据库连接是否可用
+            if (context.Database.CanConnect())
+            {
+                // 使用Task.Run来避免顶级语句中的await问题
+                await Task.Run(async () => await context.SeedDataForDevelopmentAsync(scope.ServiceProvider));
+            }
+            else
+            {
+                var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+                logger.LogWarning("数据库连接不可用，跳过种子数据初始化");
+            }
         }
         catch (Exception ex)
         {
