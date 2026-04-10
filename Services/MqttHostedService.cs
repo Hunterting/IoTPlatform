@@ -8,16 +8,16 @@ namespace IoTPlatform.Services;
 public class MqttHostedService : BackgroundService
 {
     private readonly IMqttClientService _mqttClientService;
-    private readonly IDataCollectionService _dataCollectionService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<MqttHostedService> _logger;
 
     public MqttHostedService(
         IMqttClientService mqttClientService,
-        IDataCollectionService dataCollectionService,
+        IServiceScopeFactory scopeFactory,
         ILogger<MqttHostedService> logger)
     {
         _mqttClientService = mqttClientService;
-        _dataCollectionService = dataCollectionService;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -68,8 +68,12 @@ public class MqttHostedService : BackgroundService
             {
                 _logger.LogDebug("Device data received: DeviceId={DeviceId}, AppCode={AppCode}", e.DeviceId, e.AppCode);
 
+                // 通过ScopeFactory创建Scope来获取Scoped服务
+                using var scope = _scopeFactory.CreateScope();
+                var dataCollectionService = scope.ServiceProvider.GetRequiredService<IDataCollectionService>();
+
                 // 调用数据采集服务处理数据
-                await _dataCollectionService.ProcessDeviceDataAsync(
+                await dataCollectionService.ProcessDeviceDataAsync(
                     e.DeviceId,
                     e.AppCode,
                     e.SensorData,

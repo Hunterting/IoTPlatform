@@ -7,6 +7,9 @@ yarn-error.log*
 # Production builds
 /web/dist
 /web/build
+bin/
+obj/
+.vs/
 
 # Environment variables
 .env

@@ -143,3 +143,5 @@ G:\IoTPlatform\obj\Debug\net8.0\refint\IoTPlatform.dll
 G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.pdb
 G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.genruntimeconfig.cache
 G:\IoTPlatform\obj\Debug\net8.0\ref\IoTPlatform.dll
+G:\IoTPlatform\bin\Debug\net8.0\IoTPlatform.xml
+G:\IoTPlatform\obj\Debug\net8.0\IoTPlatform.xml

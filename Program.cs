@@ -156,6 +156,36 @@ builder.Services.AddSwaggerGen(c =>
         Description = "物联网平台后端API文档"
     });
 
+    // 添加XML注释支持
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath);
+    }
+
+    // 解决泛型类型冲突 - 为每个泛型实例生成唯一schemaId
+    c.CustomSchemaIds(modelType =>
+    {
+        // 1. 如果是泛型类型，使用完整泛型签名
+        if (modelType.IsGenericType)
+        {
+            var genericName = modelType.Name.Split('`')[0];
+            var typeArgs = modelType.GetGenericArguments();
+            var args = string.Join("_", typeArgs.Select(t => GetUniqueSchemaId(t)));
+            return $"{genericName}_{args}";
+        }
+        
+        // 2. 对于 Controllers 中的类型，添加前缀
+        if (modelType.FullName?.StartsWith("IoTPlatform.Controllers.") == true)
+        {
+            return "Controller." + modelType.Name;
+        }
+        
+        // 3. 默认使用完整命名空间 + 类型名
+        return modelType.FullName ?? modelType.Name;
+    });
+
     // 配置JWT认证
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -181,6 +211,19 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+
+string GetUniqueSchemaId(Type type)
+{
+    if (type.IsGenericType)
+    {
+        var genericName = type.Name.Split('`')[0];
+        var typeArgs = type.GetGenericArguments();
+        var args = string.Join("_", typeArgs.Select(t => GetUniqueSchemaId(t)));
+        return $"{genericName}_{args}";
+    }
+    // 移除命名空间前缀，保留简短名称
+    return type.Name;
+}
 
 var app = builder.Build();
 
@@ -214,15 +257,15 @@ if (app.Environment.IsDevelopment())
 
 // 配置HTTP请求管道
 
-if (app.Environment.IsDevelopment())
+// 在所有环境启用Swagger（方便调试）
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "IoT Platform API v1");
-        c.RoutePrefix = "swagger";
-    });
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "IoT Platform API v1");
+    c.RoutePrefix = "swagger";
+    // 启用深度链接
+    c.EnableDeepLinking();
+});
 
 // 使用异常处理中间件
 app.UseMiddleware<ExceptionHandlingMiddleware>();
