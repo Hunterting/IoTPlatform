@@ -1,4 +1,6 @@
+using IoTPlatform.Configuration;
 using IoTPlatform.Helpers;
+using IoTPlatform.Infrastructure.Tenant;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -32,7 +34,7 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
 
         // 超级管理员拥有所有权限
         var roleClaim = user.FindFirst(ClaimTypes.Role);
-        if (roleClaim?.Value == "super_admin")
+        if (roleClaim?.Value == IoTPlatform.Configuration.Roles.SUPER_ADMIN)
         {
             return;
         }
@@ -56,37 +58,54 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
     }
 
     /// <summary>
-    /// 从用户Claims中获取权限列表
+    /// 根据用户角色获取权限列表
     /// </summary>
     private List<string> GetUserPermissions(ClaimsPrincipal user)
     {
         var roleClaim = user.FindFirst(ClaimTypes.Role);
-        if (roleClaim == null) return new List<string>();
+        if (roleClaim == null || string.IsNullOrEmpty(roleClaim.Value))
+        {
+            return new List<string>();
+        }
 
-        // 根据角色获取权限 - 简化版本,暂时返回空列表
-        // TODO: 后续可以集成权限系统
-        return new List<string>();
+        // 使用 RoleConfig 中定义的权限映射
+        return IoTPlatform.Configuration.Roles.GetRolePermissions(roleClaim.Value);
     }
 }
 
 /// <summary>
-/// 租户过滤器 - 自动过滤数据范围
+/// 租户过滤器 - 自动从HTTP上下文初始化租户上下文
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public class TenantFilterAttribute : ActionFilterAttribute
 {
     public override void OnActionExecuting(ActionExecutingContext context)
     {
-        var user = context.HttpContext.User;
-        var roleClaim = user.FindFirst(ClaimTypes.Role);
+        var httpContext = context.HttpContext;
 
-        // 超级管理员不需要租户过滤
-        if (roleClaim?.Value == "super_admin")
+        // 获取租户上下文访问器（需要通过 DI 注入）
+        var tenantAccessor = httpContext.RequestServices.GetService<ITenantContextAccessor>();
+
+        if (tenantAccessor == null)
         {
+            context.Result = new JsonResult(ApiResponse.InternalError("租户上下文服务未注册"));
             return;
         }
 
-        // 从Claims中获取AppCode
+        // 从 HTTP 上下文初始化租户信息
+        tenantAccessor.InitializeFromHttpContext(httpContext);
+
+        var user = httpContext.User;
+        var roleClaim = user.FindFirst(ClaimTypes.Role);
+
+        // 超级管理员不需要租户过滤
+        if (roleClaim?.Value == IoTPlatform.Configuration.Roles.SUPER_ADMIN)
+        {
+            base.OnActionExecuting(context);
+            return;
+        }
+
+        // 从 Claims 中获取 AppCode
         var appCode = user.FindFirst("AppCode")?.Value;
         if (string.IsNullOrEmpty(appCode))
         {
@@ -94,10 +113,11 @@ public class TenantFilterAttribute : ActionFilterAttribute
             return;
         }
 
-        // 将AppCode添加到Action参数中（如果需要）
-        if (context.ActionArguments.ContainsKey("appCode"))
+        // 验证租户上下文已正确设置
+        if (string.IsNullOrEmpty(tenantAccessor.Current.AppCode))
         {
-            context.ActionArguments["appCode"] = appCode;
+            context.Result = new JsonResult(ApiResponse.Forbidden("租户上下文未初始化"));
+            return;
         }
 
         base.OnActionExecuting(context);

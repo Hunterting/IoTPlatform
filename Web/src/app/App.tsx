@@ -23,6 +23,8 @@ import { LogManagementPage } from '@/app/pages/LogManagementPage';
 import { AlertCenterPage } from '@/app/pages/AlertCenterPage';
 import { DictionaryManagementPage } from '@/app/pages/DictionaryManagementPage';
 import { DataCollectionPage } from '@/app/pages/DataCollectionPage';
+import { ProtocolManagementPage } from '@/app/pages/ProtocolManagementPage';
+import { DeviceControlPage } from '@/app/pages/DeviceControlPage';
 
 function AppContent() {
   const { user, currentCustomer } = useAuth();
@@ -74,6 +76,10 @@ function AppContent() {
         return <ArchivesPage onNavigateToDevice={handleNavigateToDevice} />;
       case 'work-orders':
         return <WorkOrderPage />;
+      case 'protocol-management':
+        return <ProtocolManagementPage />;
+      case 'device-control':
+        return <DeviceControlPage />;
       case 'alert-center':
         return <AlertCenterPage />;
       case 'data-collection':

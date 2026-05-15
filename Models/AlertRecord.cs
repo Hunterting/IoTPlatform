@@ -1,10 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using IoTPlatform.Data;
 
 namespace IoTPlatform.Models;
 
 [Table("alert_records")]
-public class AlertRecord
+public class AlertRecord : IHasAppCode
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

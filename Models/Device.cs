@@ -1,10 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using IoTPlatform.Data;
 
 namespace IoTPlatform.Models;
 
 [Table("devices")]
-public class Device
+public class Device : IHasAppCode
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

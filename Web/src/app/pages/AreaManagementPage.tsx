@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ChevronRight, 
@@ -11,7 +11,8 @@ import {
   Check,
   Edit,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Loader2
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { useArea, Area } from '@/app/contexts/AreaContext';
@@ -57,13 +58,14 @@ const TreeItem = ({
         {icon}
         <span className="text-sm truncate">{label}</span>
       </div>
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {isExpanded && children && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
+            transition={{ duration: 0.2 }}
           >
             {children}
           </motion.div>
@@ -75,10 +77,10 @@ const TreeItem = ({
 
 export function AreaManagementPage() {
   const { customers, hasPermission } = useAuth();
-  const { areas, setAreas } = useArea();
+  const { areas, areaTree, loading, error, addArea, updateArea, deleteArea, refreshAreas, refreshAreaTree } = useArea();
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set(['1', 'L1-001'])); // Default expand first customer
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   
   // State for Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -88,6 +90,10 @@ export function AreaManagementPage() {
   const [addMode, setAddMode] = useState<'root' | 'child'>('root');
   const [newItemName, setNewItemName] = useState('');
   const [selectedCustomerForRoot, setSelectedCustomerForRoot] = useState<string>('');
+  
+  // 操作状态
+  const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Helper to find node data recursively
   const findNode = (id: string | null): { data: any, type: string } | null => {
@@ -97,168 +103,169 @@ export function AreaManagementPage() {
     const customer = customers.find(c => c.id === id);
     if (customer) return { data: customer, type: 'customer' };
 
-    // Check areas recursively
-    const findInAreas = (areaList: Area[]): Area | null => {
+    // Check areas recursively (use areaTree which has proper hierarchy)
+    const findInTree = (areaList: Area[]): Area | null => {
       for (const area of areaList) {
         if (area.id === id) return area;
-        if (area.children) {
-          const found = findInAreas(area.children);
+        if (area.children?.length) {
+          const found = findInTree(area.children);
           if (found) return found;
         }
       }
       return null;
     };
 
-    const area = findInAreas(areas);
+    // Also check flat areas list for root-level areas
+    const area = findInTree(areaTree.length > 0 ? areaTree : areas);
     if (area) return { data: area, type: area.type };
+
+    // Fallback to flat search
+    const flatArea = areas.find(a => a.id === id);
+    if (flatArea) return { data: flatArea, type: flatArea.type };
 
     return null;
   };
 
-  const selectedNode = useMemo(() => findNode(selectedNodeId), [selectedNodeId, customers, areas]);
+  const selectedNode = useMemo(() => findNode(selectedNodeId), [selectedNodeId, customers, areas, areaTree]);
 
   const toggleNode = (id: string) => {
-    const newExpanded = new Set(expandedNodes);
-    if (newExpanded.has(id)) {
-      newExpanded.delete(id);
-    } else {
-      newExpanded.add(id);
-    }
-    setExpandedNodes(newExpanded);
+    setExpandedNodes(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  // --- CRUD Operations ---
+  // Determine the next type based on parent node type
+  const getNextType = (nodeType: string): string => {
+    switch (nodeType) {
+      case 'customer': return 'level1';
+      case 'level1': return 'level2';
+      case 'level2': return 'level3';
+      default: return 'level1';
+    }
+  };
 
-  const handleAddNode = () => {
+  // --- CRUD Operations (调用真实 API) ---
+
+  const handleAddNode = useCallback(async () => {
+    if (!newItemName.trim()) return;
+
+    try {
+      setSubmitting(true);
+      setActionError(null);
+
+      let parentIdValue: string | undefined;
+      let customerIdValue: string | undefined;
+      let appCodeValue: string | undefined;
+      let typeValue: string;
+
       if (addMode === 'root') {
-          if (!selectedCustomerForRoot) return;
-          if (!newItemName.trim()) return;
-
-          const customer = customers.find(c => c.id === selectedCustomerForRoot);
-          if (!customer) return;
-
-          const newId = `L-${Date.now()}`;
-          const newArea: Area = {
-              id: newId,
-              name: newItemName,
-              type: 'level1',
-              image: 'https://images.unsplash.com/photo-1587578932405-7c740a74a27e',
-              description: '新增区域',
-              deviceCount: 0,
-              children: [],
-              devices: [],
-              appCode: customer.appCode,
-              customerId: customer.id,
-          };
-
-          setAreas([...areas, newArea]);
-          setExpandedNodes(new Set([...expandedNodes, customer.id]));
-          setSelectedNodeId(newId);
-
+        // 根节点区域：选择客户后添加
+        if (!selectedCustomerForRoot) return;
+        const customer = customers.find(c => c.id === selectedCustomerForRoot);
+        if (!customer) return;
+        
+        customerIdValue = customer.id;
+        appCodeValue = customer.appCode;
+        typeValue = 'level1';
       } else {
-          // Add Child Node
-          if (!newItemName.trim()) return;
-          if (!selectedNode) return;
-
-          const newId = `L-${Date.now()}`;
-          const newArea: Area = {
-              id: newId,
-              name: newItemName,
-              type: selectedNode.type === 'customer' ? 'level1' : selectedNode.type === 'level1' ? 'level2' : 'level3',
-              image: 'https://images.unsplash.com/photo-1587578932405-7c740a74a27e',
-              description: '新增区域',
-              deviceCount: 0,
-              children: [],
-              devices: [],
-              appCode: selectedNode.data.appCode,
-              customerId: selectedNode.type === 'customer' ? selectedNode.data.id : undefined,
-              parentId: selectedNode.type !== 'customer' ? selectedNode.data.id : undefined
-          };
-
-          if (selectedNode.type === 'customer') {
-              setAreas([...areas, newArea]);
-              setExpandedNodes(new Set([...expandedNodes, selectedNode.data.id]));
-          } else {
-              const updateAreaTree = (list: Area[]): Area[] => {
-                  return list.map(node => {
-                      if (node.id === selectedNode.data.id) {
-                          return {
-                              ...node,
-                              children: [...(node.children || []), newArea]
-                          };
-                      }
-                      if (node.children) {
-                          return {
-                              ...node,
-                              children: updateAreaTree(node.children)
-                          };
-                      }
-                      return node;
-                  });
-              };
-              setAreas(updateAreaTree(areas));
-              setExpandedNodes(new Set([...expandedNodes, selectedNode.data.id]));
-          }
+        // 子区域：在选中节点下添加
+        if (!selectedNode) return;
+        
+        if (selectedNode.type === 'customer') {
+          // 在客户下添加一级区域
+          customerIdValue = selectedNode.data.id;
+          appCodeValue = selectedNode.data.appCode;
+          typeValue = 'level1';
+        } else {
+          // 在区域下添加子区域
+          parentIdValue = selectedNode.data.id;
+          appCodeValue = selectedNode.data.appCode;
+          customerIdValue = selectedNode.data.customerId;
+          typeValue = getNextType(selectedNode.type);
+        }
       }
-      
+
+      const newArea = await addArea({
+        name: newItemName.trim(),
+        type: typeValue,
+        image: undefined,
+        description: '',
+        parentId: parentIdValue || null,
+        customerId: customerIdValue || null,
+        appCode: appCodeValue || null,
+        sortOrder: 0,
+      });
+
+      // 展开新创建区域的父节点，并选中新区域
+      if (addMode === 'root' && selectedCustomerForRoot) {
+        setExpandedNodes(prev => new Set(prev).add(selectedCustomerForRoot));
+      } else if (selectedNode) {
+        setExpandedNodes(prev => new Set(prev).add(selectedNode.data.id));
+      }
+      setSelectedNodeId(newArea.id);
+
       setIsAddModalOpen(false);
       setNewItemName('');
       setSelectedCustomerForRoot('');
-  };
+    } catch (err: any) {
+      setActionError(err.message || '创建失败');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [newItemName, addMode, selectedCustomerForRoot, customers, selectedNode, addArea]);
 
-  const handleEditNode = () => {
+  const handleEditNode = useCallback(async () => {
     if (!selectedNode || !newItemName.trim() || selectedNode.type === 'customer') return;
 
-    const updateAreaTree = (list: Area[]): Area[] => {
-      return list.map(node => {
-        if (node.id === selectedNode.data.id) {
-          return { ...node, name: newItemName };
-        }
-        if (node.children) {
-          return { ...node, children: updateAreaTree(node.children) };
-        }
-        return node;
+    try {
+      setSubmitting(true);
+      setActionError(null);
+
+      await updateArea(selectedNode.data.id, {
+        name: newItemName.trim(),
       });
-    };
 
-    setAreas(updateAreaTree(areas));
-    setIsEditModalOpen(false);
-    setNewItemName('');
-  };
+      setIsEditModalOpen(false);
+      setNewItemName('');
+    } catch (err: any) {
+      setActionError(err.message || '更新失败');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [selectedNode, newItemName, updateArea]);
 
-  const handleDeleteNode = () => {
+  const handleDeleteNode = useCallback(async () => {
     if (!selectedNode || selectedNode.type === 'customer') return;
 
-    // Filter out from root level if applicable
-    if (areas.some(a => a.id === selectedNode.data.id)) {
-      setAreas(areas.filter(a => a.id !== selectedNode.data.id));
-    } else {
-      // Recursively remove from children
-      const removeFromTree = (list: Area[]): Area[] => {
-        return list
-          .filter(node => node.id !== selectedNode.data.id)
-          .map(node => {
-            if (node.children) {
-              return { ...node, children: removeFromTree(node.children) };
-            }
-            return node;
-          });
-      };
-      setAreas(removeFromTree(areas));
+    try {
+      setSubmitting(true);
+      setActionError(null);
+
+      await deleteArea(selectedNode.data.id);
+
+      setIsDeleteModalOpen(false);
+      setSelectedNodeId(null);
+    } catch (err: any) {
+      // 如果后端返回"有子区域或设备"的错误，显示给用户
+      setActionError(err.message || '删除失败');
+    } finally {
+      setSubmitting(false);
     }
+  }, [selectedNode, deleteArea]);
 
-    setIsDeleteModalOpen(false);
-    setSelectedNodeId(null); // Deselect after delete
-  };
-
-  // --- Render Helpers ---
-
-  const renderAreaTree = (areas: Area[], level: number) => {
-    return areas.map(area => (
+  // 递归渲染区域树（保持父子层级关系）
+  const renderAreaTree = (areaList: Area[], level: number): React.ReactNode => {
+    return areaList.map(area => (
       <TreeItem
         key={area.id}
-        label={area.name}
-        icon={area.type === 'level3' ? <File className="w-4 h-4 text-blue-400" /> : <Folder className="w-4 h-4 text-yellow-400" />}
+        label={`${area.name}${area.deviceCount > 0 ? ` (${area.deviceCount})` : ''}`}
+        icon={
+          area.type === 'level3' 
+            ? <File className="w-4 h-4 text-blue-400" /> 
+            : <Folder className="w-4 h-4 text-yellow-400" />
+        }
         level={level}
         isActive={selectedNodeId === area.id}
         onSelect={() => setSelectedNodeId(area.id)}
@@ -269,6 +276,73 @@ export function AreaManagementPage() {
       </TreeItem>
     ));
   };
+
+  /**
+   * 构建按客户分组的完整递归树。
+   * 
+   * 核心思路：areaTree 是后端返回的树形数据，但根节点可能没有 customerId 信息。
+   * 所以我们用 flat areas 列表（有 customerId）来辅助判断每个根节点归属哪个客户，
+   * 然后将完整的 areaTree 子树挂到对应客户下面。
+   */
+  const customerAreaTrees = useMemo(() => {
+    // 如果没有树数据，返回空
+    if (areaTree.length === 0 && areas.length === 0) {
+      return [] as Array<{ customer: typeof customers[number]; tree: Area[] }>;
+    }
+
+    // 用 flat areas 建立 id -> customerId 的映射（flat areas 有 customerId 字段）
+    const idToCustomerId = new Map<string, string | null>();
+    areas.forEach(a => {
+      if (a.customerId) idToCustomerId.set(a.id, a.customerId);
+    });
+
+    // 将 areaTree 根节点按 customerId 分组（保留完整 children 子树）
+    const grouped = new Map<string | null, Area[]>();
+    
+    areaTree.forEach(rootArea => {
+      // 查找该根节点及其所有后代中是否有 customerId 匹配的
+      let matchedCustomerId: string | null = null;
+      
+      // 先检查自身
+      matchedCustomerId = idToCustomerId.get(rootArea.id) ?? null;
+      
+      // 如果自身没有，递归查找后代
+      if (!matchedCustomerId) {
+        const findFirstCustomer = (list: Area[]): string | null => {
+          for (const node of list) {
+            const cid = idToCustomerId.get(node.id);
+            if (cid) return cid;
+            if (node.children?.length) {
+              const found = findFirstCustomer(node.children);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        matchedCustomerId = findFirstCustomer([rootArea]);
+      }
+
+      const key = matchedCustomerId || '__unmatched__';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(rootArea);
+    });
+
+    // 组装成 [{ customer, tree }] 数组
+    const result: Array<{ customer: typeof customers[number] | null; tree: Area[] }> = [];
+    
+    customers.forEach(c => {
+      const tree = grouped.get(c.id);
+      if (tree?.length) result.push({ customer: c, tree });
+    });
+
+    // 把无法匹配的客户也加上（可能有数据但没对应客户）
+    const unmatched = grouped.get('__unmatched__');
+    if (unmatched?.length) {
+      result.push({ customer: null, tree: unmatched });
+    }
+
+    return result;
+  }, [areaTree, areas, customers]);
 
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-gray-900 text-white relative">
@@ -281,7 +355,7 @@ export function AreaManagementPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center"
-                onClick={() => setIsAddModalOpen(false)}
+                onClick={() => { setIsAddModalOpen(false); setActionError(null); }}
             >
                 <motion.div 
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -329,22 +403,30 @@ export function AreaManagementPage() {
                                 value={newItemName}
                                 onChange={e => setNewItemName(e.target.value)}
                                 placeholder="请输入名称..."
-                                className="w-full bg-gray-900 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                onKeyDown={e => e.key === 'Enter' && handleAddNode()}
+                                disabled={submitting}
+                                className="w-full bg-gray-900 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                                onKeyDown={e => e.key === 'Enter' && !submitting && handleAddNode()}
                             />
                         </div>
+
+                        {actionError && (
+                          <p className="text-red-400 text-xs">{actionError}</p>
+                        )}
+
                         <div className="flex justify-end gap-2">
                             <button 
-                                onClick={() => setIsAddModalOpen(false)}
-                                className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                                onClick={() => { setIsAddModalOpen(false); setActionError(null); }}
+                                disabled={submitting}
+                                className="px-4 py-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                             >
                                 取消
                             </button>
                             <button 
                                 onClick={handleAddNode}
-                                disabled={!newItemName.trim() || (addMode === 'root' && !selectedCustomerForRoot)}
-                                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={!newItemName.trim() || submitting || (addMode === 'root' && !selectedCustomerForRoot)}
+                                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
+                                {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
                                 确认添加
                             </button>
                         </div>
@@ -362,7 +444,7 @@ export function AreaManagementPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center"
-                onClick={() => setIsEditModalOpen(false)}
+                onClick={() => { setIsEditModalOpen(false); setActionError(null); }}
             >
                 <motion.div 
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -381,22 +463,30 @@ export function AreaManagementPage() {
                                 value={newItemName}
                                 onChange={e => setNewItemName(e.target.value)}
                                 placeholder="请输入名称..."
-                                className="w-full bg-gray-900 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
-                                onKeyDown={e => e.key === 'Enter' && handleEditNode()}
+                                disabled={submitting}
+                                className="w-full bg-gray-900 border border-white/20 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                                onKeyDown={e => e.key === 'Enter' && !submitting && handleEditNode()}
                             />
                         </div>
+
+                        {actionError && (
+                          <p className="text-red-400 text-xs">{actionError}</p>
+                        )}
+
                         <div className="flex justify-end gap-2">
                             <button 
-                                onClick={() => setIsEditModalOpen(false)}
-                                className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                                onClick={() => { setIsEditModalOpen(false); setActionError(null); }}
+                                disabled={submitting}
+                                className="px-4 py-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                             >
                                 取消
                             </button>
                             <button 
                                 onClick={handleEditNode}
-                                disabled={!newItemName.trim()}
-                                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={!newItemName.trim() || submitting}
+                                className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
+                                {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
                                 保存修改
                             </button>
                         </div>
@@ -414,7 +504,7 @@ export function AreaManagementPage() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center"
-                onClick={() => setIsDeleteModalOpen(false)}
+                onClick={() => { setIsDeleteModalOpen(false); setActionError(null); }}
             >
                 <motion.div 
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -430,23 +520,31 @@ export function AreaManagementPage() {
                         <h3 className="text-lg font-bold text-white">确认删除</h3>
                     </div>
                     
-                    <p className="text-gray-300 mb-6 text-sm">
+                    <p className="text-gray-300 mb-2 text-sm">
                         确定要删除 <span className="text-white font-semibold">{selectedNode?.data.name}</span> 吗？
-                        <br/>
-                        <span className="text-red-400 text-xs mt-1 block">该操作将同时删除其所有子区域，且无法恢复。</span>
                     </p>
+                    <p className="text-yellow-400/80 text-xs mb-4">
+                        注意：如果该区域下存在子区域或已绑定设备，删除将失败。
+                    </p>
+
+                    {actionError && (
+                      <p className="text-red-400 text-xs mb-4">{actionError}</p>
+                    )}
 
                     <div className="flex justify-end gap-2">
                         <button 
-                            onClick={() => setIsDeleteModalOpen(false)}
-                            className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                            onClick={() => { setIsDeleteModalOpen(false); setActionError(null); }}
+                            disabled={submitting}
+                            className="px-4 py-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
                         >
                             取消
                         </button>
                         <button 
                             onClick={handleDeleteNode}
-                            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                            disabled={submitting}
+                            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-2"
                         >
+                            {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
                             确认删除
                         </button>
                     </div>
@@ -458,13 +556,17 @@ export function AreaManagementPage() {
       {/* Sidebar Tree */}
       <div className="w-80 border-r border-white/10 flex flex-col bg-gray-900/50 backdrop-blur-xl">
         <div className="p-4 border-b border-white/10 flex items-center justify-between">
-          <h2 className="font-semibold text-white">区域导航</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-white">区域导航</h2>
+            {loading && <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />}
+          </div>
           {hasPermission(PERMISSIONS.CREATE_AREAS) && (
             <button 
                 onClick={() => {
                     setAddMode('root');
                     setNewItemName('');
                     setSelectedCustomerForRoot('');
+                    setActionError(null);
                     setIsAddModalOpen(true);
                 }}
                 className="p-1.5 hover:bg-white/10 rounded-lg transition-colors text-blue-400" 
@@ -474,21 +576,50 @@ export function AreaManagementPage() {
             </button>
           )}
         </div>
+        
+        {/* Global Error */}
+        {error && (
+          <div className="mx-4 mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
+            {error}
+            <button onClick={refreshAreas} className="ml-2 underline">重试</button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-2">
-          {customers.map(customer => {
-             const customerAreas = areas.filter(a => a.customerId === customer.id);
+          {loading && areas.length === 0 ? (
+            <div className="flex items-center justify-center py-8 text-gray-500 text-sm">
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              加载中...
+            </div>
+          ) : customerAreaTrees.length === 0 ? (
+            customers.map(customer => (
+              <TreeItem
+                key={customer.id}
+                label={customer.name}
+                icon={<Building2 className="w-4 h-4 text-purple-400" />}
+                level={0}
+                isActive={selectedNodeId === customer.id}
+                onSelect={() => setSelectedNodeId(customer.id)}
+                isExpanded={expandedNodes.has(customer.id)}
+                onToggle={() => toggleNode(customer.id)}
+              >
+                <div className="pl-6 py-2 text-xs text-gray-500">暂无区域数据</div>
+              </TreeItem>
+            ))
+          ) : customerAreaTrees.map(({ customer, tree }) => {
+             const custId = customer?.id ?? '__no_customer__';
              return (
                <TreeItem
-                 key={customer.id}
-                 label={customer.name}
+                 key={`cust-${custId}`}
+                 label={customer?.name || '未分配区域'}
                  icon={<Building2 className="w-4 h-4 text-purple-400" />}
                  level={0}
-                 isActive={selectedNodeId === customer.id}
-                 onSelect={() => setSelectedNodeId(customer.id)}
-                 isExpanded={expandedNodes.has(customer.id)}
-                 onToggle={() => toggleNode(customer.id)}
+                 isActive={selectedNodeId === custId}
+                 onSelect={() => setSelectedNodeId(custId)}
+                 isExpanded={expandedNodes.has(custId)}
+                 onToggle={() => toggleNode(custId)}
                >
-                 {customerAreas.length > 0 && renderAreaTree(customerAreas, 1)}
+                 {tree.length > 0 && renderAreaTree(tree, 1)}
                </TreeItem>
              );
           })}
@@ -519,6 +650,8 @@ export function AreaManagementPage() {
                      {selectedNode.type === 'customer' ? '客户根节点' : 
                       selectedNode.type === 'level1' ? '一级区域 (场景)' : 
                       selectedNode.type === 'level2' ? '二级区域 (楼层)' : '三级区域 (功能间)'}
+                     {selectedNode.type !== 'customer' && selectedNode.data.deviceCount > 0 && 
+                       ` · ${selectedNode.data.deviceCount} 个设备`}
                    </p>
                  </div>
                </div>
@@ -529,9 +662,11 @@ export function AreaManagementPage() {
                         onClick={() => {
                             setAddMode('child');
                             setNewItemName('');
+                            setActionError(null);
                             setIsAddModalOpen(true);
                         }}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm transition-colors border border-blue-500/30"
+                        disabled={loading}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-sm transition-colors border border-blue-500/30 disabled:opacity-50"
                     >
                         <Plus className="w-4 h-4" />
                         <span>新增子区域</span>
@@ -544,6 +679,7 @@ export function AreaManagementPage() {
                             <button 
                                 onClick={() => {
                                     setNewItemName(selectedNode.data.name);
+                                    setActionError(null);
                                     setIsEditModalOpen(true);
                                 }}
                                 className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors"
@@ -554,7 +690,7 @@ export function AreaManagementPage() {
                         )}
                         {hasPermission(PERMISSIONS.DELETE_AREAS) && (
                             <button 
-                                onClick={() => setIsDeleteModalOpen(true)}
+                                onClick={() => { setActionError(null); setIsDeleteModalOpen(true); }}
                                 className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
                                 title="删除"
                             >
@@ -582,33 +718,48 @@ export function AreaManagementPage() {
                        <thead className="bg-white/5 text-gray-400 border-b border-white/10">
                          <tr>
                            <th className="px-6 py-3 font-medium">区域名称</th>
+                           <th className="px-6 py-3 font-medium text-right">类型</th>
+                           <th className="px-6 py-3 font-medium text-right">设备数</th>
                          </tr>
                        </thead>
                        <tbody className="divide-y divide-white/5">
-                         {/* Show children if any, else show empty state */}
-                         {selectedNode.type === 'customer' ? (
-                            areas.filter(a => a.customerId === selectedNode.data.id).length > 0 ? (
-                                areas.filter(a => a.customerId === selectedNode.data.id).map(area => (
-                                    <tr 
-                                        key={area.id} 
-                                        className="hover:bg-white/5 transition-colors cursor-pointer group"
-                                        onClick={() => {
-                                            setSelectedNodeId(area.id);
-                                            setExpandedNodes(prev => new Set(prev).add(selectedNode.data.id));
-                                        }}
-                                    >
-                                        <td className="px-6 py-3 text-white flex items-center justify-between">
-                                            <div className="flex items-center gap-2">
-                                                <Folder className="w-4 h-4 text-yellow-400" />
-                                                <span>{area.name}</span>
-                                            </div>
-                                            <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors" />
-                                        </td>
-                                    </tr>
+                         {loading ? (
+                           <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-500">
+                             <Loader2 className="w-4 h-4 inline mr-2 animate-spin" />加载中...
+                           </td></tr>
+                         ) : selectedNode.type === 'customer' ? (
+                            // 客户节点：从 customerAreaTrees 中取该客户的完整子树（保持层级）
+                            (() => {
+                              const entry = customerAreaTrees.find(e => e.customer?.id === selectedNode.data.id);
+                              const custAreas = entry?.tree || [];
+                              return custAreas.length > 0 ? (
+                                custAreas.map(area => (
+                                  <tr 
+                                      key={area.id} 
+                                      className="hover:bg-white/5 transition-colors cursor-pointer group"
+                                      onClick={() => {
+                                          setSelectedNodeId(area.id);
+                                          setExpandedNodes(prev => new Set(prev).add(selectedNode.data.id));
+                                      }}
+                                  >
+                                      <td className="px-6 py-3 text-white flex items-center justify-between">
+                                          <div className="flex items-center gap-2">
+                                              <Folder className="w-4 h-4 text-yellow-400" />
+                                              <span>{area.name}</span>
+                                              {area.children && area.children.length > 0 && (
+                                                <span className="text-gray-500 text-xs">({area.children.length} 子区域)</span>
+                                              )}
+                                          </div>
+                                          <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors" />
+                                      </td>
+                                      <td className="px-6 py-3 text-right text-gray-400">{area.type}</td>
+                                      <td className="px-6 py-3 text-right text-gray-400">{area.deviceCount}</td>
+                                  </tr>
                                 ))
-                            ) : (
-                                <tr><td className="px-6 py-8 text-center text-gray-500">暂无区域数据</td></tr>
-                            )
+                              ) : (
+                                <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-500">暂无区域数据</td></tr>
+                              );
+                            })()
                          ) : (
                             selectedNode.data.children && selectedNode.data.children.length > 0 ? (
                                 selectedNode.data.children.map((child: Area) => (
@@ -627,10 +778,12 @@ export function AreaManagementPage() {
                                             </div>
                                             <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors" />
                                         </td>
+                                        <td className="px-6 py-3 text-right text-gray-400">{child.type}</td>
+                                        <td className="px-6 py-3 text-right text-gray-400">{child.deviceCount}</td>
                                     </tr>
                                 ))
                             ) : (
-                                <tr><td className="px-6 py-8 text-center text-gray-500">暂无子区域</td></tr>
+                                <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-500">暂无子区域</td></tr>
                             )
                          )}
                        </tbody>
@@ -642,8 +795,6 @@ export function AreaManagementPage() {
           </>
         )}
       </div>
-      
-      {/* End */}
       
     </div>
   );

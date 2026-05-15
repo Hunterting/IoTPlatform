@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace IoTPlatform.Data;
 
@@ -59,6 +60,7 @@ public class AppDbContextFactory : IDesignTimeDbContextFactory<AppDbContext>
                     errorNumbersToAdd: null);
             });
 
+        // 设计时工厂不需要租户上下文，直接传递空选项
         return new AppDbContext(optionsBuilder.Options);
     }
 }

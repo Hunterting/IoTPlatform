@@ -20,6 +20,10 @@ public static class Permissions
     public const string UPDATE_DEVICES = "update_devices";
     public const string DELETE_DEVICES = "delete_devices";
 
+    // 项目管理
+    public const string VIEW_PROJECTS = "view_projects";
+    public const string MANAGE_PROJECTS = "manage_projects";
+
     // 区域管理
     public const string VIEW_AREAS = "view_areas";
 
@@ -109,4 +113,9 @@ public static class Permissions
     public const string MANAGE_DATABASE_CONFIG = "manage_database_config";
     public const string VIEW_DATA_EXPORT = "view_data_export";
     public const string PERFORM_DATA_EXPORT = "perform_data_export";
+
+    // 设备指令控制
+    public const string VIEW_DEVICE_COMMANDS = "view_device_commands";
+    public const string SEND_DEVICE_COMMANDS = "send_device_commands";
+    public const string CANCEL_DEVICE_COMMANDS = "cancel_device_commands";
 }

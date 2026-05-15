@@ -1,19 +1,39 @@
+using IoTPlatform.Infrastructure.Tenant;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace IoTPlatform.Data;
+
+/// <summary>
+/// 标识需要租户隔离的实体接口
+/// </summary>
+public interface IHasAppCode
+{
+    string AppCode { get; set; }
+}
 
 /// <summary>
 /// 应用数据库上下文
 /// </summary>
 public class AppDbContext : DbContext
 {
+    private readonly ITenantContextAccessor _tenantContextAccessor;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options,
+        IServiceProvider serviceProvider) : base(options)
+    {
+        _tenantContextAccessor = serviceProvider.GetRequiredService<ITenantContextAccessor>();
+    }
+
+    // 用于设计时迁移
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
+        _tenantContextAccessor = null!;
     }
 
     // 用户和认证
@@ -50,6 +70,10 @@ public class AppDbContext : DbContext
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
 
+    // 设备指令
+    public DbSet<DeviceCommand> DeviceCommands { get; set; }
+    public DbSet<CommandHistory> CommandHistories { get; set; }
+
         // 日志和字典
         public DbSet<LoginLog> LoginLogs { get; set; }
         public DbSet<OperationLog> OperationLogs { get; set; }
@@ -62,6 +86,9 @@ public class AppDbContext : DbContext
 
     // 系统设置
     public DbSet<SystemSetting> SystemSettings { get; set; }
+
+    // 通用附件
+    public DbSet<Models.Attachment> Attachments { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -96,10 +123,53 @@ public class AppDbContext : DbContext
         ConfigureAreaDevices(modelBuilder);
         ConfigureDataRules(modelBuilder);
         ConfigureEtlTasks(modelBuilder);
-        ConfigureSystemSettings(modelBuilder);
+        ConfigureDeviceCommands(modelBuilder);
+        ConfigureCommandHistories(modelBuilder);
+        ConfigureAttachments(modelBuilder);
+        // 配置全局租户过滤
+        ConfigureGlobalQueryFilters(modelBuilder);
 
         // 配置软删除过滤器（如果需要）
-        // ConfigureGlobalQueryFilters(modelBuilder);
+        // ConfigureSoftDeleteFilters(modelBuilder);
+    }
+
+    /// <summary>
+    /// 配置全局租户过滤
+    /// </summary>
+    private void ConfigureGlobalQueryFilters(ModelBuilder modelBuilder)
+    {
+        // 获取当前租户的 AppCode
+        var appCode = _tenantContextAccessor?.Current?.AppCode;
+        var isSuperAdmin = _tenantContextAccessor?.Current?.IsSuperAdmin ?? false;
+
+        // 超级管理员不应用过滤
+        if (isSuperAdmin)
+        {
+            return;
+        }
+
+        // 如果 AppCode 为空或未设置，不应用过滤（可能是在初始化阶段）
+        if (string.IsNullOrEmpty(appCode))
+        {
+            return;
+        }
+
+        // 为所有实现 IHasAppCode 接口的实体添加查询过滤器
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            if (typeof(IHasAppCode).IsAssignableFrom(entityType.ClrType))
+            {
+                // 构建过滤器表达式
+                var parameter = System.Linq.Expressions.Expression.Parameter(entityType.ClrType, "e");
+                var property = System.Linq.Expressions.Expression.Property(parameter, nameof(IHasAppCode.AppCode));
+                var value = System.Linq.Expressions.Expression.Constant(appCode);
+                var equalsExpression = System.Linq.Expressions.Expression.Equal(property, value);
+
+                // 应用过滤器
+                modelBuilder.Entity(entityType.ClrType)
+                    .HasQueryFilter(System.Linq.Expressions.Expression.Lambda(equalsExpression, parameter));
+            }
+        }
     }
 
     private void ConfigureUsers(ModelBuilder modelBuilder)
@@ -178,6 +248,18 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.SerialNumber);
 
             entity.Property(e => e.EnergyTypes).HasColumnType("json");
+
+            // 配置与 Area 的关系（可选外键）
+            entity.HasOne(d => d.Area)
+                .WithMany()
+                .HasForeignKey(d => d.AreaId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // 配置与 Project 的关系（可选外键）
+            entity.HasOne(d => d.Project)
+                .WithMany()
+                .HasForeignKey(d => d.ProjectId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 
@@ -461,6 +543,40 @@ public class AppDbContext : DbContext
         });
     }
 
+    private void ConfigureDeviceCommands(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DeviceCommand>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.CommandId).IsUnique();
+            entity.HasIndex(e => e.DeviceId);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.CreatedAt);
+
+            entity.HasOne(e => e.Device)
+                .WithMany()
+                .HasForeignKey(e => e.DeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private void ConfigureCommandHistories(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<CommandHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.CommandId);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.CreatedAt);
+
+            entity.HasOne(e => e.Command)
+                .WithMany()
+                .HasForeignKey(e => e.CommandId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
     private void ConfigureDictionaryTypes(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<DictionaryTypeConfig>(entity =>
@@ -480,6 +596,18 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Key).IsUnique();
             entity.HasIndex(e => e.Category);
             entity.HasIndex(e => e.AppCode);
+        });
+    }
+
+    private void ConfigureAttachments(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Models.Attachment>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Module);
+            entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.UploadDate);
         });
     }
 

@@ -103,6 +103,32 @@ namespace IoTPlatform.Data.SeedData
                         AppCode = "system",
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
+                    },
+                    new Role
+                    {
+                        Id = 6,
+                        Name = "厨师长",
+                        Code = "chef",
+                        Description = "厨师长，负责厨房设备监控和工单处理",
+                        IsSystem = false,
+                        IsDefault = false,
+                        Status = "active",
+                        AppCode = "system",
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    },
+                    new Role
+                    {
+                        Id = 7,
+                        Name = "普通员工",
+                        Code = "staff",
+                        Description = "普通员工，拥有基础查看权限",
+                        IsSystem = false,
+                        IsDefault = false,
+                        Status = "active",
+                        AppCode = "system",
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
                     }
                 };
 

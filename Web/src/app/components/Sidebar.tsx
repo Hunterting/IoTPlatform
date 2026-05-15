@@ -30,6 +30,8 @@ import {
   Wind,
   BookOpen,
   Database,
+  Terminal,
+  Radio,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, Permission } from '@/app/config/permissions';
@@ -46,6 +48,8 @@ export type PageType =
   | 'monitoring'
   | 'archives'
   | 'work-orders'
+  | 'protocol-management'
+  | 'device-control'
   | 'data-collection'
   | 'data-collection-protocol'
   | 'data-collection-gateway'
@@ -171,6 +175,18 @@ const menuItems: MenuItem[] = [
     label: '工单管理',
     icon: <ClipboardList className="w-5 h-5" />,
     requiredPermission: PERMISSIONS.VIEW_WORK_ORDERS,
+  },
+  {
+    id: 'protocol-management',
+    label: '协议管理',
+    icon: <Radio className="w-5 h-5" />,
+    requiredPermission: PERMISSIONS.MANAGE_PROTOCOLS,
+  },
+  {
+    id: 'device-control',
+    label: '设备控制',
+    icon: <Terminal className="w-5 h-5" />,
+    requiredPermission: PERMISSIONS.VIEW_DEVICE_COMMANDS,
   },
   {
     id: 'data-collection',

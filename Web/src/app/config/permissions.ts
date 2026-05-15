@@ -8,6 +8,12 @@ export const PERMISSIONS = {
   UPDATE_CUSTOMERS: 'update_customers',
   DELETE_CUSTOMERS: 'delete_customers',
 
+  // ── 项目管理 ──────────────────────────────────────────────
+  VIEW_PROJECTS: 'view_projects',
+  CREATE_PROJECTS: 'create_projects',
+  UPDATE_PROJECTS: 'update_projects',
+  DELETE_PROJECTS: 'delete_projects',
+
   // ── 设备管理 ──────────────────────────────────────────────
   VIEW_DEVICES: 'view_devices',
   CREATE_DEVICES: 'create_devices',
@@ -76,6 +82,11 @@ export const PERMISSIONS = {
   UPDATE_DICTIONARY: 'update_dictionary',
   DELETE_DICTIONARY: 'delete_dictionary',
 
+  // ── 设备指令下发 ───────────────────────────────────────────
+  VIEW_DEVICE_COMMANDS: 'view_device_commands',
+  SEND_DEVICE_COMMANDS: 'send_device_commands',
+  CANCEL_DEVICE_COMMANDS: 'cancel_device_commands',
+
   // ── 数据采集 ──────────────────────────────────────────────
   VIEW_DATA_COLLECTION: 'view_data_collection',
   MANAGE_PROTOCOLS: 'manage_protocols',
@@ -132,6 +143,15 @@ export const PERMISSION_GROUPS = [
       { code: PERMISSIONS.CREATE_CUSTOMERS, name: '新增客户' },
       { code: PERMISSIONS.UPDATE_CUSTOMERS, name: '编辑客户' },
       { code: PERMISSIONS.DELETE_CUSTOMERS, name: '删除客户' },
+    ],
+  },
+  {
+    name: '项目管理',
+    permissions: [
+      { code: PERMISSIONS.VIEW_PROJECTS, name: '查看项目' },
+      { code: PERMISSIONS.CREATE_PROJECTS, name: '新增项目' },
+      { code: PERMISSIONS.UPDATE_PROJECTS, name: '编辑项目' },
+      { code: PERMISSIONS.DELETE_PROJECTS, name: '删除项目' },
     ],
   },
   {
@@ -248,6 +268,14 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    name: '设备指令控制',
+    permissions: [
+      { code: PERMISSIONS.VIEW_DEVICE_COMMANDS, name: '查看指令记录' },
+      { code: PERMISSIONS.SEND_DEVICE_COMMANDS, name: '发送设备指令' },
+      { code: PERMISSIONS.CANCEL_DEVICE_COMMANDS, name: '取消设备指令' },
+    ],
+  },
+  {
     name: '数据采集',
     permissions: [
       { code: PERMISSIONS.VIEW_DATA_COLLECTION, name: '查看数据采集' },
@@ -310,6 +338,11 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.CREATE_CUSTOMERS,
       PERMISSIONS.UPDATE_CUSTOMERS,
       PERMISSIONS.DELETE_CUSTOMERS,
+      // 项目
+      PERMISSIONS.VIEW_PROJECTS,
+      PERMISSIONS.CREATE_PROJECTS,
+      PERMISSIONS.UPDATE_PROJECTS,
+      PERMISSIONS.DELETE_PROJECTS,
       // 设备
       PERMISSIONS.VIEW_DEVICES,
       PERMISSIONS.CREATE_DEVICES,
@@ -364,6 +397,10 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.MANAGE_PROTOCOLS,
       PERMISSIONS.MANAGE_RULES,
       PERMISSIONS.EXPORT_DATA,
+      // 设备指令控制
+      PERMISSIONS.VIEW_DEVICE_COMMANDS,
+      PERMISSIONS.SEND_DEVICE_COMMANDS,
+      PERMISSIONS.CANCEL_DEVICE_COMMANDS,
       // 协议与接入管理
       PERMISSIONS.VIEW_PROTOCOL_CONFIG,
       PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
@@ -415,6 +452,10 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.VIEW_WORK_ORDERS,
       PERMISSIONS.CREATE_WORK_ORDERS,
       PERMISSIONS.UPDATE_WORK_ORDERS,
+      // 设备指令控制
+      PERMISSIONS.VIEW_DEVICE_COMMANDS,
+      PERMISSIONS.SEND_DEVICE_COMMANDS,
+      PERMISSIONS.CANCEL_DEVICE_COMMANDS,
     ],
     dataScope: 'CUSTOM',
   },

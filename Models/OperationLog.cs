@@ -1,10 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using IoTPlatform.Data;
 
 namespace IoTPlatform.Models;
 
 [Table("operation_logs")]
-public class OperationLog
+public class OperationLog : IHasAppCode
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

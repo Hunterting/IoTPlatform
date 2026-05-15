@@ -179,7 +179,7 @@ public class UsersController : ControllerBase
             var currentUserId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
             // 只能修改自己的密码或超级管理员可以修改
-            if (role != "super_admin" && currentUserId != id.ToString())
+            if (role != Roles.SUPER_ADMIN && currentUserId != id.ToString())
             {
                 var forbiddenResponse = ApiResponse.Forbidden("无权修改该用户密码");
                 return Ok(forbiddenResponse);

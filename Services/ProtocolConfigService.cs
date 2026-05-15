@@ -2,6 +2,7 @@
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
+using IoTPlatform.Infrastructure.Protocol;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -15,13 +16,19 @@ public class ProtocolConfigService : IProtocolConfigService
 {
     private readonly IProtocolConfigRepository _protocolConfigRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IProtocolAdapterFactory _adapterFactory;
+    private readonly ILogger<ProtocolConfigService>? _logger;
 
     public ProtocolConfigService(
         IProtocolConfigRepository protocolConfigRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IProtocolAdapterFactory adapterFactory,
+        ILogger<ProtocolConfigService>? logger = null)
     {
         _protocolConfigRepository = protocolConfigRepository;
         _unitOfWork = unitOfWork;
+        _adapterFactory = adapterFactory;
+        _logger = logger;
     }
 
     /// <summary>
@@ -254,11 +261,52 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new UnauthorizedAccessException("无权启动该协议配置");
         }
 
-        // TODO: 这里应该调用MQTT客户端服务或其他协议适配器启动协议
-        config.Status = "active";
-        config.UpdatedAt = DateTime.UtcNow;
-        await _protocolConfigRepository.UpdateAsync(config);
-        await _unitOfWork.SaveChangesAsync();
+        // 如果已经激活，直接返回
+        if (config.Status == "active")
+        {
+            return;
+        }
+
+        try
+        {
+            // 创建协议适配器
+            var protocolType = config.Type.ToUpperInvariant();
+            var adapter = _adapterFactory.CreateAdapter(protocolType, (int)config.Id);
+
+            // 获取连接配置
+            var connectionString = config.Config ?? "{}";
+
+            // 添加 AppCode 到配置
+            if (!string.IsNullOrEmpty(config.AppCode) && !connectionString.Contains("AppCode"))
+            {
+                var configDict = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(connectionString) ?? new();
+                configDict["AppCode"] = JsonSerializer.SerializeToElement(config.AppCode);
+                connectionString = JsonSerializer.Serialize(configDict);
+            }
+
+            // 连接并启动数据采集
+            var connected = await adapter.ConnectAsync(connectionString);
+            if (connected)
+            {
+                await adapter.StartDataCollectionAsync();
+                _logger?.LogInformation("协议已启动: {Name}, Type={Type}", config.Name, config.Type);
+            }
+            else
+            {
+                throw new InvalidOperationException($"协议连接失败: {config.Name}");
+            }
+
+            // 更新状态
+            config.Status = "active";
+            config.UpdatedAt = DateTime.UtcNow;
+            await _protocolConfigRepository.UpdateAsync(config);
+            await _unitOfWork.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "启动协议失败: {Name}", config.Name);
+            throw;
+        }
     }
 
     /// <summary>
@@ -278,10 +326,28 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new UnauthorizedAccessException("无权停止该协议配置");
         }
 
-        // TODO: 这里应该调用MQTT客户端服务或其他协议适配器停止协议
-        config.Status = "inactive";
-        config.UpdatedAt = DateTime.UtcNow;
-        await _protocolConfigRepository.UpdateAsync(config);
-        await _unitOfWork.SaveChangesAsync();
+        // 如果已经停止，直接返回
+        if (config.Status == "inactive")
+        {
+            return;
+        }
+
+        try
+        {
+            // 释放协议适配器
+            _adapterFactory.ReleaseAdapter((int)config.Id);
+            _logger?.LogInformation("协议已停止: {Name}, Type={Type}", config.Name, config.Type);
+
+            // 更新状态
+            config.Status = "inactive";
+            config.UpdatedAt = DateTime.UtcNow;
+            await _protocolConfigRepository.UpdateAsync(config);
+            await _unitOfWork.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "停止协议失败: {Name}", config.Name);
+            throw;
+        }
     }
 }

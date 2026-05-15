@@ -1,6 +1,8 @@
-import { createContext, useContext, useState, ReactNode, useMemo } from 'react';
+import { createContext, useContext, useState, ReactNode, useMemo, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import { PERMISSIONS } from '@/app/config/permissions';
+import { areaApi } from '../services/api/areaApi';
+import { adaptAreaDtoToArea, adaptAreaTreeNodeDtoToArea, adaptCreateAreaRequest, adaptUpdateAreaRequest } from '../services/adapters';
+import { AreaDto, AreaTreeNodeDto, AreaFilters } from '../services/api/types/area.types';
 
 // Data Structures
 export interface AreaDevice {
@@ -15,131 +17,317 @@ export interface AreaDevice {
 export interface Area {
   id: string;
   name: string;
-  type: 'level1' | 'level2' | 'level3';
-  image: string;
-  parentId?: string;
-  customerId?: string; // Link Level 1 area to a customer
-  appCode?: string; // Application code for data isolation
+  type: 'level1' | 'level2' | 'level3' | string;
+  image?: string | null;
+  parentId?: string | null;
+  parentName?: string | null;
+  customerId?: string | null;
+  customerName?: string | null;
+  appCode?: string | null;
+  description?: string | null;
+  deviceCount: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
   children?: Area[];
   devices?: AreaDevice[];
-  description?: string;
-  deviceCount?: number;
 }
 
 interface AreaContextType {
+  // 状态
   areas: Area[];
+  allAreas: Area[];
+  areaTree: Area[];
+  loading: boolean;
+  error: string | null;
+  currentPage: number;
+  totalPages: number;
+  totalCount: number;
+  accessibleAreaIds: string[]; // 用户可访问的所有区域ID列表
+  
+  // 操作
+  refreshAreas: (page?: number, pageSize?: number, filters?: AreaFilters) => Promise<void>;
+  refreshAreaTree: () => Promise<void>;
+  getArea: (id: string) => Promise<Area>;
+  getChildAreas: (parentId: string) => Promise<Area[]>;
+  addArea: (area: Omit<Area, 'id' | 'deviceCount' | 'createdAt' | 'updatedAt' | 'children' | 'devices'>) => Promise<Area>;
+  updateArea: (id: string, updates: Partial<Area>) => Promise<Area>;
+  deleteArea: (id: string) => Promise<void>;
+  
+  // 工具函数
+  clearError: () => void;
   setAreas: (areas: Area[]) => void;
   getAreasByCustomerId: (customerId: string) => Area[];
   flattenAreas: (areas: Area[]) => Area[];
-  accessibleAreaIds: string[]; // List of all area IDs the user is allowed to access
+  buildAreaTree: (areaList: Area[]) => Area[];
 }
 
 const AreaContext = createContext<AreaContextType | undefined>(undefined);
 
-// Mock Data
-const MOCK_AREAS: Area[] = [
-  {
-    id: 'L1-001',
-    name: '海底捞火锅（建国路店）',
-    type: 'level1',
-    appCode: 'HDLAPP001',
-    customerId: '1',
-    image: 'https://images.unsplash.com/photo-1759065456033-9f2d6a400932?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmYWN0b3J5JTIwYnVpbGRpbmclMjBleHRlcmlvcnxlbnwxfHx8fDE3Njk5NDk5NjJ8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-    description: '北京市朝阳区建国路88号',
-    deviceCount: 156,
-    children: [
-      {
-        id: 'L2-001',
-        name: '一层大厅区',
-        type: 'level2',
-        image: 'https://images.unsplash.com/photo-1721244654210-a505a99661e9?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmbG9vciUyMHBsYW4lMjBibHVlcHJpbnR8ZW58MXx8fHwxNzcwMDE4MzMwfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-        description: '包含前厅接待、A区用餐区、B区用餐区',
-        parentId: 'L1-001',
-        deviceCount: 45,
-        children: [
-          {
-            id: 'L3-001',
-            name: 'A区用餐区',
-            type: 'level3',
-            image: 'https://images.unsplash.com/photo-1760001553414-5634201efc36?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb21tZXJjaWFsJTIwa2l0Y2hlbiUyMGxheW91dHxlbnwxfHx8fDE3NzAwMTgzMzN8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-            parentId: 'L2-001',
-            deviceCount: 20,
-            devices: [
-              { id: 'd1', name: '智能电磁炉-A01', type: '加热设备', status: 'online', x: 20, y: 30 },
-              { id: 'd2', name: '智能电磁炉-A02', type: '加热设备', status: 'online', x: 20, y: 60 },
-              { id: 'd3', name: '送餐机器人-R01', type: '服务设备', status: 'online', x: 50, y: 50 },
-            ]
-          },
-          {
-            id: 'L3-002',
-            name: '饮品制作台',
-            type: 'level3',
-            image: 'https://images.unsplash.com/photo-1760001553414-5634201efc36?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb21tZXJjaWFsJTIwa2l0Y2hlbiUyMGxheW91dHxlbnwxfHx8fDE3NzAwMTgzMzN8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-            parentId: 'L2-001',
-            deviceCount: 15,
-            devices: [
-              { id: 'd4', name: '制冰机-I01', type: '冷藏设备', status: 'warning', x: 30, y: 40 },
-              { id: 'd5', name: '咖啡机-C01', type: '饮品设备', status: 'online', x: 60, y: 40 },
-            ]
-          }
-        ]
-      },
-      {
-        id: 'L2-002',
-        name: '二层后厨区',
-        type: 'level2',
-        image: 'https://images.unsplash.com/photo-1721244654210-a505a99661e9?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmbG9vciUyMHBsYW4lMjBibHVlcHJpbnR8ZW58MXx8fHwxNzcwMDE4MzMwfDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-        description: '包含中央厨房、冷库、清洗间',
-        parentId: 'L1-001',
-        deviceCount: 111,
-        children: [
-           {
-            id: 'L3-003',
-            name: '中央厨房',
-            type: 'level3',
-            image: 'https://images.unsplash.com/photo-1760001553414-5634201efc36?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb21tZXJjaWFsJTIwa2l0Y2hlbiUyMGxheW91dHxlbnwxfHx8fDE3NzAwMTgzMzN8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-            parentId: 'L2-002',
-            deviceCount: 45,
-            devices: [
-              { id: 'd6', name: '蒸箱-Z01', type: '烹饪设备', status: 'online', x: 15, y: 25 },
-              { id: 'd7', name: '炒灶-C01', type: '烹饪设备', status: 'online', x: 15, y: 45 },
-              { id: 'd8', name: '炒灶-C02', type: '烹饪设备', status: 'offline', x: 15, y: 65 },
-              { id: 'd9', name: '排烟风机-F01', type: '通风设备', status: 'online', x: 80, y: 20 },
-            ]
-          },
-          {
-            id: 'L3-004',
-            name: '冷库',
-            type: 'level3',
-            image: 'https://images.unsplash.com/photo-1760001553414-5634201efc36?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxjb21tZXJjaWFsJTIwa2l0Y2hlbiUyMGxheW91dHxlbnwxfHx8fDE3NzAwMTgzMzN8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-            parentId: 'L2-002',
-            deviceCount: 12,
-            devices: [
-              { id: 'd10', name: '温湿度传感器-T01', type: '传感设备', status: 'online', x: 50, y: 50 },
-            ]
-          }
-        ]
-      }
-    ]
-  },
-  {
-    id: 'L1-002',
-    name: '喜茶（上海世纪大道店）',
-    type: 'level1',
-    appCode: 'XCAPP002',
-    customerId: '2',
-    image: 'https://images.unsplash.com/photo-1759065456033-9f2d6a400932?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmYWN0b3J5JTIwYnVpbGRpbmclMjBleHRlcmlvcnxlbnwxfHx8fDE3Njk5NDk5NjJ8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral',
-    description: '上海市浦东新区世纪大道100号',
-    deviceCount: 35,
-    children: []
-  }
-];
-
 export function AreaProvider({ children }: { children: ReactNode }) {
-  const { currentCustomer, user, getUserRole, hasPermission } = useAuth();
-  const [allAreas, setAllAreas] = useState<Area[]>(MOCK_AREAS);
+  const { currentCustomer, user } = useAuth();
+  
+  const [allAreas, setAllAreas] = useState<Area[]>([]);
+  const [areaTree, setAreaTree] = useState<Area[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
 
-  // Helper to flatten area tree to list of all nodes
+  // 加载区域列表
+  const loadAreas = useCallback(async (
+    page: number = 1,
+    pageSize: number = 20,
+    filters?: AreaFilters
+  ) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await areaApi.getAreas(page, pageSize, filters);
+      
+      if (response.data.code === 200) {
+        const areas = response.data.data.items.map(adaptAreaDtoToArea);
+        setAllAreas(areas);
+        setCurrentPage(response.data.data.page);
+        setTotalPages(response.data.data.totalPages);
+        setTotalCount(response.data.data.totalCount);
+      } else {
+        throw new Error(response.data.message || '加载区域列表失败');
+      }
+    } catch (err) {
+      console.error('Failed to load areas:', err);
+      setError(err instanceof Error ? err.message : '加载区域列表失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 加载区域树
+  const loadAreaTree = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await areaApi.getAreaTree();
+      
+      if (response.data.code === 200) {
+        const tree = response.data.data.map(adaptAreaTreeNodeDtoToArea);
+        setAreaTree(tree);
+      } else {
+        throw new Error(response.data.message || '加载区域树失败');
+      }
+    } catch (err) {
+      console.error('Failed to load area tree:', err);
+      setError(err instanceof Error ? err.message : '加载区域树失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 根据当前客户过滤区域
+  const areas = useMemo(() => {
+    if (!currentCustomer?.appCode && user?.role !== 'super_admin') {
+      return [];
+    }
+    
+    return allAreas.filter(area => {
+      // 超级管理员可以看到所有区域
+      if (user?.role === 'super_admin') {
+        return true;
+      }
+      
+      // 其他用户只能看到自己客户下的区域
+      return area.appCode === currentCustomer?.appCode;
+    });
+  }, [allAreas, currentCustomer, user]);
+
+  // 确定用户可访问的区域ID（基于RBAC）
+  const accessibleAreaIds = useMemo(() => {
+    if (!user) {
+      return [];
+    }
+
+    // 超级管理员可以访问所有区域
+    if (user.role === 'super_admin') {
+      return allAreas.map(area => area.id);
+    }
+
+    // 如果用户有指定的允许区域ID列表
+    if (user.allowedAreaIds && user.allowedAreaIds.length > 0) {
+      const accessibleIds = new Set<string>();
+      
+      // 递归收集所有允许的区域及其子区域
+      const collectAccessibleIds = (areaList: Area[]) => {
+        areaList.forEach(area => {
+          if (user.allowedAreaIds?.includes(area.id)) {
+            accessibleIds.add(area.id);
+            // 如果该区域有子区域，也添加它们
+            if (area.children) {
+              collectAccessibleIds(area.children);
+            }
+          } else if (area.children) {
+            // 检查子区域是否允许访问
+            collectAccessibleIds(area.children);
+          }
+        });
+      };
+      
+      collectAccessibleIds(areaTree);
+      return Array.from(accessibleIds);
+    }
+
+    // 默认情况下，用户可以访问自己客户下的所有区域
+    return areas.map(area => area.id);
+  }, [allAreas, areaTree, user, areas]);
+
+  // 初始化加载数据
+  useEffect(() => {
+    if (currentCustomer?.appCode || user?.role === 'super_admin') {
+      loadAreas();
+      loadAreaTree();
+    }
+  }, [currentCustomer, user, loadAreas, loadAreaTree]);
+
+  const refreshAreas = async (
+    page: number = 1,
+    pageSize: number = 20,
+    filters?: AreaFilters
+  ): Promise<void> => {
+    return loadAreas(page, pageSize, filters);
+  };
+
+  const refreshAreaTree = async (): Promise<void> => {
+    return loadAreaTree();
+  };
+
+  const getArea = async (id: string): Promise<Area> => {
+    try {
+      setLoading(true);
+      
+      const response = await areaApi.getArea(id);
+      
+      if (response.data.code === 200) {
+        return adaptAreaDtoToArea(response.data.data);
+      } else {
+        throw new Error(response.data.message || '获取区域详情失败');
+      }
+    } catch (err) {
+      console.error('Get area error:', err);
+      setError(err instanceof Error ? err.message : '获取区域详情失败');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getChildAreas = async (parentId: string): Promise<Area[]> => {
+    try {
+      setLoading(true);
+      
+      const response = await areaApi.getChildAreas(parentId);
+      
+      if (response.data.code === 200) {
+        return response.data.data.map(adaptAreaDtoToArea);
+      } else {
+        throw new Error(response.data.message || '获取子区域失败');
+      }
+    } catch (err) {
+      console.error('Get child areas error:', err);
+      setError(err instanceof Error ? err.message : '获取子区域失败');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addArea = async (areaData: Omit<Area, 'id' | 'deviceCount' | 'createdAt' | 'updatedAt' | 'children' | 'devices'>): Promise<Area> => {
+    try {
+      setLoading(true);
+      
+      const createRequest = adaptCreateAreaRequest(areaData);
+      const response = await areaApi.createArea(createRequest);
+      
+      if (response.data.code === 200) {
+        const newArea = adaptAreaDtoToArea(response.data.data);
+        setAllAreas(prev => [...prev, newArea]);
+        // 刷新区域树
+        await loadAreaTree();
+        return newArea;
+      } else {
+        throw new Error(response.data.message || '创建区域失败');
+      }
+    } catch (err) {
+      console.error('Add area error:', err);
+      setError(err instanceof Error ? err.message : '创建区域失败');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateArea = async (id: string, updates: Partial<Area>): Promise<Area> => {
+    try {
+      setLoading(true);
+      
+      const updateRequest = adaptUpdateAreaRequest(updates);
+      const response = await areaApi.updateArea(id, updateRequest);
+      
+      if (response.data.code === 200) {
+        const updatedArea = adaptAreaDtoToArea(response.data.data);
+        setAllAreas(prev =>
+          prev.map(area => area.id === id ? updatedArea : area)
+        );
+        // 刷新区域树
+        await loadAreaTree();
+        return updatedArea;
+      } else {
+        throw new Error(response.data.message || '更新区域失败');
+      }
+    } catch (err) {
+      console.error('Update area error:', err);
+      setError(err instanceof Error ? err.message : '更新区域失败');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteArea = async (id: string): Promise<void> => {
+    try {
+      setLoading(true);
+      
+      const response = await areaApi.deleteArea(id);
+      
+      if (response.data.code === 200) {
+        setAllAreas(prev => prev.filter(area => area.id !== id));
+        // 刷新区域树
+        await loadAreaTree();
+      } else {
+        throw new Error(response.data.message || '删除区域失败');
+      }
+    } catch (err) {
+      console.error('Delete area error:', err);
+      setError(err instanceof Error ? err.message : '删除区域失败');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearError = () => {
+    setError(null);
+  };
+
+  const setAreas = (newAreas: Area[]) => {
+    setAllAreas(newAreas);
+  };
+
+  const getAreasByCustomerId = (customerId: string): Area[] => {
+    return allAreas.filter(area => area.customerId === customerId);
+  };
+
   const flattenAreas = (areaList: Area[]): Area[] => {
     let result: Area[] = [];
     areaList.forEach(area => {
@@ -151,99 +339,61 @@ export function AreaProvider({ children }: { children: ReactNode }) {
     return result;
   };
 
-  // Determine accessible areas based on user RBAC settings
-  const { filteredAreas, accessibleAreaIds } = useMemo(() => {
-    // 1. Basic tenant isolation first
-    const customerAreas = allAreas.filter((a) => 
-      currentCustomer ? a.appCode === currentCustomer.appCode : false
-    );
-
-    const role = getUserRole();
+  const buildAreaTree = (areaList: Area[]): Area[] => {
+    const areaMap = new Map<string, Area>();
+    const rootAreas: Area[] = [];
     
-    // 2. If no user/role, or user has 'VIEW_AREAS' but DataScope is 'ALL', return everything
-    // Note: checking hasPermission(VIEW_AREAS) is good practice, but for now we assume basic access if logged in.
-    // We focus on Data Scope here.
+    // 创建所有区域的映射
+    areaList.forEach(area => {
+      areaMap.set(area.id, { ...area, children: [] });
+    });
     
-    if (!role) {
-      return { filteredAreas: [], accessibleAreaIds: [] };
-    }
-
-    // RBAC: Check Data Scope
-    if (role.dataScope === 'ALL') {
-       return { 
-        filteredAreas: customerAreas, 
-        accessibleAreaIds: flattenAreas(customerAreas).map(a => a.id) 
-      };
-    }
-
-    // RBAC: Custom Scope - use allowedAreaIds
-    if (role.dataScope === 'CUSTOM') {
-      if (!user?.allowedAreaIds || user.allowedAreaIds.length === 0) {
-        return { filteredAreas: [], accessibleAreaIds: [] };
+    // 构建树结构
+    areaList.forEach(area => {
+      const node = areaMap.get(area.id)!;
+      if (area.parentId) {
+        const parent = areaMap.get(area.parentId);
+        if (parent) {
+          parent.children = parent.children || [];
+          parent.children.push(node);
+        } else {
+          // 如果父节点不存在，将其作为根节点
+          rootAreas.push(node);
+        }
+      } else {
+        rootAreas.push(node);
       }
-
-      const allowedSet = new Set(user.allowedAreaIds);
-      const accessibleIds = new Set<string>();
-
-      // Recursive filter function that also populates accessibleIds
-      const filterTree = (nodes: Area[]): Area[] => {
-        return nodes.map(node => {
-          const isDirectlyAllowed = allowedSet.has(node.id);
-          
-          // If directly allowed, we include it AND all its descendants
-          if (isDirectlyAllowed) {
-            accessibleIds.add(node.id);
-            const addDescendants = (n: Area) => {
-               accessibleIds.add(n.id);
-               n.children?.forEach(addDescendants);
-            };
-            node.children?.forEach(addDescendants);
-            return node; // Return the full node with children intact
-          }
-
-          // If not directly allowed, check if any children are allowed (Backtracking)
-          if (node.children) {
-            const filteredChildren = filterTree(node.children);
-            if (filteredChildren.length > 0) {
-              accessibleIds.add(node.id); // Add self because we need to traverse through here
-              return { ...node, children: filteredChildren };
-            }
-          }
-
-          return null;
-        }).filter((n): n is Area => n !== null);
-      };
-
-      const result = filterTree(customerAreas);
-      return { 
-        filteredAreas: result, 
-        accessibleAreaIds: Array.from(accessibleIds) 
-      };
-    }
-
-    // Default fallback
-    return { filteredAreas: [], accessibleAreaIds: [] };
-
-  }, [allAreas, currentCustomer, user, getUserRole]);
-
-  const setAreas = (newAreas: Area[]) => {
-    if (!currentCustomer) return;
-    const otherAreas = allAreas.filter(a => a.appCode !== currentCustomer.appCode);
-    setAllAreas([...otherAreas, ...newAreas]);
-  };
-
-  const getAreasByCustomerId = (customerId: string) => {
-    return allAreas.filter(area => area.customerId === customerId);
+    });
+    
+    return rootAreas;
   };
 
   return (
-    <AreaContext.Provider value={{ 
-      areas: filteredAreas, 
-      setAreas, 
-      getAreasByCustomerId, 
-      flattenAreas,
-      accessibleAreaIds 
-    }}>
+    <AreaContext.Provider
+      value={{
+        areas,
+        allAreas,
+        areaTree,
+        loading,
+        error,
+        currentPage,
+        totalPages,
+        totalCount,
+        accessibleAreaIds,
+        refreshAreas,
+        refreshAreaTree,
+        getArea,
+        getChildAreas,
+        addArea,
+        updateArea,
+        deleteArea,
+        clearError,
+        setAreas,
+        getAreasByCustomerId,
+        flattenAreas,
+        buildAreaTree,
+      }}
+    >
       {children}
     </AreaContext.Provider>
   );
@@ -253,14 +403,30 @@ export function useArea() {
   const context = useContext(AreaContext);
   if (context === undefined) {
     if (import.meta.env.DEV) {
-        console.warn('useArea called outside of AreaProvider');
-        return {
-          areas: [],
-          setAreas: () => {},
-          getAreasByCustomerId: () => [],
-          flattenAreas: () => [],
-          accessibleAreaIds: []
-        }
+      console.warn('useArea called outside of AreaProvider');
+      return {
+        areas: [],
+        allAreas: [],
+        areaTree: [],
+        loading: false,
+        error: null,
+        currentPage: 1,
+        totalPages: 0,
+        totalCount: 0,
+        accessibleAreaIds: [],
+        refreshAreas: async () => {},
+        refreshAreaTree: async () => {},
+        getArea: async () => ({ id: '', name: '', type: '', deviceCount: 0, sortOrder: 0, createdAt: '', updatedAt: '' } as Area),
+        getChildAreas: async () => [],
+        addArea: async () => ({ id: '', name: '', type: '', deviceCount: 0, sortOrder: 0, createdAt: '', updatedAt: '' } as Area),
+        updateArea: async () => ({ id: '', name: '', type: '', deviceCount: 0, sortOrder: 0, createdAt: '', updatedAt: '' } as Area),
+        deleteArea: async () => {},
+        clearError: () => {},
+        setAreas: () => {},
+        getAreasByCustomerId: () => [],
+        flattenAreas: () => [],
+        buildAreaTree: () => []
+      };
     }
     throw new Error('useArea must be used within an AreaProvider');
   }

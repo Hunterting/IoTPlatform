@@ -73,7 +73,8 @@ public class CustomersController : ControllerBase
                     Address = c.Address,
                     Status = c.Status,
                     CreatedAt = c.CreatedAt,
-                    DeviceCount = _dbContext.Devices.Count(d => d.AppCode == c.AppCode)
+                    DeviceCount = _dbContext.Devices.Count(d => d.AppCode == c.AppCode),
+                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id)
                 })
                 .ToListAsync();
 
@@ -83,6 +84,51 @@ public class CustomersController : ControllerBase
         catch (Exception ex)
         {
             return ApiResponse<PagedResponse<CustomerDto>>.Error(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 获取可访问的客户列表（用于超级管理员切换租户）
+    /// </summary>
+    [HttpGet("accessible")]
+    public async Task<ActionResult<ApiResponse<List<CustomerDto>>>> GetAccessibleCustomers()
+    {
+        try
+        {
+            var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var appCode = User.FindFirst("AppCode")?.Value;
+
+            var query = _dbContext.Customers.AsQueryable();
+
+            // 超级管理员可以访问所有客户，其他角色只能访问自己的客户
+            if (role != Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
+            {
+                query = query.Where(c => c.AppCode == appCode);
+            }
+
+            var customers = await query
+                .OrderBy(c => c.Name)
+                .Select(c => new CustomerDto
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    Code = c.Code,
+                    AppCode = c.AppCode,
+                    Contact = c.ContactPerson,
+                    Phone = c.Phone,
+                    Address = c.Address,
+                    Status = c.Status,
+                    CreatedAt = c.CreatedAt,
+                    DeviceCount = _dbContext.Devices.Count(d => d.AppCode == c.AppCode),
+                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id)
+                })
+                .ToListAsync();
+
+            return ApiResponse<List<CustomerDto>>.Success(customers);
+        }
+        catch (Exception ex)
+        {
+            return ApiResponse<List<CustomerDto>>.Error(ex.Message);
         }
     }
 
@@ -184,7 +230,8 @@ public class CustomersController : ControllerBase
                 Address = customer.Address,
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
-                DeviceCount = 0
+                DeviceCount = 0,
+                ProjectCount = 0
             };
 
             return ApiResponse<CustomerDto>.Success(dto, "客户创建成功");
@@ -231,6 +278,7 @@ public class CustomersController : ControllerBase
             await _dbContext.SaveChangesAsync();
 
             var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
+            var projectCount = await _dbContext.Projects.CountAsync(p => p.CustomerId == customer.Id);
 
             var dto = new CustomerDto
             {
@@ -243,7 +291,8 @@ public class CustomersController : ControllerBase
                 Address = customer.Address,
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
-                DeviceCount = deviceCount
+                DeviceCount = deviceCount,
+                ProjectCount = projectCount
             };
 
             return ApiResponse<CustomerDto>.Success(dto, "客户更新成功");
@@ -308,11 +357,12 @@ public class CustomerDto
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public int DeviceCount { get; set; }
+    public int ProjectCount { get; set; }
 }
 
 public class CustomerDetailDto : CustomerDto
 {
-    public int ProjectCount { get; set; }
+    public new int ProjectCount { get; set; }
 }
 
 public class CreateCustomerRequest

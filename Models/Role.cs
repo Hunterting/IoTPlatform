@@ -1,10 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using IoTPlatform.Data;
 
 namespace IoTPlatform.Models;
 
 [Table("roles")]
-public class Role
+public class Role : IHasAppCode
 {
     [Key]
     [DatabaseGenerated(DatabaseGeneratedOption.Identity)]

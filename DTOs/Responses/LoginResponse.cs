@@ -26,4 +26,5 @@ public class CustomerDto
     public string Status { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
     public int DeviceCount { get; set; }
+    public int ProjectCount { get; set; }
 }

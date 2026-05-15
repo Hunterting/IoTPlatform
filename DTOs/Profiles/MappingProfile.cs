@@ -102,9 +102,36 @@ public class MappingProfile : Profile
 
     private void ConfigureProjectMappings()
     {
-        // 需要先创建Project相关的DTO
-        // CreateMap<CreateProjectRequest, Project>();
-        // CreateMap<Project, ProjectDto>();
+        // Project 映射
+        CreateMap<CreateProjectRequest, Project>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.Customer, opt => opt.Ignore())
+            .ForMember(dest => dest.Contracts, opt => opt.Ignore())
+            .ForMember(dest => dest.WorkSummaries, opt => opt.Ignore())
+            .ForMember(dest => dest.Devices, opt => opt.Ignore());
+
+        CreateMap<UpdateProjectRequest, Project>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.CustomerId, opt => opt.Ignore())
+            .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.Customer, opt => opt.Ignore())
+            .ForMember(dest => dest.Contracts, opt => opt.Ignore())
+            .ForMember(dest => dest.WorkSummaries, opt => opt.Ignore())
+            .ForMember(dest => dest.Devices, opt => opt.Ignore());
+
+        CreateMap<Project, ProjectResponse>()
+            .ForMember(dest => dest.WorkSummaries, opt => opt.MapFrom(src =>
+                src.WorkSummaries != null ? src.WorkSummaries.ToList() : new List<WorkSummary>()));
+
+        // WorkSummary 映射
+        CreateMap<CreateWorkSummaryRequest, WorkSummary>()
+            .ForMember(dest => dest.Id, opt => opt.Ignore())
+            .ForMember(dest => dest.Project, opt => opt.Ignore());
+
+        CreateMap<WorkSummary, WorkSummaryResponse>();
     }
 
     private void ConfigureAreaMappings()

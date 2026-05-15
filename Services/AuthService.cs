@@ -1,3 +1,4 @@
+using IoTPlatform.Configuration;
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
@@ -62,7 +63,8 @@ public class AuthService : IAuthService
         }
 
         // 验证密码
-        if (!BCrypt.Net.BCrypt.Verify(request.Password, user.Password))
+        var inputPassword = request.Password?.Trim() ?? string.Empty;
+        if (!BCrypt.Net.BCrypt.Verify(inputPassword, user.Password))
         {
             throw new UnauthorizedAccessException("邮箱或密码错误");
         }
@@ -108,7 +110,8 @@ public class AuthService : IAuthService
             Email = user.Email,
             Role = user.Role,
             Avatar = user.Avatar,
-            AllowedAreaIds = allowedAreaIds
+            AllowedAreaIds = allowedAreaIds,
+            IsSuperAdmin = user.IsSuperAdmin
         };
 
         // 构建当前客户DTO
@@ -167,7 +170,8 @@ public class AuthService : IAuthService
             Email = user.Email,
             Role = user.Role,
             Avatar = user.Avatar,
-            AllowedAreaIds = allowedAreaIds
+            AllowedAreaIds = allowedAreaIds,
+            IsSuperAdmin = user.IsSuperAdmin
         };
 
         CustomerDto? currentCustomer = null;
@@ -205,7 +209,7 @@ public class AuthService : IAuthService
         var user = await _userRepository.GetByIdAsync(userId);
 
         if (user == null) return null;
-        if (user.Role != "super_admin")
+        if (user.Role != Roles.SUPER_ADMIN)
         {
             throw new UnauthorizedAccessException("只有超级管理员可以切换客户");
         }

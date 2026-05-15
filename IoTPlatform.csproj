@@ -30,6 +30,13 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.1.0" />
     <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.IO.Ports">
+      <HintPath>C:\Users\HEyiz\.nuget\packages\system.io.ports\8.0.0\lib\net8.0\System.IO.Ports.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>

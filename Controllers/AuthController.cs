@@ -1,4 +1,5 @@
-﻿using IoTPlatform.DTOs.Requests;
+﻿using IoTPlatform.Configuration;
+using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
@@ -86,7 +87,7 @@ public class AuthController : ControllerBase
         {
             // 验证用户角色
             var roleClaim = User.FindFirst(ClaimTypes.Role);
-            if (roleClaim?.Value != "super_admin")
+            if (roleClaim?.Value != Roles.SUPER_ADMIN)
             {
                 var response = ApiResponse.Forbidden("只有超级管理员可以切换客户");
             return Ok(response);

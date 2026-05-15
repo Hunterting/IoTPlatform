@@ -133,4 +133,24 @@ public class ApiResponse : ApiResponse<object>
             Data = data
         };
     }
+
+    /// <summary>
+    /// 错误响应
+    /// </summary>
+    public new static ApiResponse Error(string message = "操作失败")
+    {
+        return new ApiResponse
+        {
+            Code = 500,
+            Message = message
+        };
+    }
+
+    /// <summary>
+    /// 内部错误（500）
+    /// </summary>
+    public new static ApiResponse InternalError(string message = "服务器内部错误")
+    {
+        return Error(message);
+    }
 }

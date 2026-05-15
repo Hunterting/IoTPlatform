@@ -27,9 +27,10 @@ namespace IoTPlatform.Data.SeedData
         /// </summary>
         private string HashPassword(string password)
         {
-            using var sha256 = SHA256.Create();
-            var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
-            return Convert.ToBase64String(bytes);
+            //using var sha256 = SHA256.Create();
+            //var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(password));
+            //return Convert.ToBase64String(bytes);
+            return BCrypt.Net.BCrypt.HashPassword(password);
         }
 
         /// <summary>
@@ -50,70 +51,110 @@ namespace IoTPlatform.Data.SeedData
 
                 var users = new List<User>
                 {
+                    // 超级管理员 - 系统级账号，可切换任意租户
                     new User
                     {
                         Id = 1,
                         Username = "admin",
-                        Password = HashPassword("Admin@123"), // 默认密码
-                        FullName = "系统管理员",
-                        Email = "admin@iotplatform.com",
+                        Password = HashPassword("admin123"),
+                        FullName = "超级管理员",
+                        Email = "admin@system.com",
                         Phone = "13800138000",
                         Status = "active",
                         IsSuperAdmin = true,
                         RoleId = 1, // 超级管理员角色
                         AppCode = "system",
-                        AllowedAreaIds = null, // 超级管理员可以访问所有区域
+                        AllowedAreaIds = null,
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     },
+                    // 系统管理员 - 租户管理员账号
                     new User
                     {
                         Id = 2,
                         Username = "manager",
-                        Password = HashPassword("Manager@123"),
+                        Password = HashPassword("admin123"),
                         FullName = "客户经理",
-                        Email = "manager@iotplatform.com",
+                        Email = "manager@haidilao.com",
                         Phone = "13800138001",
                         Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 2, // 系统管理员角色
                         AppCode = "customer_001",
-                        AllowedAreaIds = "1,2,3", // 可以访问区域1,2,3
+                        AllowedAreaIds = "1,2,3",
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     },
+                    // 运维工程师
                     new User
                     {
                         Id = 3,
-                        Username = "operator1",
-                        Password = HashPassword("Operator@123"),
-                        FullName = "运维工程师1",
-                        Email = "operator1@iotplatform.com",
+                        Username = "operator",
+                        Password = HashPassword("operator123"),
+                        FullName = "运维工程师",
+                        Email = "operator@haidilao.com",
                         Phone = "13800138002",
                         Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 4, // 运维工程师角色
                         AppCode = "customer_001",
-                        AllowedAreaIds = "1", // 只能访问区域1
+                        AllowedAreaIds = "1",
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     },
+                    // 普通用户
                     new User
                     {
                         Id = 4,
                         Username = "user1",
-                        Password = HashPassword("User@123"),
-                        FullName = "普通用户1",
-                        Email = "user1@iotplatform.com",
+                        Password = HashPassword("user123"),
+                        FullName = "普通用户",
+                        Email = "user@haidilao.com",
                         Phone = "13800138003",
                         Status = "active",
                         IsSuperAdmin = false,
                         RoleId = 5, // 普通用户角色
                         AppCode = "customer_001",
-                        AllowedAreaIds = "1,2", // 可以访问区域1和2
+                        AllowedAreaIds = "1,2",
+                        LastLoginTime = null,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    },
+                    // 厨师长 - 第二个租户
+                    new User
+                    {
+                        Id = 5,
+                        Username = "chef",
+                        Password = HashPassword("chef123"),
+                        FullName = "厨师长",
+                        Email = "chef@greenenergy.com",
+                        Phone = "13800138004",
+                        Status = "active",
+                        IsSuperAdmin = false,
+                        RoleId = 6, // 厨师长角色
+                        AppCode = "customer_002",
+                        AllowedAreaIds = "1,2",
+                        LastLoginTime = null,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    },
+                    // 普通员工
+                    new User
+                    {
+                        Id = 6,
+                        Username = "staff",
+                        Password = HashPassword("staff123"),
+                        FullName = "普通员工",
+                        Email = "staff@greenenergy.com",
+                        Phone = "13800138005",
+                        Status = "active",
+                        IsSuperAdmin = false,
+                        RoleId = 7, // 普通员工角色
+                        AppCode = "customer_002",
+                        AllowedAreaIds = "1",
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow

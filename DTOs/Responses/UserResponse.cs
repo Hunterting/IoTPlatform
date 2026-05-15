@@ -15,6 +15,7 @@ public class UserDto
     public string? Avatar { get; set; }
     public List<long>? AllowedAreaIds { get; set; }
     public bool IsActive { get; set; }
+    public bool IsSuperAdmin { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

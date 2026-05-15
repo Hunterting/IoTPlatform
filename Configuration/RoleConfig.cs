@@ -116,7 +116,14 @@ public static class Roles
             Permissions.VIEW_DATABASE_CONFIG,
             Permissions.MANAGE_DATABASE_CONFIG,
             Permissions.VIEW_DATA_EXPORT,
-            Permissions.PERFORM_DATA_EXPORT
+            Permissions.PERFORM_DATA_EXPORT,
+            // 设备指令控制
+            Permissions.VIEW_DEVICE_COMMANDS,
+            Permissions.SEND_DEVICE_COMMANDS,
+            Permissions.CANCEL_DEVICE_COMMANDS,
+            // 项目管理
+            Permissions.VIEW_PROJECTS,
+            Permissions.MANAGE_PROJECTS
         };
     }
 
@@ -152,7 +159,11 @@ public static class Roles
             Permissions.VIEW_ARCHIVES,
             Permissions.VIEW_WORK_ORDERS,
             Permissions.CREATE_WORK_ORDERS,
-            Permissions.UPDATE_WORK_ORDERS
+            Permissions.UPDATE_WORK_ORDERS,
+            // 运维主管有指令查看和下发权限
+            Permissions.VIEW_DEVICE_COMMANDS,
+            Permissions.SEND_DEVICE_COMMANDS,
+            Permissions.CANCEL_DEVICE_COMMANDS
         };
     }
 

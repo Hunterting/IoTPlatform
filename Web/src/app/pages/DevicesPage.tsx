@@ -21,6 +21,7 @@ import { useAuth } from '@/app/contexts/AuthContext';
 import { useArea, Area } from '@/app/contexts/AreaContext';
 import { useDevices, DeviceItem } from '@/app/contexts/DeviceContext';
 import { AreaTreeSelect } from '@/app/components/AreaTreeSelect';
+import { projectApi, Project } from '@/app/services/api/projectApi';
 import { PERMISSIONS } from '@/app/config/permissions';
 
 interface DevicesPageProps {
@@ -116,7 +117,12 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
   };
 
   const handleAddDevice = (device: Partial<DeviceItem>) => {
-    addDevice(device);
+    // 自动注入当前选中客户的 appCode
+    const deviceWithAppCode = {
+      ...device,
+      appCode: currentCustomer?.appCode || device.appCode,
+    };
+    addDevice(deviceWithAppCode as Omit<DeviceItem, 'id' | 'createdAt' | 'updatedAt'>);
     setShowAddModal(false);
   };
 
@@ -461,12 +467,29 @@ function DeviceFormModal({
 }) {
   const { getItemsByType } = useDictionary();
   const { currentCustomer } = useAuth();
-  const { getAreasByCustomerId } = useArea();
-  
-  const customerAreas = useMemo(() => {
-      if (!currentCustomer) return [];
-      return getAreasByCustomerId(currentCustomer.id);
-  }, [currentCustomer, getAreasByCustomerId]);
+  const { areaTree } = useArea();
+
+  // 项目列表状态
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+
+  // 加载项目列表
+  useEffect(() => {
+    if (currentCustomer?.id && show) {
+      setLoadingProjects(true);
+      projectApi.getProjects(currentCustomer.id, 1, 100)
+        .then(res => {
+          if (res.data.code === 200) {
+            setProjects(res.data.data.items || []);
+          }
+        })
+        .catch(err => {
+          console.error('加载项目列表失败:', err);
+          setProjects([]);
+        })
+        .finally(() => setLoadingProjects(false));
+    }
+  }, [currentCustomer?.id, show]);
 
   // 从字典管理获取设备类别列表
   const deviceCategories = useMemo(() => {
@@ -475,11 +498,6 @@ function DeviceFormModal({
       .sort((a, b) => a.sort - b.sort); // 按排序字段排序
   }, [getItemsByType]);
 
-  // 从当前客户获取项目列表
-  const customerProjects = useMemo(() => {
-    return currentCustomer?.projects ?? [];
-  }, [currentCustomer]);
-
   const [formData, setFormData] = useState<Partial<DeviceItem>>(
     initialData || {
       name: '',
@@ -487,14 +505,15 @@ function DeviceFormModal({
       serialNumber: '',
       category: '',
       location: '',
+      areaId: '',
       area: '',
       projectId: '',
       projectName: '',
       energyType: ['electric'],
-      installDate: '',
-      lastMaintenance: '',
+      installDate: null,
+      lastMaintenance: null,
       supplier: '',
-      warrantyDate: '',
+      warrantyDate: null,
       power: 0,
       voltage: '',
       meterInstalled: false,
@@ -623,20 +642,21 @@ function DeviceFormModal({
                 </label>
                 <select
                   required
+                  disabled={loadingProjects}
                   value={formData.projectId || ''}
                   onChange={(e) => {
                     const pid = e.target.value;
-                    const proj = customerProjects.find(p => p.id === pid);
+                    const proj = projects.find(p => p.id === pid);
                     setFormData({
                       ...formData,
                       projectId: pid,
                       projectName: proj?.name ?? '',
                     });
                   }}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800 [&>option]:text-white"
+                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800 [&>option]:text-white disabled:opacity-50"
                 >
-                  <option value="">请选择项目</option>
-                  {customerProjects.map(proj => (
+                  <option value="">{loadingProjects ? '加载中...' : '请选择项目'}</option>
+                  {projects.map(proj => (
                     <option key={proj.id} value={proj.id}>{proj.name}</option>
                   ))}
                 </select>
@@ -647,9 +667,9 @@ function DeviceFormModal({
                   所属区域 <span className="text-red-400">*</span>
                 </label>
                 <AreaTreeSelect
-                    areas={customerAreas}
+                    areas={areaTree}
                     value={formData.location}
-                    onChange={(name, id) => setFormData({ ...formData, location: name })}
+                    onChange={(name, id) => setFormData({ ...formData, location: name, areaId: id })}
                     placeholder="请选择区域"
                 />
               </div>

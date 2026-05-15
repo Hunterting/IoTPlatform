@@ -18,19 +18,22 @@ public class DeviceService : IDeviceService
     private readonly IProjectRepository _projectRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly AppDbContext _dbContext;
+    private readonly ILogger<DeviceService> _logger;
 
     public DeviceService(
         IDeviceRepository deviceRepository,
         IAreaRepository areaRepository,
         IProjectRepository projectRepository,
         IUnitOfWork unitOfWork,
-        AppDbContext dbContext)
+        AppDbContext dbContext,
+        ILogger<DeviceService> logger)
     {
         _deviceRepository = deviceRepository;
         _areaRepository = areaRepository;
         _projectRepository = projectRepository;
         _unitOfWork = unitOfWork;
         _dbContext = dbContext;
+        _logger = logger;
     }
 
     /// <summary>
@@ -161,25 +164,50 @@ public class DeviceService : IDeviceService
     /// </summary>
     public async Task<DeviceDto> CreateDeviceAsync(CreateDeviceRequest request)
     {
-        // 验证区域是否存在
+        // 验证区域是否存在，如果不存在则设置为null
+        // 使用 DbContext 直接查询，避免仓储层全局过滤器干扰
         Area? area = null;
+        long? validAreaId = null;
         if (request.AreaId.HasValue)
         {
-            area = await _areaRepository.GetByIdAsync(request.AreaId.Value);
-            if (area == null)
+            try
             {
-                throw new InvalidOperationException("区域不存在");
+                area = await _dbContext.Areas.AsNoTracking().FirstOrDefaultAsync(a => a.Id == request.AreaId.Value);
+                if (area != null)
+                {
+                    validAreaId = request.AreaId.Value;
+                }
+                else
+                {
+                    _logger.LogWarning("区域ID {AreaId} 不存在，设备将不关联区域", request.AreaId.Value);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "查询区域ID {AreaId} 时发生错误", request.AreaId.Value);
             }
         }
 
-        // 验证项目是否存在
+        // 验证项目是否存在，如果不存在则设置为null
         Project? project = null;
+        long? validProjectId = null;
         if (request.ProjectId.HasValue)
         {
-            project = await _projectRepository.GetByIdAsync(request.ProjectId.Value);
-            if (project == null)
+            try
             {
-                throw new InvalidOperationException("项目不存在");
+                project = await _dbContext.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == request.ProjectId.Value);
+                if (project != null)
+                {
+                    validProjectId = request.ProjectId.Value;
+                }
+                else
+                {
+                    _logger.LogWarning("项目ID {ProjectId} 不存在，设备将不关联项目", request.ProjectId.Value);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "查询项目ID {ProjectId} 时发生错误", request.ProjectId.Value);
             }
         }
 
@@ -191,8 +219,8 @@ public class DeviceService : IDeviceService
             SerialNumber = request.SerialNumber,
             Category = request.Category,
             Location = request.Location,
-            AreaId = request.AreaId,
-            ProjectId = request.ProjectId,
+            AreaId = validAreaId,
+            ProjectId = validProjectId,
             ProjectName = request.ProjectName,
             EnergyTypes = request.EnergyTypes,
             Status = request.Status,
@@ -208,7 +236,16 @@ public class DeviceService : IDeviceService
         };
 
         await _deviceRepository.AddAsync(device);
-        await _unitOfWork.SaveChangesAsync();
+        
+        try
+        {
+            await _unitOfWork.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "保存设备时发生错误. Device: {@Device}", device);
+            throw;
+        }
 
         // 更新区域设备计数
         if (area != null)

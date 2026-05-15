@@ -2,6 +2,7 @@ using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using System.Text;
+using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
@@ -16,6 +17,7 @@ public class MqttClientService : IMqttClientService, IDisposable
     private bool _isDisposed;
 
     public event EventHandler<DeviceDataEventArgs>? OnDataReceived;
+    public event EventHandler<CommandResponseEventArgs>? OnCommandResponse;
 
     public MqttClientService(IConfiguration configuration, ILogger<MqttClientService> logger)
     {
@@ -110,8 +112,9 @@ public class MqttClientService : IMqttClientService, IDisposable
     private async Task SubscribeToAllDevicesAsync()
     {
         // 订阅通配符主题: appCode/+/data
-        var topic = "+/+/data";
-        await SubscribeToTopicAsync(topic);
+        await SubscribeToTopicAsync("+/+/data");
+        // 订阅所有设备指令响应主题: appCode/+/command/response
+        await SubscribeToTopicAsync("+/+/command/response");
     }
 
     /// <summary>
@@ -126,16 +129,20 @@ public class MqttClientService : IMqttClientService, IDisposable
 
             _logger.LogDebug("Received message from topic: {Topic}, Payload: {Payload}", topic, payload);
 
-            // 解析主题: appCode/deviceId/data
+            // 解析主题: appCode/deviceId/data 或 appCode/deviceId/command/response
             var topicParts = topic.Split('/');
             if (topicParts.Length >= 3)
             {
                 var appCode = topicParts[0];
                 var deviceIdStr = topicParts[1];
+                var messageType = topicParts[2];
 
-                if (long.TryParse(deviceIdStr, out var deviceId))
+                if (!long.TryParse(deviceIdStr, out var deviceId))
+                    return;
+
+                if (messageType == "data")
                 {
-                    // 触发数据接收事件
+                    // 设备上报数据
                     OnDataReceived?.Invoke(this, new DeviceDataEventArgs
                     {
                         DeviceId = deviceId,
@@ -144,12 +151,69 @@ public class MqttClientService : IMqttClientService, IDisposable
                         Timestamp = DateTime.UtcNow
                     });
                 }
+                else if (messageType == "command" && topicParts.Length >= 4 && topicParts[3] == "response")
+                {
+                    // 设备指令响应: appCode/deviceId/command/response
+                    try
+                    {
+                        var response = JsonSerializer.Deserialize<CommandResponsePayload>(payload,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                        if (response != null)
+                        {
+                            OnCommandResponse?.Invoke(this, new CommandResponseEventArgs
+                            {
+                                DeviceId = deviceId,
+                                AppCode = appCode,
+                                CommandId = response.CommandId ?? string.Empty,
+                                Status = response.Status ?? "unknown",
+                                ResultData = response.Data,
+                                ErrorMessage = response.Error,
+                                RespondedAt = DateTime.UtcNow
+                            });
+                        }
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "解析指令响应JSON失败，Topic={Topic}", topic);
+                    }
+                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing MQTT message");
         }
+    }
+
+    /// <summary>
+    /// 下发设备指令
+    /// 主题格式：{appCode}/{deviceId}/command
+    /// </summary>
+    public async Task SendDeviceCommandAsync(string appCode, long deviceId, string commandId, string commandType, string? parameters)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            commandId,
+            commandType,
+            parameters = string.IsNullOrEmpty(parameters) ? null : JsonSerializer.Deserialize<object>(parameters),
+            timestamp = DateTime.UtcNow
+        });
+
+        var topic = $"{appCode}/{deviceId}/command";
+        await PublishMessageAsync(topic, payload);
+        _logger.LogInformation("已下发指令 CommandId={CommandId}, Type={Type}, Topic={Topic}", commandId, commandType, topic);
+    }
+
+    /// <summary>
+    /// 指令响应载荷结构
+    /// </summary>
+    private class CommandResponsePayload
+    {
+        public string? CommandId { get; set; }
+        public string? Status { get; set; }
+        public string? Data { get; set; }
+        public string? Error { get; set; }
     }
 
     /// <summary>
