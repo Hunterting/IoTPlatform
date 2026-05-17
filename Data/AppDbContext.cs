@@ -74,6 +74,9 @@ public class AppDbContext : DbContext
     public DbSet<DeviceCommand> DeviceCommands { get; set; }
     public DbSet<CommandHistory> CommandHistories { get; set; }
 
+    // 受控设备（添加到指令控制系统的设备）
+    public DbSet<ControlledDevice> ControlledDevices { get; set; }
+
         // 日志和字典
         public DbSet<LoginLog> LoginLogs { get; set; }
         public DbSet<OperationLog> OperationLogs { get; set; }
@@ -125,6 +128,7 @@ public class AppDbContext : DbContext
         ConfigureEtlTasks(modelBuilder);
         ConfigureDeviceCommands(modelBuilder);
         ConfigureCommandHistories(modelBuilder);
+        ConfigureControlledDevices(modelBuilder);
         ConfigureAttachments(modelBuilder);
         // 配置全局租户过滤
         ConfigureGlobalQueryFilters(modelBuilder);
@@ -564,6 +568,25 @@ public class AppDbContext : DbContext
             entity.HasOne(e => e.Command)
                 .WithMany()
                 .HasForeignKey(e => e.CommandId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private void ConfigureControlledDevices(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ControlledDevice>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.DeviceId).IsUnique(); // 每个设备只能注册一次
+            entity.HasIndex(e => e.IsEnabled);
+            entity.HasIndex(e => e.IsFavorite);
+            entity.HasIndex(e => e.Priority);
+            entity.HasIndex(e => e.RegisteredAt);
+
+            entity.HasOne(e => e.Device)
+                .WithMany()
+                .HasForeignKey(e => e.DeviceId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

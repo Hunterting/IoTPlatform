@@ -50,6 +50,7 @@ export enum ApiStatus {
 }
 
 export * from './deviceCommand.types';
+export * from './controlledDevice.types';
 export * from './role.types';
 export * from './log.types';
 export * from './archive.types';

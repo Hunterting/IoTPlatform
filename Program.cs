@@ -126,6 +126,9 @@ builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();
 // 设备指令服务
 builder.Services.AddScoped<IoTPlatform.Services.IDeviceCommandService, IoTPlatform.Services.DeviceCommandService>();
 
+// 受控设备服务
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IControlledDeviceService, IoTPlatform.Services.ControlledDeviceService>();
+
 // 配置SignalR
 builder.Services.AddSignalR();
 

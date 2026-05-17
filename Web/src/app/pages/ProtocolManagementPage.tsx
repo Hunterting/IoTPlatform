@@ -296,9 +296,11 @@ export function ProtocolManagementPage() {
     try {
       const response = await deviceApi.getDevices(1, 100);
       if (response.data.code === 200 && response.data.data) {
-        // 筛选出关联的设备
-        const deviceIdSet = new Set(protocol.deviceIds.map(id => String(id)));
-        const relatedDevices = response.data.data.items.filter(d => deviceIdSet.has(d.id));
+        // 筛选出关联的设备（支持 number 和 string 类型匹配）
+        const protocolDeviceIds = new Set(protocol.deviceIds.map(id => String(id)));
+        const relatedDevices = response.data.data.items.filter(d => 
+          protocolDeviceIds.has(String(d.id)) || protocolDeviceIds.has(String(d.id))
+        );
         setProtocolDevices(prev => ({ ...prev, [protocol.id]: relatedDevices }));
       }
     } catch (err) {
@@ -389,15 +391,20 @@ export function ProtocolManagementPage() {
 
       if (response.code === 200) {
         // 更新协议列表
+        const updatedProtocol = { ...protocol, deviceIds: allIds };
         setProtocols(prev =>
-          prev.map(p => p.id === selectingProtocolId ? { ...p, deviceIds: allIds } : p)
+          prev.map(p => p.id === selectingProtocolId ? updatedProtocol : p)
         );
-        // 清除设备缓存，下次展开详情时会重新加载
+        // 清除设备缓存并自动重新加载（如果协议详情是展开状态）
         setProtocolDevices(prev => {
           const next = { ...prev };
           delete next[selectingProtocolId];
           return next;
         });
+        // 如果协议详情已展开，自动重新加载设备列表
+        if (expandedId === selectingProtocolId) {
+          loadProtocolDevices(updatedProtocol);
+        }
         closeDeviceSelector();
         loadProtocols();
       }
@@ -427,15 +434,20 @@ export function ProtocolManagementPage() {
 
       if (response.code === 200) {
         // 更新协议列表
+        const updatedProtocol = { ...protocol, deviceIds: newIds };
         setProtocols(prev =>
-          prev.map(p => p.id === protocol.id ? { ...p, deviceIds: newIds } : p)
+          prev.map(p => p.id === protocol.id ? updatedProtocol : p)
         );
-        // 清除设备缓存，下次展开详情时会重新加载
+        // 清除设备缓存并自动重新加载（如果协议详情是展开状态）
         setProtocolDevices(prev => {
           const next = { ...prev };
           delete next[protocol.id];
           return next;
         });
+        // 如果协议详情已展开，自动重新加载设备列表
+        if (expandedId === protocol.id) {
+          loadProtocolDevices(updatedProtocol);
+        }
         loadProtocols();
       }
     } catch (err) {
