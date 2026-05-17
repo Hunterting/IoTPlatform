@@ -1,19 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, Edit2, Trash2, Search, 
   Cpu, Archive, Activity, Tag, 
   FileText, AlertTriangle, Bell, Radio,
-  LucideIcon, Settings
+  LucideIcon, Settings, Loader2, RefreshCw
 } from 'lucide-react';
 import { 
   useDictionary, 
   DictionaryItem, 
   DictionaryTypeValue,
   DictionaryTypeConfig,
-  getDictionaryTypeConfig
+  getDictionaryTypeConfig,
+  DictionaryType
 } from '@/app/contexts/DictionaryContext';
 import { useTheme } from '@/app/contexts/ThemeContext';
+import * as dictionaryApi from '@/app/services/api/dictionaryApi';
+import { DictionaryTypeDto, DictionaryItemDto } from '@/app/services/api/types/dictionary.types';
 
 // 图标映射
 const iconMap: Record<string, LucideIcon> = {
@@ -40,10 +43,26 @@ const colorMap: Record<string, { border: string; text: string; bg: string; hover
   indigo: { border: 'border-indigo-500', text: 'text-indigo-400', bg: 'bg-indigo-900/20', hover: 'hover:bg-indigo-900/30' },
 };
 
+// 默认图标映射 (根据字典类型名称)
+const defaultIconMap: Record<string, string> = {
+  DeviceType: 'Cpu',
+  DeviceStatus: 'Activity',
+  AlertLevel: 'Bell',
+  WorkOrderStatus: 'FileText',
+  ArchiveCategory: 'Archive',
+  device_category: 'Cpu',
+  device_status: 'Activity',
+  alert_level: 'Bell',
+  work_order_status: 'FileText',
+  archive_category: 'Archive',
+};
+
 export function DictionaryManagementPage() {
   const { themeConfig } = useTheme();
-  const { getAllItems, getItemsByType, addItem, updateItem, deleteItem, typeConfigs, addTypeConfig, updateTypeConfig } = useDictionary();
-  const [activeTab, setActiveTab] = useState<DictionaryTypeValue>(typeConfigs[0]?.key);
+  const { getAllItems, getItemsByType, addItem, updateItem, deleteItem, typeConfigs, addTypeConfig, updateTypeConfig, loadFromBackend } = useDictionary();
+  
+  // 状态管理
+  const [activeTab, setActiveTab] = useState<DictionaryTypeValue | null>(null); // 初始为null，表示未选择
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -61,6 +80,9 @@ export function DictionaryManagementPage() {
     color: 'blue',
   });
   
+  // 是否已加载过字典项（用于显示空状态提示）
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  
   const [formData, setFormData] = useState({
     code: '',
     name: '',
@@ -69,17 +91,79 @@ export function DictionaryManagementPage() {
     status: 'active' as 'active' | 'inactive',
   });
 
+  // API 数据状态
+  const [dictionaryTypes, setDictionaryTypes] = useState<DictionaryTypeDto[]>([]);
+  const [dictionaryItems, setDictionaryItems] = useState<DictionaryItemDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 加载字典类型列表
+  const loadDictionaryTypes = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await dictionaryApi.getDictionaryTypes({ page: 1, pageSize: 100 });
+      if (response.data?.code === 200 && response.data?.data) {
+        setDictionaryTypes(response.data?.data.items);
+        // 初始不自动选择第一个类型，等待用户点击
+      } else {
+        setError(response.data?.message || '加载字典类型失败');
+      }
+    } catch (err: any) {
+      setError(err?.message || '加载字典类型失败');
+      console.error('加载字典类型失败:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // 加载指定类型的字典项
+  const loadDictionaryItems = useCallback(async (type: string) => {
+    if (!type) return;
+    setLoadingItems(true);
+    setHasLoadedOnce(true); // 标记已加载过一次
+    try {
+      const response = await dictionaryApi.getDictionaryItems({ type });
+      if (response.data?.code === 200 && response.data?.data) {
+        setDictionaryItems(response.data?.data);
+      }
+    } catch (err) {
+      console.error('加载字典项失败:', err);
+    } finally {
+      setLoadingItems(false);
+    }
+  }, []);
+
+  // 初始化加载
+  useEffect(() => {
+    loadDictionaryTypes();
+    loadFromBackend();
+  }, []);
+
+  // 当切换类型时加载字典项
+  useEffect(() => {
+    if (activeTab) {
+      loadDictionaryItems(activeTab);
+    }
+  }, [activeTab, loadDictionaryItems]);
+
+  // 处理类型选择
+  const handleTypeSelect = (typeCode: string) => {
+    setActiveTab(typeCode as DictionaryTypeValue);
+    setSearchQuery(''); // 切换类型时清空搜索
+  };
+
   // 获取当前配置
   const currentConfig = getDictionaryTypeConfig(activeTab);
   const currentColor = currentConfig ? colorMap[currentConfig.color] : colorMap.blue;
   const IconComponent = currentConfig ? iconMap[currentConfig.icon] : Cpu;
 
-  // 获取所有字典项用于计数
+  // 获取所有字典项用于计数 (合并本地和API数据)
   const allItems = getAllItems();
   
-  // 获取当前Tab的字典项（包含所有状态，用于编辑和管理）
-  const allCurrentItems = allItems.filter(item => item.type === activeTab);
-  const currentItems = allCurrentItems
+  // 获取当前Tab的字典项 (使用API数据)
+  const currentItems = dictionaryItems
     .filter(item =>
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.code.toLowerCase().includes(searchQuery.toLowerCase())
@@ -91,7 +175,7 @@ export function DictionaryManagementPage() {
     setFormData({
       code: '',
       name: '',
-      sort: allCurrentItems.length + 1,
+      sort: dictionaryItems.length + 1,
       description: '',
       status: 'active',
     });
@@ -99,22 +183,33 @@ export function DictionaryManagementPage() {
   };
 
   // 打开编辑弹窗
-  const handleOpenEdit = (item: DictionaryItem) => {
-    setSelectedItem(item);
+  const handleOpenEdit = (item: DictionaryItemDto) => {
+    setSelectedItem(item as any);
     setFormData({
       code: item.code,
       name: item.name,
       sort: item.sort,
       description: item.description || '',
-      status: item.status,
+      status: item.status === 'active' ? 'active' : 'inactive',
     });
     setIsEditModalOpen(true);
   };
 
   // 删除
-  const handleDelete = (item: DictionaryItem) => {
-    if (confirm(`确定要删除\"${item.name}\"吗？`)) {
-      deleteItem(item.id);
+  const handleDelete = async (item: DictionaryItemDto) => {
+    if (!confirm(`确定要删除"${item.name}"吗？`)) return;
+    
+    try {
+      const response = await dictionaryApi.deleteDictionaryItem(item.id);
+      if (response.data?.code === 200) {
+        loadDictionaryItems(activeTab);
+        loadFromBackend();
+      } else {
+        alert(response.data?.message || '删除失败');
+      }
+    } catch (err) {
+      console.error('删除失败:', err);
+      alert('删除失败，请稍后重试');
     }
   };
 
@@ -131,93 +226,152 @@ export function DictionaryManagementPage() {
   };
 
   // 打开编辑字典类型弹窗
-  const handleOpenEditType = (config: DictionaryTypeConfig) => {
-    setSelectedTypeConfig(config);
+  const handleOpenEditType = (typeCode: string) => {
+    const type = dictionaryTypes.find(t => t.code === typeCode);
+    if (!type) return;
+    
+    setSelectedTypeConfig({ 
+      key: type.code as DictionaryTypeValue,
+      name: type.name,
+      icon: defaultIconMap[type.code] || 'Settings',
+      description: type.description || '',
+      color: 'blue',
+    });
     setTypeFormData({
-      key: config.key,
-      name: config.name,
-      icon: config.icon,
-      description: config.description,
-      color: config.color,
+      key: type.code as DictionaryTypeValue,
+      name: type.name,
+      icon: defaultIconMap[type.code] || 'Settings',
+      description: type.description || '',
+      color: 'blue',
     });
     setIsEditTypeModalOpen(true);
   };
 
   // 保存新增字典类型
-  const handleAddType = () => {
+  const handleAddType = async () => {
     if (!typeFormData.name.trim() || !typeFormData.key.trim()) {
       alert('请填写字典类型Key和名称');
       return;
     }
 
-    addTypeConfig({
-      key: typeFormData.key,
-      name: typeFormData.name.trim(),
-      icon: typeFormData.icon,
-      description: typeFormData.description.trim(),
-      color: typeFormData.color,
-    });
+    try {
+      const response = await dictionaryApi.createDictionaryType({
+        code: typeFormData.key.trim(),
+        name: typeFormData.name.trim(),
+        description: typeFormData.description.trim(),
+        isActive: true,
+      });
 
-    setIsAddTypeModalOpen(false);
-    setActiveTab(typeFormData.key);
+      if (response.data?.code === 200) {
+        loadDictionaryTypes();
+        setActiveTab(typeFormData.key);
+        setIsAddTypeModalOpen(false);
+      } else {
+        alert(response.data?.message || '创建失败');
+      }
+    } catch (err) {
+      console.error('创建字典类型失败:', err);
+      alert('创建失败，请稍后重试');
+    }
   };
 
   // 保存编辑字典类型
-  const handleEditType = () => {
+  const handleEditType = async () => {
     if (!selectedTypeConfig) return;
     if (!typeFormData.name.trim()) {
       alert('请填写字典类型名称');
       return;
     }
 
-    updateTypeConfig(selectedTypeConfig.key, {
-      name: typeFormData.name.trim(),
-      icon: typeFormData.icon,
-      description: typeFormData.description.trim(),
-      color: typeFormData.color,
-    });
+    try {
+      const type = dictionaryTypes.find(t => t.code === selectedTypeConfig.key);
+      if (!type) return;
 
-    setIsEditTypeModalOpen(false);
-    setSelectedTypeConfig(null);
+      const response = await dictionaryApi.updateDictionaryType(type.id, {
+        name: typeFormData.name.trim(),
+        description: typeFormData.description.trim(),
+      });
+
+      if (response.data?.code === 200) {
+        loadDictionaryTypes();
+        setIsEditTypeModalOpen(false);
+        setSelectedTypeConfig(null);
+      } else {
+        alert(response.data?.message || '更新失败');
+      }
+    } catch (err) {
+      console.error('更新字典类型失败:', err);
+      alert('更新失败，请稍后重试');
+    }
   };
 
-  // 保存新增
-  const handleAdd = () => {
+  // 保存新增字典项
+  const handleAdd = async () => {
     if (!formData.name.trim() || !formData.code.trim()) {
       alert('请填写字典编码和名称');
       return;
     }
 
-    addItem({
-      type: activeTab,
-      code: formData.code.trim(),
-      name: formData.name.trim(),
-      sort: formData.sort,
-      description: formData.description.trim(),
-      status: formData.status,
-    });
+    try {
+      const response = await dictionaryApi.createDictionaryItem({
+        type: activeTab,
+        code: formData.code.trim(),
+        name: formData.name.trim(),
+        sort: formData.sort,
+        description: formData.description.trim(),
+        status: formData.status,
+      });
 
-    setIsAddModalOpen(false);
+      if (response.data?.code === 200) {
+        loadDictionaryItems(activeTab);
+        loadFromBackend();
+        setIsAddModalOpen(false);
+      } else {
+        alert(response.data?.message || '创建失败');
+      }
+    } catch (err) {
+      console.error('创建字典项失败:', err);
+      alert('创建失败，请稍后重试');
+    }
   };
 
-  // 保存编辑
-  const handleEdit = () => {
+  // 保存编辑字典项
+  const handleEdit = async () => {
     if (!selectedItem) return;
     if (!formData.name.trim() || !formData.code.trim()) {
       alert('请填写字典编码和名称');
       return;
     }
 
-    updateItem(selectedItem.id, {
-      code: formData.code.trim(),
-      name: formData.name.trim(),
-      sort: formData.sort,
-      description: formData.description.trim(),
-      status: formData.status,
-    });
+    try {
+      const response = await dictionaryApi.updateDictionaryItem(selectedItem.id as number, {
+        code: formData.code.trim(),
+        name: formData.name.trim(),
+        sort: formData.sort,
+        description: formData.description.trim(),
+        status: formData.status,
+      });
 
-    setIsEditModalOpen(false);
-    setSelectedItem(null);
+      if (response.data?.code === 200) {
+        loadDictionaryItems(activeTab);
+        loadFromBackend();
+        setIsEditModalOpen(false);
+        setSelectedItem(null);
+      } else {
+        alert(response.data?.message || '更新失败');
+      }
+    } catch (err) {
+      console.error('更新字典项失败:', err);
+      alert('更新失败，请稍后重试');
+    }
+  };
+
+  // 刷新数据
+  const handleRefresh = () => {
+    loadDictionaryTypes();
+    if (activeTab) {
+      loadDictionaryItems(activeTab);
+    }
   };
 
   return (
@@ -231,6 +385,15 @@ export function DictionaryManagementPage() {
           <p className="text-sm mt-1 text-gray-400">
             统一管理系统中的所有字典数据，支持灵活扩展
           </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleRefresh}
+            className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all text-gray-300"
+          >
+            <RefreshCw className="w-4 h-4" />
+            刷新
+          </button>
         </div>
       </div>
 
@@ -251,195 +414,236 @@ export function DictionaryManagementPage() {
               新增
             </button>
           </div>
-          <div className="space-y-2">
-            {typeConfigs.map((config) => {
-              const Icon = iconMap[config.icon];
-              const colors = colorMap[config.color];
-              const isActive = activeTab === config.key;
-              const itemCount = allItems.filter(item => item.type === config.key).length;
-              
-              return (
-                <div key={config.key} className="relative group">
-                  <button
-                    onClick={() => setActiveTab(config.key)}
-                    className={`w-full text-left px-4 py-3 rounded-lg transition-all ${
-                      isActive
-                        ? `${colors.bg} ${colors.border} border-2`
-                        : 'border-2 border-transparent hover:bg-white/5'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${isActive ? colors.bg : 'bg-white/5'}`}>
-                        <Icon className={`w-5 h-5 ${isActive ? colors.text : 'text-gray-400'}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className={`font-medium truncate ${isActive ? colors.text : 'text-gray-300'}`}>
-                          {config.name}
+          
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-8 text-red-400 text-sm">
+              {error}
+              <button 
+                onClick={loadDictionaryTypes}
+                className="block mx-auto mt-2 text-blue-400 hover:underline"
+              >
+                重试
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {dictionaryTypes.map((type) => {
+                const Icon = iconMap[defaultIconMap[type.code]] || Settings;
+                const colors = colorMap.blue;
+                const isActive = activeTab === type.code;
+                const itemCount = dictionaryItems.filter(item => item.type === type.code).length;
+                
+                return (
+                  <div key={type.id} className="relative group">
+                    <button
+                      onClick={() => handleTypeSelect(type.code)}
+                      className={`w-full text-left px-4 py-3 rounded-lg transition-all ${
+                        isActive
+                          ? `${colors.bg} ${colors.border} border-2`
+                          : 'border-2 border-transparent hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${isActive ? colors.bg : 'bg-white/5'}`}>
+                          <Icon className={`w-5 h-5 ${isActive ? colors.text : 'text-gray-400'}`} />
                         </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {itemCount} 项数据
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-medium truncate ${isActive ? colors.text : 'text-gray-300'}`}>
+                            {type.name}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {itemCount} 项数据
+                          </div>
                         </div>
+                        {isActive && (
+                          <motion.div
+                            layoutId="activeIndicator"
+                            className="w-1.5 h-8 rounded-full bg-blue-500"
+                          />
+                        )}
                       </div>
-                      {isActive && (
-                        <motion.div
-                          layoutId="activeIndicator"
-                          className={`w-1.5 h-8 rounded-full ${colors.bg}`}
-                          style={{ backgroundColor: colors.text }}
-                        />
+                      {isActive && type.description && (
+                        <div className="mt-2 pt-2 border-t border-white/10">
+                          <p className="text-xs text-gray-400 leading-relaxed">
+                            {type.description}
+                          </p>
+                        </div>
                       )}
-                    </div>
-                    {isActive && (
-                      <div className="mt-2 pt-2 border-t border-white/10">
-                        <p className="text-xs text-gray-400 leading-relaxed">
-                          {config.description}
-                        </p>
-                      </div>
-                    )}
-                  </button>
-                  {/* 编辑按钮 - 在hover时显示 */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenEditType(config);
-                    }}
-                    className="absolute top-2 right-2 p-1.5 bg-gray-800/90 text-gray-300 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:text-blue-400 hover:bg-gray-700"
-                    title="编辑字典类型"
-                  >
-                    <Edit2 className="w-3 h-3" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                    </button>
+                    {/* 编辑按钮 - 在hover时显示 */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenEditType(type.code);
+                      }}
+                      className="absolute top-2 right-2 p-1.5 bg-gray-800/90 text-gray-300 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:text-blue-400 hover:bg-gray-700"
+                      title="编辑字典类型"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* 右侧：数据内容区 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 当前类型标题和操作栏 */}
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <IconComponent className={`w-6 h-6 ${currentColor.text}`} />
-                <div>
-                  <h2 className="text-xl font-bold text-white">
-                    {currentConfig?.name}
-                  </h2>
-                  <p className="text-sm text-gray-400 mt-0.5">
-                    {currentConfig?.description}
-                  </p>
+          {activeTab ? (
+            <>
+              {/* 当前类型标题和操作栏 */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <IconComponent className={`w-6 h-6 ${currentColor.text}`} />
+                    <div>
+                      <h2 className="text-xl font-bold text-white">
+                        {currentConfig?.name || (dictionaryTypes.find(t => t.code === activeTab)?.name) || '选择类型'}
+                      </h2>
+                      <p className="text-sm text-gray-400 mt-0.5">
+                        {currentConfig?.description || dictionaryTypes.find(t => t.code === activeTab)?.description || ''}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleOpenAdd}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${currentColor.bg} ${currentColor.text} ${currentColor.hover} border ${currentColor.border}`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    添加{currentConfig?.name || '字典项'}
+                  </button>
+                </div>
+
+                {/* 搜索框 */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="搜索字典编码或名称..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-white/10 bg-white/5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
                 </div>
               </div>
-              <button
-                onClick={handleOpenAdd}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${currentColor.bg} ${currentColor.text} ${currentColor.hover} border ${currentColor.border}`}
-              >
-                <Plus className="w-4 h-4" />
-                添加{currentConfig?.name}
-              </button>
-            </div>
 
-            {/* 搜索框 */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="搜索字典编码或名称..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 rounded-lg border border-white/10 bg-white/5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
+              {/* 字典列表 */}
+              <div className="flex-1 rounded-lg border border-white/10 overflow-hidden bg-white/5 backdrop-blur-xl">
+                <div className="overflow-auto h-full">
+                  <table className="w-full">
+                    <thead className="bg-white/5 sticky top-0 z-10">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                          字典编码
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                          字典名称
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                          排序
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                          描述
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                          状态
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-400">
+                          操作
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10">
+                      {loadingItems ? (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center">
+                            <Loader2 className="w-6 h-6 text-gray-400 animate-spin mx-auto" />
+                          </td>
+                        </tr>
+                      ) : currentItems.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
+                            {searchQuery ? '没有找到匹配的字典项' : `暂无${currentConfig?.name || '字典项'}数据`}
+                          </td>
+                        </tr>
+                      ) : (
+                        currentItems.map((item) => (
+                          <motion.tr
+                            key={item.id}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="hover:bg-white/5 transition-colors"
+                          >
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <code className={`px-2 py-1 rounded text-xs ${currentColor.bg} ${currentColor.text}`}>
+                                {item.code}
+                              </code>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap font-medium text-white">
+                              {item.name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                              {item.sort}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-400">
+                              {item.description || '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                              <span
+                                className={`px-2 py-1 text-xs rounded-full ${
+                                  item.status === 'active'
+                                    ? 'bg-green-900/30 text-green-400'
+                                    : 'bg-gray-800 text-gray-400'
+                                }`}
+                              >
+                                {item.status === 'active' ? '启用' : '禁用'}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
+                              <button
+                                onClick={() => handleOpenEdit(item)}
+                                className="inline-flex items-center gap-1 px-3 py-1 text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                编辑
+                              </button>
+                              <button
+                                onClick={() => handleDelete(item)}
+                                className="inline-flex items-center gap-1 px-3 py-1 text-red-400 hover:bg-red-900/20 rounded transition-colors"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                删除
+                              </button>
+                            </td>
+                          </motion.tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* 未选择类型时的提示 */
+            <div className="flex-1 flex flex-col items-center justify-center rounded-lg border border-white/10 bg-white/5 backdrop-blur-xl">
+              <div className="text-center">
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-blue-900/20 flex items-center justify-center">
+                  <Tag className="w-10 h-10 text-blue-400" />
+                </div>
+                <h3 className="text-xl font-medium text-white mb-2">
+                  请选择左侧字典类型
+                </h3>
+                <p className="text-gray-400 max-w-sm">
+                  点击左侧的字典类型，如"设备类型"、"档案分类"等，即可查看对应的字典数据
+                </p>
+              </div>
             </div>
-          </div>
-
-          {/* 字典列表 */}
-          <div className="flex-1 rounded-lg border border-white/10 overflow-hidden bg-white/5 backdrop-blur-xl">
-            <div className="overflow-auto h-full">
-              <table className="w-full">
-                <thead className="bg-white/5 sticky top-0 z-10">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
-                      字典编码
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
-                      字典名称
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
-                      排序
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
-                      描述
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
-                      状态
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-400">
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10">
-                  {currentItems.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
-                        {searchQuery ? '没有找到匹配的字典项' : `暂无${currentConfig?.name}数据`}
-                      </td>
-                    </tr>
-                  ) : (
-                    currentItems.map((item) => (
-                      <motion.tr
-                        key={item.id}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="hover:bg-white/5 transition-colors"
-                      >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <code className={`px-2 py-1 rounded text-xs ${currentColor.bg} ${currentColor.text}`}>
-                            {item.code}
-                          </code>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap font-medium text-white">
-                          {item.name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
-                          {item.sort}
-                        </td>
-                        <td className="px-6 py-4 text-sm text-gray-400">
-                          {item.description || '-'}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-1 text-xs rounded-full ${
-                              item.status === 'active'
-                                ? 'bg-green-900/30 text-green-400'
-                                : 'bg-gray-800 text-gray-400'
-                            }`}
-                          >
-                            {item.status === 'active' ? '启用' : '禁用'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
-                          <button
-                            onClick={() => handleOpenEdit(item)}
-                            className="inline-flex items-center gap-1 px-3 py-1 text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
-                          >
-                            <Edit2 className="w-3 h-3" />
-                            编辑
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className="inline-flex items-center gap-1 px-3 py-1 text-red-400 hover:bg-red-900/20 rounded transition-colors"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            删除
-                          </button>
-                        </td>
-                      </motion.tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

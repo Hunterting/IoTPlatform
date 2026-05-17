@@ -69,10 +69,13 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
 
   const filteredDevices = devices.filter((device) => {
     // 1. Filter by search term
+    const deviceName = device.name || '';
+    const serialNumber = device.serialNumber || '';
+    const model = device.model || '';
     const matchesSearch =
-      device.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      device.serialNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      device.model.toLowerCase().includes(searchTerm.toLowerCase());
+      deviceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      serialNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      model.toLowerCase().includes(searchTerm.toLowerCase());
     
     // 2. Filter by status
     const matchesStatus = filterStatus === 'all' || device.status === filterStatus;
@@ -127,7 +130,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
   };
 
   const handleEditDevice = (device: DeviceItem) => {
-    updateDevice(device);
+    updateDevice(device.id, device);
     setShowEditModal(false);
     setSelectedDevice(null);
   };
@@ -299,19 +302,19 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
                           )}
                         </div>
                         <div>
-                          <p className="font-medium text-white">{device.name}</p>
-                          <p className="text-xs text-gray-400">{device.area}</p>
+                          <p className="font-medium text-white">{device.name || '未知设备'}</p>
+                          <p className="text-xs text-gray-400">{device.area || '未分配区域'}</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="space-y-1">
-                        <p className="text-sm text-gray-300">{device.model}</p>
-                        <p className="text-xs text-gray-500">{device.serialNumber}</p>
+                        <p className="text-sm text-gray-300">{device.model || '-'}</p>
+                        <p className="text-xs text-gray-500">{device.serialNumber || '-'}</p>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm text-gray-300">{device.category}</span>
+                      <span className="text-sm text-gray-300">{device.category || '-'}</span>
                     </td>
                     <td className="px-6 py-4">
                       {device.projectName ? (
@@ -584,7 +587,7 @@ function DeviceFormModal({
                 <input
                   type="text"
                   required
-                  value={formData.name}
+                  value={formData.name || ''}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="例如：智冰箱-A01"
@@ -598,7 +601,7 @@ function DeviceFormModal({
                 <input
                   type="text"
                   required
-                  value={formData.model}
+                  value={formData.model || ''}
                   onChange={(e) => setFormData({ ...formData, model: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="例如：SR-F520BX"
@@ -657,7 +660,7 @@ function DeviceFormModal({
                 >
                   <option value="">{loadingProjects ? '加载中...' : '请选择项目'}</option>
                   {projects.map(proj => (
-                    <option key={proj.id} value={proj.id}>{proj.name}</option>
+                    <option key={proj.id} value={proj.id}>{proj.name || ''}</option>
                   ))}
                 </select>
               </div>

@@ -31,5 +31,7 @@ public class AreaTreeNodeDto
     public string Type { get; set; } = string.Empty;
     public long? ParentId { get; set; }
     public int DeviceCount { get; set; }
+    public string? AppCode { get; set; }
+    public long? CustomerId { get; set; }
     public List<AreaTreeNodeDto>? Children { get; set; }
 }

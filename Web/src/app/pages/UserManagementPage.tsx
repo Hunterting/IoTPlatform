@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, X, Plus, Shield, Check, Edit2, Trash2, Search } from 'lucide-react';
+import { Users, X, Plus, Shield, Check, Edit2, Trash2, Search, Loader2 } from 'lucide-react';
 import { PageType } from '@/app/components/Sidebar';
 import { useAuth, User } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, DEFAULT_ROLES, RoleDefinition, Permission, PERMISSION_GROUPS } from '@/app/config/permissions';
 import { useArea } from '@/app/contexts/AreaContext';
+import { userApi, roleApi } from '@/app/services/api';
+import { adaptUserFromBackend, adaptCreateUserToBackend, adaptUpdateUserToBackend, getUserRoleName, getUserRoleColor } from '@/app/services/adapters/userAdapter';
+import { adaptRoleFromBackend, adaptCreateRoleToBackend, adaptUpdateRoleToBackend } from '@/app/services/adapters/roleAdapter';
+import { UserDto, UserFormData } from '@/app/services/api/types/user.types';
+import { RoleDto } from '@/app/services/api/types/role.types';
 
 interface UserManagementPageProps {
   activePage: PageType;
@@ -56,69 +61,119 @@ function UserList() {
 
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editingUser, setEditingUser] = useState<UserDto | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
-  const [newUserForm, setNewUserForm] = useState({
+  // 加载状态
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [users, setUsers] = useState<UserDto[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 20;
+
+  // 加载用户列表
+  const loadUsers = useCallback(async (page: number = 1, keyword?: string) => {
+    setLoading(true);
+    try {
+      const response = await userApi.getUsers(page, pageSize, keyword);
+      
+      // 后端返回 code: 200 表示成功
+      if (response.data?.code === 200 && response.data?.data) {
+        const adaptedUsers = response.data.data.items?.map((item: any) => adaptUserFromBackend(item)) || [];
+        setUsers(adaptedUsers);
+        setTotalCount(response.data.data.totalCount || 0);
+        setCurrentPage(page);
+      } else {
+        console.error('获取用户列表失败:', response.data?.message);
+      }
+    } catch (error) {
+      console.error('加载用户列表失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUsers(1, searchTerm);
+  }, []);
+
+  // 搜索处理（防抖）
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadUsers(1, searchTerm);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchTerm, loadUsers]);
+
+  const [newUserForm, setNewUserForm] = useState<UserFormData>({
     name: '',
     email: '',
-    phone: '',
-    department: '',
-    role: 'staff',
     password: '',
-    status: 'active',
-    allowedAreaIds: [] as string[],
+    role: 'staff',
+    customerId: null,
+    avatar: null,
+    allowedAreaIds: [],
+    isActive: true,
   });
-
-  const [users, setUsers] = useState<any[]>([
-    { id: '1', name: '超级管理员', role: 'super_admin', email: 'admin@system.com', status: 'active', phone: '138-0000-0000', department: '系统管理部', allowedAreaIds: [] },
-    { id: '2', name: '海底捞管理员', role: 'admin', email: 'admin@haidilao.com', status: 'active', phone: '138-0000-1111', department: '海底捞管理部', allowedAreaIds: [] },
-    { id: '3', name: '运维人员', role: 'operator', email: 'operator@haidilao.com', status: 'active', phone: '138-0000-2222', department: '运维部', allowedAreaIds: ['L2-001'] },
-    { id: '4', name: '厨师长', role: 'chef', email: 'chef@haidilao.com', status: 'active', phone: '138-0000-3333', department: '厨房部', allowedAreaIds: ['L3-003', 'L3-004'] },
-  ]);
-
-  const getRoleName = (roleCode: string) => {
-    return roles[roleCode]?.name || roleCode;
-  };
-
-  const getRoleColor = (roleCode: string) => {
-    const colors: Record<string, string> = {
-      super_admin: 'from-purple-600 to-indigo-600',
-      admin: 'from-red-500 to-orange-500',
-      operator: 'from-blue-500 to-cyan-500',
-      chef: 'from-green-500 to-emerald-500',
-      staff: 'from-gray-500 to-slate-500',
-    };
-    return colors[roleCode] || 'from-gray-500 to-slate-500';
-  };
 
   const filteredUsers = users.filter(user => {
     const term = searchTerm.toLowerCase();
-    const roleName = getRoleName(user.role).toLowerCase();
+    const roleName = getUserRoleName(user.role, Object.fromEntries(Object.entries(roles).map(([k, v]) => [k, v.name]))).toLowerCase();
     return (
       user.name.toLowerCase().includes(term) ||
       user.email.toLowerCase().includes(term) ||
-      user.phone.includes(term) ||
-      roleName.includes(term) ||
-      (user.department && user.department.toLowerCase().includes(term))
+      roleName.includes(term)
     );
   });
 
-  const handleSubmit = (e: React.FormEvent, isEdit: boolean) => {
+  // 提交表单（创建/更新用户）
+  const handleSubmit = async (e: React.FormEvent, isEdit: boolean) => {
     e.preventDefault();
-    if (isEdit && editingUser) {
-      setUsers(users.map(u => u.id === editingUser.id ? { ...u, ...newUserForm, id: u.id } : u));
-      setShowEditUserModal(false);
-    } else {
-      const newUser = {
-        id: `user_${Date.now()}`,
-        ...newUserForm,
-        appCode: currentCustomer?.appCode || '',
-      };
-      setUsers([...users, newUser]);
-      setShowAddUserModal(false);
+    setSubmitting(true);
+    
+    try {
+      if (isEdit && editingUser) {
+        // 更新用户
+        const updateData = adaptUpdateUserToBackend(newUserForm);
+        const response = await userApi.updateUser(editingUser.id, updateData);
+        if (response.data?.code === 200) {
+          await loadUsers(currentPage, searchTerm);
+          setShowEditUserModal(false);
+        }
+      } else {
+        // 创建用户
+        const createData = adaptCreateUserToBackend(newUserForm);
+        const response = await userApi.createUser(createData);
+        if (response.data?.code === 200) {
+          await loadUsers(1, searchTerm);
+          setShowAddUserModal(false);
+        }
+      }
+    } catch (error) {
+      console.error('保存用户失败:', error);
+      alert('保存失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
-    setNewUserForm({ name: '', email: '', phone: '', department: '', role: 'staff', password: '', status: 'active', allowedAreaIds: [] });
+  };
+
+  // 删除用户
+  const handleDelete = async (user: UserDto) => {
+    if (!confirm('确认删除该用户?')) return;
+    
+    setSubmitting(true);
+    try {
+      const response = await userApi.deleteUser(user.id);
+      if (response.data?.code === 200) {
+        await loadUsers(currentPage, searchTerm);
+      }
+    } catch (error) {
+      console.error('删除用户失败:', error);
+      alert('删除失败，请重试');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const toggleAreaSelection = (areaId: string) => {
@@ -157,7 +212,16 @@ function UserList() {
         {hasPermission(PERMISSIONS.CREATE_USERS) && (
           <button 
             onClick={() => {
-               setNewUserForm({ name: '', email: '', phone: '', department: '', role: 'staff', password: '', status: 'active', allowedAreaIds: [] });
+               setNewUserForm({
+                 name: '',
+                 email: '',
+                 password: '',
+                 role: 'staff',
+                 customerId: null,
+                 avatar: null,
+                 allowedAreaIds: [],
+                 isActive: true,
+               });
                setShowAddUserModal(true);
             }}
             className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors flex items-center gap-2 shrink-0"
@@ -170,112 +234,141 @@ function UserList() {
 
       {/* Users Table */}
       <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-        <table className="w-full">
-          <thead className="border-b border-white/10">
-            <tr>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">用户</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">角色</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">区域权限</th>
-              <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">状态</th>
-              <th className="px-6 py-4 text-center text-sm font-semibold text-gray-300">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredUsers.length > 0 ? (
-              filteredUsers.map((user) => {
-                const roleDef = roles[user.role];
-                return (
-                <tr key={user.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 bg-gradient-to-br ${getRoleColor(user.role)} rounded-full flex items-center justify-center`}>
-                        <Users className="w-5 h-5 text-white" />
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+            <span className="ml-3 text-gray-400">加载中...</span>
+          </div>
+        ) : (
+          <table className="w-full">
+            <thead className="border-b border-white/10">
+              <tr>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">用户</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">角色</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">区域权限</th>
+                <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">状态</th>
+                <th className="px-6 py-4 text-center text-sm font-semibold text-gray-300">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUsers.length > 0 ? (
+                filteredUsers.map((user) => {
+                  const roleDef = roles[user.role];
+                  const roleName = getUserRoleName(user.role, Object.fromEntries(Object.entries(roles).map(([k, v]) => [k, v.name])));
+                  return (
+                  <tr key={user.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 bg-gradient-to-br ${getUserRoleColor(user.role)} rounded-full flex items-center justify-center`}>
+                          <Users className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-white">{user.name}</p>
+                          <p className="text-sm text-gray-400">{user.email}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium text-white">{user.name}</p>
-                        <p className="text-sm text-gray-400">{user.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${getRoleColor(user.role)} bg-opacity-20 text-white`}>
-                      {getRoleName(user.role)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-300">
-                      {roleDef?.dataScope === 'ALL' ? (
-                        <span className="text-green-400">全部区域</span>
-                      ) : (
-                        user.allowedAreaIds && user.allowedAreaIds.length > 0 
-                          ? `${user.allowedAreaIds.length} 个指定区域` 
-                          : <span className="text-gray-500">无权限</span>
-                      )}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`px-3 py-1 rounded-full text-xs ${
-                      user.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
-                    }`}>
-                      {user.status === 'active' ? '活跃' : '未激活'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center justify-center gap-2">
-                      {hasPermission(PERMISSIONS.UPDATE_USERS) && (
-                        <button
-                          onClick={() => {
-                            setEditingUser(user);
-                            setNewUserForm({
-                              name: user.name,
-                              email: user.email,
-                              phone: user.phone,
-                              department: user.department || '',
-                              role: user.role,
-                              password: '',
-                              status: user.status,
-                              allowedAreaIds: user.allowedAreaIds || [],
-                            });
-                            setShowEditUserModal(true);
-                          }}
-                          className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded text-xs transition-colors"
-                        >
-                          编辑
-                        </button>
-                      )}
-                      {user.role === 'super_admin' ? (
-                        <span className="flex items-center gap-1 px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded text-xs cursor-not-allowed select-none" title="超级管理员受系统保护，不可删除">
-                          <Shield className="w-3 h-3" />
-                          受保护
-                        </span>
-                      ) : (
-                        hasPermission(PERMISSIONS.DELETE_USERS) && (
-                          <button 
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${getUserRoleColor(user.role)} bg-opacity-20 text-white`}>
+                        {roleName}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm text-gray-300">
+                        {roleDef?.dataScope === 'ALL' ? (
+                          <span className="text-green-400">全部区域</span>
+                        ) : (
+                          user.allowedAreaIds && user.allowedAreaIds.length > 0 
+                            ? `${user.allowedAreaIds.length} 个指定区域` 
+                            : <span className="text-gray-500">无权限</span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-3 py-1 rounded-full text-xs ${
+                        user.isActive ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {user.isActive ? '活跃' : '未激活'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center justify-center gap-2">
+                        {hasPermission(PERMISSIONS.UPDATE_USERS) && (
+                          <button
                             onClick={() => {
-                               if (confirm('确认删除?')) {
-                                   setUsers(users.filter(u => u.id !== user.id));
-                               }
+                              setEditingUser(user);
+                              setNewUserForm({
+                                name: user.name,
+                                email: user.email,
+                                password: '',
+                                role: user.role,
+                                customerId: user.customerId,
+                                avatar: user.avatar,
+                                allowedAreaIds: user.allowedAreaIds || [],
+                                isActive: user.isActive,
+                              });
+                              setShowEditUserModal(true);
                             }}
-                            className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs transition-colors"
+                            className="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 rounded text-xs transition-colors"
                           >
-                            删除
+                            编辑
                           </button>
-                        )
-                      )}
-                    </div>
+                        )}
+                        {user.isSuperAdmin ? (
+                          <span className="flex items-center gap-1 px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/30 rounded text-xs cursor-not-allowed select-none" title="超级管理员受系统保护，不可删除">
+                            <Shield className="w-3 h-3" />
+                            受保护
+                          </span>
+                        ) : (
+                          hasPermission(PERMISSIONS.DELETE_USERS) && (
+                            <button 
+                              onClick={() => handleDelete(user)}
+                              className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs transition-colors"
+                            >
+                              删除
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )})
+              ) : (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                    没有找到匹配的用户
                   </td>
                 </tr>
-              )})
-            ) : (
-              <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                  没有找到匹配的用户
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
+
+      {/* 分页 */}
+      {!loading && totalCount > pageSize && (
+        <div className="flex items-center justify-between mt-4">
+          <span className="text-sm text-gray-400">
+            共 {totalCount} 条记录，第 {currentPage} / {Math.ceil(totalCount / pageSize)} 页
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => loadUsers(currentPage - 1, searchTerm)}
+              disabled={currentPage <= 1}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              上一页
+            </button>
+            <button
+              onClick={() => loadUsers(currentPage + 1, searchTerm)}
+              disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+              className="px-3 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              下一页
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modals ... (keep existing implementation) */}
       <AnimatePresence>
@@ -355,8 +448,8 @@ function UserList() {
                     <div>
                         <label className="block text-sm font-medium text-gray-300 mb-2">状态</label>
                         <select
-                            value={newUserForm.status}
-                            onChange={(e) => setNewUserForm({ ...newUserForm, status: e.target.value })}
+                            value={newUserForm.isActive ? 'active' : 'inactive'}
+                            onChange={(e) => setNewUserForm({ ...newUserForm, isActive: e.target.value === 'active' })}
                             className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800"
                         >
                             <option value="active">活跃</option>
@@ -409,11 +502,27 @@ function UserList() {
                 </div>
 
                 <div className="flex gap-3 pt-4">
-                  <button type="button" onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); }} className="flex-1 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors">
+                  <button 
+                    type="button" 
+                    onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); }} 
+                    disabled={submitting}
+                    className="flex-1 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors disabled:opacity-50"
+                  >
                     取消
                   </button>
-                  <button type="submit" className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-lg transition-all font-semibold">
-                    {showEditUserModal ? '保存更改' : '创建用户'}
+                  <button 
+                    type="submit" 
+                    disabled={submitting}
+                    className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-lg transition-all font-semibold disabled:opacity-50 flex items-center justify-center"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        保存中...
+                      </>
+                    ) : (
+                      showEditUserModal ? '保存更改' : '创建用户'
+                    )}
                   </button>
                 </div>
               </form>
@@ -427,31 +536,56 @@ function UserList() {
 
 // 角色管理组件
 function RoleManagement() {
-  const { roles, addRole, updateRole, deleteRole, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editingRoleCode, setEditingRoleCode] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [rolesList, setRolesList] = useState<RoleDto[]>([]);
 
-  const [roleForm, setRoleForm] = useState<RoleDefinition>({
+  const [roleForm, setRoleForm] = useState({
     code: '',
     name: '',
     description: '',
-    permissions: [],
+    permissions: [] as string[],
     dataScope: 'CUSTOM',
   });
 
-  const rolesList = Object.values(roles);
+  // 加载角色列表
+  const loadRoles = useCallback(async (keyword?: string) => {
+    setLoading(true);
+    try {
+      const response = await roleApi.getRoles(1, 100, keyword);
+      
+      if (response.data?.code === 200 && response.data?.data) {
+        const adaptedRoles = response.data.data.items.map((item: any) => adaptRoleFromBackend(item));
+        setRolesList(adaptedRoles);
+      }
+    } catch (error) {
+      console.error('加载角色列表失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
+  useEffect(() => {
+    loadRoles();
+  }, [loadRoles]);
+
+  // 搜索过滤
   const filteredRoles = rolesList.filter(role => {
     const term = searchTerm.toLowerCase();
     return (
       role.name.toLowerCase().includes(term) ||
       role.code.toLowerCase().includes(term) ||
-      role.description.toLowerCase().includes(term)
+      (role.description?.toLowerCase().includes(term) || false)
     );
   });
 
   const openAddModal = () => {
+    setEditingRoleId(null);
     setEditingRoleCode(null);
     setRoleForm({
       code: '',
@@ -463,47 +597,91 @@ function RoleManagement() {
     setShowRoleModal(true);
   };
 
-  const openEditModal = (role: RoleDefinition) => {
+  const openEditModal = (role: RoleDto) => {
+    setEditingRoleId(role.id);
     setEditingRoleCode(role.code);
-    setRoleForm({ ...role });
+    setRoleForm({
+      code: role.code,
+      name: role.name,
+      description: role.description || '',
+      permissions: role.permissions,
+      dataScope: role.dataScope,
+    });
     setShowRoleModal(true);
   };
 
-  const handleDelete = (code: string) => {
-    if (confirm('确定要删除这个角色吗？此操作无法撤销。')) {
-        deleteRole(code);
+  const handleDelete = async (role: RoleDto) => {
+    if (!confirm('确定要删除这个角色吗？此操作无法撤销。')) {
+      return;
+    }
+    
+    setSubmitting(true);
+    try {
+      const response = await roleApi.deleteRole(parseInt(role.id, 10));
+      if (response.data?.code === 200) {
+        await loadRoles(searchTerm);
+      } else {
+        alert(response.data?.message || '删除失败');
+      }
+    } catch (error: any) {
+      console.error('删除角色失败:', error);
+      alert(error?.response?.data?.message || '删除失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!roleForm.code || !roleForm.name) {
-        alert('请填写角色名称和代码');
-        return;
+      alert('请填写角色名称和代码');
+      return;
     }
 
-    if (editingRoleCode) {
-        updateRole(roleForm);
-    } else {
-        if (roles[roleForm.code]) {
-            alert('角色代码已存在，请使用其他代码');
-            return;
+    setSubmitting(true);
+    try {
+      if (editingRoleId) {
+        // 更新角色
+        const updateData = adaptUpdateRoleToBackend(roleForm);
+        const response = await roleApi.updateRole(parseInt(editingRoleId, 10), updateData);
+        if (response.data?.code === 200) {
+          await loadRoles(searchTerm);
+          setShowRoleModal(false);
+        } else {
+          alert(response.data?.message || '更新失败');
         }
-        addRole(roleForm);
+      } else {
+        // 创建角色
+        const createData = adaptCreateRoleToBackend(roleForm);
+        const response = await roleApi.createRole(createData);
+        if (response.data?.code === 200) {
+          await loadRoles(searchTerm);
+          setShowRoleModal(false);
+        } else {
+          alert(response.data?.message || '创建失败');
+        }
+      }
+    } catch (error: any) {
+      console.error('保存角色失败:', error);
+      alert(error?.response?.data?.message || '保存失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
-    setShowRoleModal(false);
   };
 
-  const togglePermission = (perm: Permission) => {
+  const togglePermission = (perm: string) => {
     setRoleForm(prev => {
-        const hasPerm = prev.permissions.includes(perm);
-        if (hasPerm) {
-            return { ...prev, permissions: prev.permissions.filter(p => p !== perm) };
-        } else {
-            return { ...prev, permissions: [...prev.permissions, perm] };
-        }
+      const hasPerm = prev.permissions.includes(perm);
+      if (hasPerm) {
+        return { ...prev, permissions: prev.permissions.filter(p => p !== perm) };
+      } else {
+        return { ...prev, permissions: [...prev.permissions, perm] };
+      }
     });
   };
+
+  // 系统角色代码（不可删除）
+  const SYSTEM_ROLE_CODES = ['super_admin', 'admin'];
 
   return (
     <div className="space-y-6">
@@ -520,6 +698,11 @@ function RoleManagement() {
             placeholder="搜索角色名称、代码、描述..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                loadRoles(searchTerm);
+              }
+            }}
             className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
           />
         </div>
@@ -536,9 +719,14 @@ function RoleManagement() {
       </div>
 
       <div className="space-y-4">
-        {filteredRoles.length > 0 ? (
+        {loading ? (
+          <div className="p-8 text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto text-blue-400" />
+            <p className="mt-2 text-gray-400">加载中...</p>
+          </div>
+        ) : filteredRoles.length > 0 ? (
           filteredRoles.map((role) => (
-            <div key={role.code} className="p-6 bg-white/5 border border-white/10 rounded-xl">
+            <div key={role.id} className="p-6 bg-white/5 border border-white/10 rounded-xl">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <div className={`w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center`}>
@@ -554,6 +742,12 @@ function RoleManagement() {
                       数据范围: {role.dataScope === 'ALL' ? '全部数据' : '自定义指定'}
                    </span>
                    
+                   {role.isSystem && (
+                     <span className="mr-2 px-3 py-1 rounded text-xs font-medium border border-yellow-500/50 text-yellow-400">
+                       系统角色
+                     </span>
+                   )}
+                   
                    {hasPermission(PERMISSIONS.UPDATE_ROLES) && (
                      <button 
                         onClick={() => openEditModal(role)}
@@ -564,10 +758,11 @@ function RoleManagement() {
                      </button>
                    )}
 
-                   {hasPermission(PERMISSIONS.DELETE_ROLES) && role.code !== 'super_admin' && role.code !== 'admin' && (
+                   {hasPermission(PERMISSIONS.DELETE_ROLES) && !role.isSystem && !SYSTEM_ROLE_CODES.includes(role.code) && (
                       <button 
-                          onClick={() => handleDelete(role.code)}
-                          className="p-2 bg-white/5 hover:bg-red-500/20 rounded-lg transition-colors text-red-400"
+                          onClick={() => handleDelete(role)}
+                          disabled={submitting}
+                          className="p-2 bg-white/5 hover:bg-red-500/20 rounded-lg transition-colors text-red-400 disabled:opacity-50"
                           title="删除"
                       >
                           <Trash2 className="w-4 h-4" />

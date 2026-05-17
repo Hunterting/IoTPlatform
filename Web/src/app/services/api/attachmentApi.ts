@@ -29,6 +29,7 @@ export interface UploadAttachmentRequest {
   businessId?: number;
   name?: string;
   remark?: string;
+  appCode?: string;
 }
 
 /**
@@ -85,14 +86,19 @@ export async function uploadAttachment(
     formData.append('remark', request.remark);
   }
 
+  // 如果提供了appCode，添加到请求头
+  const headers: Record<string, string> = {
+    'Content-Type': 'multipart/form-data',
+  };
+
+  if (request.appCode) {
+    headers['X-App-Code'] = request.appCode;
+  }
+
   const response = await apiClient.post<ApiResponse<AttachmentDto>>(
     `${BASE_URL}/upload`,
     formData,
-    {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    }
+    { headers }
   );
 
   return response.data;

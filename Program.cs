@@ -36,7 +36,11 @@ builder.Host.UseSerilog();
 builder.Services.AddSingleton<JwtHelper>();
 
 // 注册HttpContextAccessor（租户上下文需要）
-builder.Services.AddHttpContextAccessor();
+// 确保仅在未注册时添加 IHttpContextAccessor，避免重复注册
+if (!builder.Services.Any(s => s.ServiceType == typeof(Microsoft.AspNetCore.Http.IHttpContextAccessor)))
+{
+    builder.Services.AddHttpContextAccessor();
+}
 
 // 注册协议适配器工厂
 builder.Services.AddSingleton<IProtocolAdapterFactory, ProtocolAdapterFactory>();
@@ -334,6 +338,9 @@ app.UseMiddleware<OperationLoggingMiddleware>();
 app.UseHttpsRedirection();
 
 app.UseCors("AllowAll");
+
+// 租户上下文初始化（在认证之前初始化，确保后续服务可以使用租户信息）
+app.UseTenantInitialization();
 
 app.UseAuthentication();
 app.UseAuthorization();

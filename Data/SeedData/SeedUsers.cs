@@ -62,6 +62,7 @@ namespace IoTPlatform.Data.SeedData
                         Phone = "13800138000",
                         Status = "active",
                         IsSuperAdmin = true,
+                        Role = "super_admin",
                         RoleId = 1, // 超级管理员角色
                         AppCode = "system",
                         AllowedAreaIds = null,
@@ -80,6 +81,7 @@ namespace IoTPlatform.Data.SeedData
                         Phone = "13800138001",
                         Status = "active",
                         IsSuperAdmin = false,
+                        Role = "admin",
                         RoleId = 2, // 系统管理员角色
                         AppCode = "customer_001",
                         AllowedAreaIds = "1,2,3",

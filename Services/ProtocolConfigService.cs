@@ -74,6 +74,7 @@ public class ProtocolConfigService : IProtocolConfigService
                 ConfigJson = p.Config,
                 Description = p.Description,
                 AppCode = p.AppCode,
+                IsActive = p.IsActive,
                 CreatedAt = p.CreatedAt,
                 UpdatedAt = p.UpdatedAt
             })
@@ -125,6 +126,7 @@ public class ProtocolConfigService : IProtocolConfigService
                 : null,
             Description = config.Description,
             AppCode = config.AppCode,
+            IsActive = config.IsActive,
             CreatedAt = config.CreatedAt,
             UpdatedAt = config.UpdatedAt
         };
@@ -191,6 +193,7 @@ public class ProtocolConfigService : IProtocolConfigService
         config.Status = request.Status;
         config.Description = request.Description ?? config.Description;
         config.AppCode = config.AppCode;
+        config.IsActive = request.IsActive;
         config.DeviceIds = request.DeviceIds != null
             ? JsonSerializer.Serialize(request.DeviceIds)
             : config.DeviceIds;

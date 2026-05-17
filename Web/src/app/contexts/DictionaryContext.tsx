@@ -1,9 +1,11 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { getDictionaryItems } from '@/app/services/api/dictionaryApi';
 
 // 字典类型枚举
 export const DictionaryType = {
   DEVICE_CATEGORY: 'device_category', // 设备类别
-  ARCHIVE_CATEGORY: 'archive_category', // 档案分类
+  ARCHIVE_CATEGORY: 'archive_category', // 档案分类 (兼容旧名称)
+  ARCHIVE_CATEGORY_V2: 'ArchiveCategory', // 档案分类 (后端实际类型)
   DEVICE_STATUS: 'device_status', // 设备状态
   DEVICE_BRAND: 'device_brand', // 设备品牌
   WORK_ORDER_TYPE: 'work_order_type', // 工单类型
@@ -121,6 +123,12 @@ interface DictionaryContextType {
   updateTypeConfig: (key: string, config: Partial<DictionaryTypeConfig>) => void;
   deleteTypeConfig: (key: string) => void;
   getTypeConfig: (key: string) => DictionaryTypeConfig | undefined;
+  // 从后端加载字典数据
+  loadFromBackend: () => Promise<void>;
+  // 字典加载状态
+  isLoading: boolean;
+  // 字典加载错误
+  error: string | null;
 }
 
 const DictionaryContext = createContext<DictionaryContextType | undefined>(undefined);
@@ -278,6 +286,59 @@ const initialDictionaries: DictionaryItem[] = [
 export function DictionaryProvider({ children }: { children: ReactNode }) {
   const [dictionaries, setDictionaries] = useState<DictionaryItem[]>(initialDictionaries);
   const [typeConfigs, setTypeConfigs] = useState<DictionaryTypeConfig[]>(DICTIONARY_TYPE_CONFIGS);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 从后端加载字典数据
+  const loadFromBackend = async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const dictionaryTypes = Object.values(DictionaryType);
+      const allItems: DictionaryItem[] = [];
+      
+      // 并行请求所有字典类型
+      const responses = await Promise.allSettled(
+        dictionaryTypes.map(type => getDictionaryItems({ type }))
+      );
+      
+      // 处理每个响应
+      responses.forEach((response, index) => {
+        if (response.status === 'fulfilled' && response.value.code === 200 && response.value.data) {
+          const type = dictionaryTypes[index];
+          const items = response.value.data.map((item, idx) => ({
+            id: String(item.id),
+            type: type as DictionaryTypeValue,
+            code: item.code,
+            name: item.name,
+            sort: item.sort,
+            description: item.description,
+            status: item.status as 'active' | 'inactive',
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          }));
+          allItems.push(...items);
+        }
+      });
+      
+      // 如果后端有数据，替换本地数据
+      if (allItems.length > 0) {
+        setDictionaries(allItems);
+      }
+    } catch (err) {
+      console.error('加载字典数据失败:', err);
+      setError('加载字典数据失败，使用本地数据');
+      // 失败时保留本地数据
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 初始化时尝试从后端加载
+  useEffect(() => {
+    loadFromBackend();
+  }, []);
 
   const getAllItems = () => {
     return dictionaries;
@@ -353,6 +414,9 @@ export function DictionaryProvider({ children }: { children: ReactNode }) {
         updateTypeConfig,
         deleteTypeConfig,
         getTypeConfig,
+        loadFromBackend,
+        isLoading,
+        error,
       }}
     >
       {children}

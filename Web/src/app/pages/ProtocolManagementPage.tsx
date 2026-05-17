@@ -1,68 +1,44 @@
-import { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { useState, useCallback, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe, Plus, Edit2, Trash2, Play, Square,
   RefreshCw, CheckCircle2, XCircle, Clock, Activity,
   ChevronDown, ChevronRight, Settings, Wifi, WifiOff,
-  Tag, Cpu, X, Save, AlertCircle, Server,
+  X, Save, AlertCircle, Server, Loader2, Cpu, Monitor,
+  Folder, MapPin, Check,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS } from '@/app/config/permissions';
+import { protocolApi, ProtocolConfig, CreateProtocolConfigRequest, UpdateProtocolConfigRequest } from '@/app/services/api/protocolApi';
+import { deviceApi } from '@/app/services/api/deviceApi';
+import { adaptDateFromBackend, adaptIdFromBackend } from '@/app/services/adapters';
+import type { DeviceDto } from '@/app/services/api/types/device.types';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-type ProtocolType = 'MQTT' | 'ModbusTCP' | 'ModbusRTU' | 'OpcUA';
-type ConnectionStatus = 'Connected' | 'Disconnected' | 'Connecting' | 'Error';
+// ── 类型定义 ──────────────────────────────────────────────────────────────────
+type ProtocolType = 'MQTT' | 'ModbusTCP' | 'ModbusRTU' | 'OpcUA' | 'modbus' | 'mqtt' | 'opcua' | 'http' | 'tcp' | 'bacnet';
 
-interface ProtocolConfig {
-  id: string;
-  name: string;
-  protocolType: ProtocolType;
-  status: ConnectionStatus;
-  host?: string;
-  port?: number;
-  serialPort?: string;
-  baudRate?: number;
-  endpoint?: string;
-  deviceCount: number;
-  lastConnectedAt?: string;
-  errorMessage?: string;
-  enabled: boolean;
+type ConnectionStatus = 'Connected' | 'Disconnected' | 'Connecting' | 'Error' | 'active' | 'inactive';
+
+// ── 常量 ─────────────────────────────────────────────────────────────────────
+const PROTOCOL_OPTIONS: { value: string; label: string; icon: string }[] = [
+  { value: 'mqtt', label: 'MQTT', icon: 'M' },
+  { value: 'modbus', label: 'Modbus TCP', icon: 'T' },
+  { value: 'opcua', label: 'OPC UA', icon: 'O' },
+  { value: 'http', label: 'HTTP', icon: 'H' },
+  { value: 'tcp', label: 'TCP', icon: 'C' },
+];
+
+// ── 辅助函数 ──────────────────────────────────────────────────────────────────
+function getStatusFromString(status: string): ConnectionStatus {
+  if (status === 'active' || status === 'Connected') return 'Connected';
+  if (status === 'inactive' || status === 'Disconnected') return 'Disconnected';
+  return status as ConnectionStatus;
 }
 
-// ── Mock 数据 ──────────────────────────────────────────────────────────────────
-const INITIAL_PROTOCOLS: ProtocolConfig[] = [
-  {
-    id: '1', name: 'MQTT 主服务器', protocolType: 'MQTT',
-    status: 'Connected', host: '192.168.1.100', port: 1883,
-    deviceCount: 42, lastConnectedAt: '2026-04-30 09:15:22', enabled: true,
-  },
-  {
-    id: '2', name: 'Modbus TCP 控制器', protocolType: 'ModbusTCP',
-    status: 'Connected', host: '192.168.1.200', port: 502,
-    deviceCount: 8, lastConnectedAt: '2026-04-30 08:30:10', enabled: true,
-  },
-  {
-    id: '3', name: 'Modbus RTU 串口设备', protocolType: 'ModbusRTU',
-    status: 'Disconnected', serialPort: 'COM3', baudRate: 9600,
-    deviceCount: 3, enabled: false,
-  },
-  {
-    id: '4', name: 'OPC UA 工业网关', protocolType: 'OpcUA',
-    status: 'Error', endpoint: 'opc.tcp://192.168.1.50:4840',
-    deviceCount: 5, errorMessage: '连接超时，请检查网络', enabled: true,
-  },
-];
-
-const PROTOCOL_OPTIONS: { value: ProtocolType; label: string; icon: string }[] = [
-  { value: 'MQTT', label: 'MQTT', icon: '📡' },
-  { value: 'ModbusTCP', label: 'Modbus TCP', icon: '🌐' },
-  { value: 'ModbusRTU', label: 'Modbus RTU', icon: '🔌' },
-  { value: 'OpcUA', label: 'OPC UA', icon: '🏭' },
-];
-
-// ── 辅助函数 ───────────────────────────────────────────────────────────────────
-function getStatusBadge(status: ConnectionStatus) {
-  switch (status) {
+function getStatusBadge(status: string) {
+  const connectionStatus = getStatusFromString(status);
+  
+  switch (connectionStatus) {
     case 'Connected':
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">
@@ -87,59 +63,130 @@ function getStatusBadge(status: ConnectionStatus) {
           <XCircle className="w-3 h-3" /> 错误
         </span>
       );
+    default:
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-slate-500/20 text-slate-400 border border-slate-500/30">
+          {status}
+        </span>
+      );
   }
 }
 
-function getProtocolIcon(type: ProtocolType) {
-  const found = PROTOCOL_OPTIONS.find(p => p.value === type);
-  return found?.icon ?? '❓';
+function getProtocolIcon(type: string) {
+  const found = PROTOCOL_OPTIONS.find(p => p.value === type?.toLowerCase());
+  return found?.icon ?? 'P';
+}
+
+function getProtocolLabel(type: string) {
+  const found = PROTOCOL_OPTIONS.find(p => p.value === type?.toLowerCase());
+  return found?.label ?? type;
 }
 
 // ── 表单初始值 ─────────────────────────────────────────────────────────────────
-const EMPTY_FORM: Partial<ProtocolConfig> = {
-  name: '', protocolType: 'MQTT', host: '', port: 1883,
-  serialPort: '', baudRate: 9600, endpoint: '', enabled: true,
+const EMPTY_FORM = {
+  name: '',
+  type: 'mqtt',
+  description: '',
+  config: {},
+  isActive: true,
 };
 
 // ── 主组件 ─────────────────────────────────────────────────────────────────────
 export function ProtocolManagementPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, currentCustomer } = useAuth();
   const canManage = hasPermission(PERMISSIONS.MANAGE_PROTOCOLS);
 
-  const [protocols, setProtocols] = useState<ProtocolConfig[]>(INITIAL_PROTOCOLS);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // 获取当前租户代码
+  const appCode = currentCustomer?.appCode;
+
+  // 数据状态
+  const [protocols, setProtocols] = useState<ProtocolConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // UI 状态
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<ProtocolConfig | null>(null);
-  const [form, setForm] = useState<Partial<ProtocolConfig>>(EMPTY_FORM);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
-  const [connectingId, setConnectingId] = useState<string | null>(null);
+  const [form, setForm] = useState<Partial<CreateProtocolConfigRequest>>(EMPTY_FORM);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<number | null>(null);
+  const [connectingId, setConnectingId] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  // ── 开始 / 停止协议 ──────────────────────────────────────────────────────────
+  // 关联设备状态
+  const [protocolDevices, setProtocolDevices] = useState<Record<number, DeviceDto[]>>({});
+  const [loadingDevices, setLoadingDevices] = useState<number | null>(null);
+
+  // 设备选择弹窗状态
+  const [showDeviceSelector, setShowDeviceSelector] = useState(false);
+  const [selectingProtocolId, setSelectingProtocolId] = useState<number | null>(null);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<Set<string>>(new Set());
+  const [allDevices, setAllDevices] = useState<DeviceDto[]>([]);
+  const [loadingAllDevices, setLoadingAllDevices] = useState(false);
+  const [deviceSearchKeyword, setDeviceSearchKeyword] = useState('');
+  const [updatingDevices, setUpdatingDevices] = useState(false);
+
+  // 搜索状态
+  const [searchKeyword, setSearchKeyword] = useState('');
+
+  // ── 加载数据 ─────────────────────────────────────────────────────────────────
+  const loadProtocols = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await protocolApi.getProtocolConfigs({
+        page: 1,
+        pageSize: 100,
+        keyword: searchKeyword || undefined,
+      });
+      if (response.code === 200 && response.data) {
+        setProtocols(response.data.items || []);
+        setTotalCount(response.data.totalCount || 0);
+      } else {
+        setError(response.message || '加载协议配置失败');
+      }
+    } catch (err: any) {
+      setError(err?.message || '加载协议配置失败');
+      console.error('加载协议配置失败:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [searchKeyword]);
+
+  useEffect(() => {
+    loadProtocols();
+  }, [loadProtocols]);
+
+  // ── 启动/停止协议 ──────────────────────────────────────────────────────────
   const handleToggle = useCallback(async (protocol: ProtocolConfig) => {
     if (connectingId) return;
+    const isActive = protocol.status === 'active' || protocol.status === 'Connected';
 
-    if (protocol.status === 'Connected') {
-      // 停止
-      setProtocols(prev =>
-        prev.map(p => p.id === protocol.id
-          ? { ...p, status: 'Disconnected', enabled: false, lastConnectedAt: undefined }
-          : p
-        )
-      );
-    } else {
-      // 连接
-      setConnectingId(protocol.id);
-      setProtocols(prev =>
-        prev.map(p => p.id === protocol.id ? { ...p, status: 'Connecting', enabled: true } : p)
-      );
-      // 模拟连接延迟
-      await new Promise(r => setTimeout(r, 1500));
-      setProtocols(prev =>
-        prev.map(p => p.id === protocol.id
-          ? { ...p, status: 'Connected', lastConnectedAt: new Date().toLocaleString('zh-CN') }
-          : p
-        )
-      );
+    try {
+      if (isActive) {
+        // 停止
+        setConnectingId(protocol.id);
+        const response = await protocolApi.stopProtocol(protocol.id);
+        if (response.code === 200) {
+          setProtocols(prev =>
+            prev.map(p => p.id === protocol.id ? { ...p, status: 'inactive' } : p)
+          );
+        }
+      } else {
+        // 启动
+        setConnectingId(protocol.id);
+        const response = await protocolApi.startProtocol(protocol.id);
+        if (response.code === 200) {
+          setProtocols(prev =>
+            prev.map(p => p.id === protocol.id ? { ...p, status: 'active' } : p)
+          );
+        }
+      }
+    } catch (err) {
+      console.error('操作协议失败:', err);
+    } finally {
       setConnectingId(null);
     }
   }, [connectingId]);
@@ -147,43 +194,256 @@ export function ProtocolManagementPage() {
   // ── 打开新增/编辑弹窗 ───────────────────────────────────────────────────────
   const openAdd = () => {
     setEditTarget(null);
-    setForm(EMPTY_FORM);
+    setForm({ ...EMPTY_FORM, config: {} });
     setShowModal(true);
   };
 
   const openEdit = (p: ProtocolConfig) => {
     setEditTarget(p);
-    setForm({ ...p });
+    setForm({
+      name: p.name,
+      type: p.type,
+      description: p.description,
+      isActive: p.isActive,
+      status: p.status,
+      config: p.config || {},
+    });
     setShowModal(true);
   };
 
   // ── 保存 ────────────────────────────────────────────────────────────────────
-  const handleSave = () => {
-    if (!form.name || !form.protocolType) return;
-    if (editTarget) {
-      setProtocols(prev =>
-        prev.map(p => p.id === editTarget.id ? { ...p, ...form } as ProtocolConfig : p)
-      );
-    } else {
-      const newProtocol: ProtocolConfig = {
-        id: String(Date.now()),
-        status: 'Disconnected',
-        deviceCount: 0,
-        ...(form as ProtocolConfig),
-      };
-      setProtocols(prev => [...prev, newProtocol]);
+  const handleSave = async () => {
+    if (!form.name || !form.type) return;
+    setSaving(true);
+
+    try {
+      if (editTarget) {
+        // 更新
+        const request: UpdateProtocolConfigRequest = {
+          name: form.name!,
+          status: form.status,
+          isActive: form.isActive,
+          description: form.description,
+          deviceIds: form.deviceIds,
+          config: form.config,
+        };
+        const response = await protocolApi.updateProtocolConfig(editTarget.id, request);
+        if (response.code === 200) {
+          setShowModal(false);
+          loadProtocols();
+        }
+      } else {
+        // 创建 - 传递 appCode
+        const request: CreateProtocolConfigRequest = {
+          name: form.name!,
+          type: form.type!,
+          description: form.description,
+          deviceIds: form.deviceIds,
+          config: form.config,
+          isActive: form.isActive,
+          appCode: appCode, // 传递租户代码
+        };
+        const response = await protocolApi.createProtocolConfig(request);
+        if (response.code === 200) {
+          setShowModal(false);
+          loadProtocols();
+        }
+      }
+    } catch (err) {
+      console.error('保存协议配置失败:', err);
+    } finally {
+      setSaving(false);
     }
-    setShowModal(false);
   };
 
   // ── 删除 ────────────────────────────────────────────────────────────────────
-  const handleDelete = (id: string) => {
-    setProtocols(prev => prev.filter(p => p.id !== id));
-    setShowDeleteConfirm(null);
+  const handleDelete = async (id: number) => {
+    setDeleting(true);
+    try {
+      const response = await protocolApi.deleteProtocolConfig(id);
+      if (response.code === 200) {
+        setShowDeleteConfirm(null);
+        loadProtocols();
+      }
+    } catch (err) {
+      console.error('删除协议配置失败:', err);
+    } finally {
+      setDeleting(false);
+    }
   };
 
-  const connectedCount = protocols.filter(p => p.status === 'Connected').length;
+  // ── 计算统计数据 ────────────────────────────────────────────────────────────
+  const connectedCount = protocols.filter(p => p.status === 'active' || p.status === 'Connected').length;
   const errorCount = protocols.filter(p => p.status === 'Error').length;
+
+  // ── 获取配置信息 ────────────────────────────────────────────────────────────
+  const getConfigValue = (config: Record<string, unknown> | undefined, key: string): string => {
+    if (!config) return '';
+    const value = config[key];
+    if (value === null || value === undefined) return '';
+    return String(value);
+  };
+
+  // ── 加载关联设备 ────────────────────────────────────────────────────────────
+  const loadProtocolDevices = useCallback(async (protocol: ProtocolConfig) => {
+    if (!protocol.deviceIds || protocol.deviceIds.length === 0) {
+      setProtocolDevices(prev => ({ ...prev, [protocol.id]: [] }));
+      return;
+    }
+    if (protocolDevices[protocol.id]) return; // 已加载过
+
+    setLoadingDevices(protocol.id);
+    try {
+      const response = await deviceApi.getDevices(1, 100);
+      if (response.data.code === 200 && response.data.data) {
+        // 筛选出关联的设备
+        const deviceIdSet = new Set(protocol.deviceIds.map(id => String(id)));
+        const relatedDevices = response.data.data.items.filter(d => deviceIdSet.has(d.id));
+        setProtocolDevices(prev => ({ ...prev, [protocol.id]: relatedDevices }));
+      }
+    } catch (err) {
+      console.error('加载关联设备失败:', err);
+    } finally {
+      setLoadingDevices(null);
+    }
+  }, [protocolDevices]);
+
+  // ── 展开/收起详情 ────────────────────────────────────────────────────────────
+  const handleExpand = useCallback((protocol: ProtocolConfig) => {
+    if (expandedId === protocol.id) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(protocol.id);
+      loadProtocolDevices(protocol);
+    }
+  }, [expandedId, loadProtocolDevices]);
+
+  // ── 打开设备选择弹窗 ─────────────────────────────────────────────────────────
+  const openDeviceSelector = useCallback((protocol: ProtocolConfig) => {
+    setSelectingProtocolId(protocol.id);
+    setSelectedDeviceIds(new Set());
+    setDeviceSearchKeyword('');
+    setShowDeviceSelector(true);
+    setLoadingAllDevices(true);
+
+    // 加载所有设备
+    deviceApi.getDevices(1, 1000).then(response => {
+      if (response.data.code === 200 && response.data.data) {
+        setAllDevices(response.data.data.items);
+      }
+    }).catch(err => {
+      console.error('加载设备列表失败:', err);
+    }).finally(() => {
+      setLoadingAllDevices(false);
+    });
+  }, []);
+
+  // ── 关闭设备选择弹窗 ─────────────────────────────────────────────────────────
+  const closeDeviceSelector = useCallback(() => {
+    setShowDeviceSelector(false);
+    setSelectingProtocolId(null);
+    setSelectedDeviceIds(new Set());
+    setDeviceSearchKeyword('');
+    setAllDevices([]);
+  }, []);
+
+  // ── 切换设备选择 ─────────────────────────────────────────────────────────────
+  const toggleDeviceSelection = useCallback((deviceId: string) => {
+    setSelectedDeviceIds(prev => {
+      const next = new Set(prev);
+      if (next.has(deviceId)) {
+        next.delete(deviceId);
+      } else {
+        next.add(deviceId);
+      }
+      return next;
+    });
+  }, []);
+
+  // ── 添加设备到协议 ───────────────────────────────────────────────────────────
+  const handleAddDevices = useCallback(async () => {
+    if (!selectingProtocolId || selectedDeviceIds.size === 0) {
+      closeDeviceSelector();
+      return;
+    }
+
+    const protocol = protocols.find(p => p.id === selectingProtocolId);
+    if (!protocol) return;
+
+    setUpdatingDevices(true);
+    try {
+      // 合并现有设备ID和新选设备ID
+      const existingIds = protocol.deviceIds || [];
+      const newIds = Array.from(selectedDeviceIds).map(id => parseInt(id));
+      const allIds = [...new Set([...existingIds.map(id => Number(id)), ...newIds])];
+
+      const response = await protocolApi.updateProtocolConfig(selectingProtocolId, {
+        name: protocol.name,
+        type: protocol.type,
+        status: protocol.status || 'active',
+        description: protocol.description,
+        isActive: protocol.isActive,
+        config: protocol.config,
+        deviceIds: allIds,
+      });
+
+      if (response.code === 200) {
+        // 更新协议列表
+        setProtocols(prev =>
+          prev.map(p => p.id === selectingProtocolId ? { ...p, deviceIds: allIds } : p)
+        );
+        // 清除设备缓存，下次展开详情时会重新加载
+        setProtocolDevices(prev => {
+          const next = { ...prev };
+          delete next[selectingProtocolId];
+          return next;
+        });
+        closeDeviceSelector();
+        loadProtocols();
+      }
+    } catch (err) {
+      console.error('添加设备失败:', err);
+    } finally {
+      setUpdatingDevices(false);
+    }
+  }, [selectingProtocolId, selectedDeviceIds, protocols, closeDeviceSelector, loadProtocols, allDevices]);
+
+  // ── 从协议删除设备 ───────────────────────────────────────────────────────────
+  const handleRemoveDevice = useCallback(async (protocol: ProtocolConfig, deviceId: string) => {
+    const currentIds = protocol.deviceIds || [];
+    const newIds = currentIds.filter(id => String(id) !== deviceId);
+
+    setUpdatingDevices(true);
+    try {
+      const response = await protocolApi.updateProtocolConfig(protocol.id, {
+        name: protocol.name,
+        type: protocol.type,
+        status: protocol.status || 'active',
+        description: protocol.description,
+        isActive: protocol.isActive,
+        config: protocol.config,
+        deviceIds: newIds,
+      });
+
+      if (response.code === 200) {
+        // 更新协议列表
+        setProtocols(prev =>
+          prev.map(p => p.id === protocol.id ? { ...p, deviceIds: newIds } : p)
+        );
+        // 清除设备缓存，下次展开详情时会重新加载
+        setProtocolDevices(prev => {
+          const next = { ...prev };
+          delete next[protocol.id];
+          return next;
+        });
+        loadProtocols();
+      }
+    } catch (err) {
+      console.error('删除设备失败:', err);
+    } finally {
+      setUpdatingDevices(false);
+    }
+  }, [loadProtocols]);
 
   return (
     <div className="p-6 space-y-6">
@@ -196,23 +456,43 @@ export function ProtocolManagementPage() {
           </h1>
           <p className="text-slate-400 text-sm mt-1">管理物联网协议接入配置及连接状态</p>
         </div>
-        {canManage && (
+        <div className="flex items-center gap-3">
+          {/* 搜索框 */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="搜索协议名称..."
+              value={searchKeyword}
+              onChange={(e) => setSearchKeyword(e.target.value)}
+              className="w-64 bg-slate-800 border border-slate-700 text-white rounded-lg px-4 py-2 pl-10 text-sm focus:outline-none focus:border-blue-500"
+            />
+            <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          </div>
           <button
-            onClick={openAdd}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+            onClick={loadProtocols}
+            className="p-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+            title="刷新"
           >
-            <Plus className="w-4 h-4" />
-            新增协议
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
-        )}
+          {canManage && (
+            <button
+              onClick={openAdd}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              新增协议
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── 统计卡片 ──────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: '协议总数', value: protocols.length, icon: <Server className="w-5 h-5" />, color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
+          { label: '协议总数', value: totalCount, icon: <Server className="w-5 h-5" />, color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
           { label: '已连接', value: connectedCount, icon: <Wifi className="w-5 h-5" />, color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' },
-          { label: '已断开', value: protocols.filter(p => p.status === 'Disconnected').length, icon: <WifiOff className="w-5 h-5" />, color: 'text-slate-400', bg: 'bg-slate-500/10 border-slate-500/20' },
+          { label: '已断开', value: protocols.filter(p => p.status === 'inactive' || p.status === 'Disconnected').length, icon: <WifiOff className="w-5 h-5" />, color: 'text-slate-400', bg: 'bg-slate-500/10 border-slate-500/20' },
           { label: '连接异常', value: errorCount, icon: <AlertCircle className="w-5 h-5" />, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
         ].map(stat => (
           <div key={stat.label} className={`rounded-xl border p-4 ${stat.bg}`}>
@@ -225,161 +505,274 @@ export function ProtocolManagementPage() {
         ))}
       </div>
 
+      {/* ── 错误提示 ──────────────────────────────────────────────────────── */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-400">
+          {error}
+          <button onClick={() => setError(null)} className="ml-4 underline">关闭</button>
+        </div>
+      )}
+
+      {/* ── 加载状态 ──────────────────────────────────────────────────────── */}
+      {loading && (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
+          <span className="ml-3 text-slate-400">加载中...</span>
+        </div>
+      )}
+
       {/* ── 协议列表 ──────────────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        {protocols.map(protocol => (
-          <motion.div
-            key={protocol.id}
-            layout
-            className="rounded-xl border border-slate-700 bg-slate-800/60 overflow-hidden"
-          >
-            {/* 行 */}
-            <div
-              className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-slate-700/40 transition-colors"
-              onClick={() => setExpandedId(expandedId === protocol.id ? null : protocol.id)}
-            >
-              <span className="text-2xl flex-shrink-0">{getProtocolIcon(protocol.protocolType)}</span>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-white font-medium truncate">{protocol.name}</span>
-                  <span className="px-2 py-0.5 rounded-md text-xs bg-slate-700 text-slate-300">
-                    {protocol.protocolType}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 mt-1 text-xs text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <Cpu className="w-3 h-3" /> {protocol.deviceCount} 台设备
-                  </span>
-                  {protocol.lastConnectedAt && (
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> {protocol.lastConnectedAt}
-                    </span>
-                  )}
-                  {protocol.errorMessage && (
-                    <span className="text-red-400 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> {protocol.errorMessage}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 flex-shrink-0">
-                {getStatusBadge(protocol.status)}
-
-                {canManage && (
-                  <>
-                    <button
-                      onClick={e => { e.stopPropagation(); handleToggle(protocol); }}
-                      disabled={connectingId === protocol.id}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
-                        ${protocol.status === 'Connected'
-                          ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
-                          : 'bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30'
-                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {connectingId === protocol.id
-                        ? <RefreshCw className="w-3 h-3 animate-spin" />
-                        : protocol.status === 'Connected'
-                          ? <Square className="w-3 h-3" />
-                          : <Play className="w-3 h-3" />
-                      }
-                      {connectingId === protocol.id ? '连接中' : protocol.status === 'Connected' ? '停止' : '启动'}
-                    </button>
-
-                    <button
-                      onClick={e => { e.stopPropagation(); openEdit(protocol); }}
-                      className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      onClick={e => { e.stopPropagation(); setShowDeleteConfirm(protocol.id); }}
-                      className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
-
-                {expandedId === protocol.id
-                  ? <ChevronDown className="w-4 h-4 text-slate-400" />
-                  : <ChevronRight className="w-4 h-4 text-slate-400" />
-                }
-              </div>
+      {!loading && (
+        <div className="space-y-3">
+          {protocols.length === 0 ? (
+            <div className="text-center py-16 text-slate-400">
+              <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p>暂无协议配置</p>
+              {canManage && (
+                <button onClick={openAdd} className="mt-3 text-blue-400 hover:underline text-sm">
+                  + 新增协议
+                </button>
+              )}
             </div>
-
-            {/* 展开详情 */}
-            <AnimatePresence>
-              {expandedId === protocol.id && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="border-t border-slate-700 px-5 py-4 bg-slate-900/40"
+          ) : (
+            protocols.map(protocol => (
+              <motion.div
+                key={protocol.id}
+                layout
+                className="rounded-xl border border-slate-700 bg-slate-800/60 overflow-hidden"
+              >
+                {/* 行 */}
+                <div
+                  className="flex items-center gap-4 px-5 py-4 cursor-pointer hover:bg-slate-700/40 transition-colors"
+                  onClick={() => handleExpand(protocol)}
                 >
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    {protocol.host && (
-                      <div>
-                        <span className="text-slate-400 block text-xs mb-1">主机地址</span>
-                        <span className="text-white">{protocol.host}</span>
-                      </div>
-                    )}
-                    {protocol.port && (
-                      <div>
-                        <span className="text-slate-400 block text-xs mb-1">端口</span>
-                        <span className="text-white">{protocol.port}</span>
-                      </div>
-                    )}
-                    {protocol.serialPort && (
-                      <div>
-                        <span className="text-slate-400 block text-xs mb-1">串口</span>
-                        <span className="text-white">{protocol.serialPort}</span>
-                      </div>
-                    )}
-                    {protocol.baudRate && (
-                      <div>
-                        <span className="text-slate-400 block text-xs mb-1">波特率</span>
-                        <span className="text-white">{protocol.baudRate}</span>
-                      </div>
-                    )}
-                    {protocol.endpoint && (
-                      <div className="col-span-2">
-                        <span className="text-slate-400 block text-xs mb-1">端点地址</span>
-                        <span className="text-white">{protocol.endpoint}</span>
-                      </div>
-                    )}
-                    <div>
-                      <span className="text-slate-400 block text-xs mb-1">状态</span>
-                      {getStatusBadge(protocol.status)}
-                    </div>
-                    <div>
-                      <span className="text-slate-400 block text-xs mb-1">是否启用</span>
-                      <span className={protocol.enabled ? 'text-green-400' : 'text-slate-400'}>
-                        {protocol.enabled ? '已启用' : '已禁用'}
+                  {/* 协议图标 */}
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center font-bold flex-shrink-0">
+                    {getProtocolIcon(protocol.type)}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white font-medium truncate">{protocol.name}</span>
+                      <span className="px-2 py-0.5 rounded-md text-xs bg-slate-700 text-slate-300">
+                        {getProtocolLabel(protocol.type)}
                       </span>
                     </div>
+                    <div className="flex items-center gap-4 mt-1 text-xs text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {protocol.deviceIds?.length || 0} 台设备
+                      </span>
+                      {protocol.updatedAt && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {adaptDateFromBackend(protocol.updatedAt)}
+                        </span>
+                      )}
+                      {protocol.description && (
+                        <span className="truncate max-w-xs">{protocol.description}</span>
+                      )}
+                    </div>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        ))}
 
-        {protocols.length === 0 && (
-          <div className="text-center py-16 text-slate-400">
-            <Globe className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>暂无协议配置</p>
-            {canManage && (
-              <button onClick={openAdd} className="mt-3 text-blue-400 hover:underline text-sm">
-                + 新增协议
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {getStatusBadge(protocol.status)}
+
+                    {canManage && (
+                      <>
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggle(protocol); }}
+                          disabled={connectingId === protocol.id}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                            ${protocol.status === 'active' || protocol.status === 'Connected'
+                              ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30'
+                              : 'bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30'
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {connectingId === protocol.id
+                            ? <RefreshCw className="w-3 h-3 animate-spin" />
+                            : protocol.status === 'active' || protocol.status === 'Connected'
+                              ? <Square className="w-3 h-3" />
+                              : <Play className="w-3 h-3" />
+                          }
+                          {connectingId === protocol.id ? '处理中' : (protocol.status === 'active' || protocol.status === 'Connected') ? '停止' : '启动'}
+                        </button>
+
+                        <button
+                          onClick={e => { e.stopPropagation(); openEdit(protocol); }}
+                          className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={e => { e.stopPropagation(); setShowDeleteConfirm(protocol.id); }}
+                          className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+
+                    {expandedId === protocol.id
+                      ? <ChevronDown className="w-4 h-4 text-slate-400" />
+                      : <ChevronRight className="w-4 h-4 text-slate-400" />
+                    }
+                  </div>
+                </div>
+
+                {/* 展开详情 */}
+                <AnimatePresence>
+                  {expandedId === protocol.id && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="border-t border-slate-700 px-5 py-4 bg-slate-900/40"
+                    >
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        {protocol.config && (
+                          <>
+                            {getConfigValue(protocol.config as Record<string, unknown>, 'host') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">主机地址</span>
+                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'host')}</span>
+                              </div>
+                            )}
+                            {getConfigValue(protocol.config as Record<string, unknown>, 'port') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">端口</span>
+                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'port')}</span>
+                              </div>
+                            )}
+                            {getConfigValue(protocol.config as Record<string, unknown>, 'endpoint') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">端点地址</span>
+                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'endpoint')}</span>
+                              </div>
+                            )}
+                            {getConfigValue(protocol.config as Record<string, unknown>, 'serialPort') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">串口</span>
+                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'serialPort')}</span>
+                              </div>
+                            )}
+                            {getConfigValue(protocol.config as Record<string, unknown>, 'baudRate') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">波特率</span>
+                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'baudRate')}</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        <div>
+                          <span className="text-slate-400 block text-xs mb-1">状态</span>
+                          {getStatusBadge(protocol.status)}
+                        </div>
+                        <div>
+                          <span className="text-slate-400 block text-xs mb-1">是否启用</span>
+                          <span className={protocol.isActive ? 'text-green-400' : 'text-slate-400'}>
+                            {protocol.isActive ? '已启用' : '已禁用'}
+                          </span>
+                        </div>
+                        {protocol.description && (
+                          <div className="col-span-2">
+                            <span className="text-slate-400 block text-xs mb-1">描述</span>
+                            <span className="text-white">{protocol.description}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 关联设备列表 */}
+                      <div className="mt-4 pt-4 border-t border-slate-700">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <Cpu className="w-4 h-4 text-blue-400" />
+                            <span className="text-sm text-slate-300 font-medium">关联设备</span>
+                            <span className="text-xs text-slate-500">
+                              ({protocol.deviceIds?.length || 0} 台)
+                            </span>
+                          </div>
+                          {canManage && (
+                            <button
+                              onClick={() => openDeviceSelector(protocol)}
+                              disabled={updatingDevices}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              <Plus className="w-3 h-3" />
+                              添加设备
+                            </button>
+                          )}
+                        </div>
+                        {loadingDevices === protocol.id || updatingDevices ? (
+                          <div className="flex items-center gap-2 py-3">
+                            <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                            <span className="text-sm text-slate-400">加载关联设备...</span>
+                          </div>
+                        ) : protocolDevices[protocol.id]?.length ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {protocolDevices[protocol.id].map(device => (
+                              <div
+                                key={device.id}
+                                className="relative px-3 py-2.5 bg-slate-800/60 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors group"
+                              >
+                                {canManage && (
+                                  <button
+                                    onClick={() => handleRemoveDevice(protocol, device.id)}
+                                    disabled={updatingDevices}
+                                    className="absolute top-2 right-2 p-1 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
+                                    title="移除设备"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <div className="flex items-start gap-3">
+                                  <div className="w-8 h-8 rounded-md bg-slate-700 flex items-center justify-center flex-shrink-0">
+                                    <Monitor className="w-4 h-4 text-slate-400" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-white font-medium truncate pr-6">{device.name}</p>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <Folder className="w-3 h-3 text-slate-500" />
+                                      <span className="text-xs text-slate-500 truncate">
+                                        {device.projectName || '未分配项目'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <MapPin className="w-3 h-3 text-slate-500" />
+                                      <span className="text-xs text-slate-500 truncate">
+                                        {device.areaName || '未分配区域'}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1.5">
+                                      <span className={`px-1.5 py-0.5 rounded text-xs ${
+                                        device.status === 'online'
+                                          ? 'bg-green-500/20 text-green-400'
+                                          : device.status === 'warning'
+                                          ? 'bg-yellow-500/20 text-yellow-400'
+                                          : 'bg-slate-600/50 text-slate-400'
+                                      }`}>
+                                        {device.status === 'online' ? '在线' : device.status === 'warning' ? '警告' : device.status === 'offline' ? '离线' : device.status}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-slate-500 py-4 text-center">
+                            {protocol.deviceIds?.length ? '无法加载设备信息' : '暂无关联设备'}
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* ── 新增/编辑弹窗 ──────────────────────────────────────────────────── */}
       <AnimatePresence>
@@ -409,6 +802,7 @@ export function ProtocolManagementPage() {
               </div>
 
               <div className="space-y-4">
+                {/* 协议名称 */}
                 <div>
                   <label className="text-sm text-slate-300 mb-1 block">协议名称 *</label>
                   <input
@@ -419,99 +813,96 @@ export function ProtocolManagementPage() {
                   />
                 </div>
 
+                {/* 协议类型 */}
                 <div>
                   <label className="text-sm text-slate-300 mb-1 block">协议类型 *</label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     {PROTOCOL_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
-                        onClick={() => setForm(f => ({ ...f, protocolType: opt.value }))}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors
-                          ${form.protocolType === opt.value
+                        onClick={() => setForm(f => ({ 
+                          ...f, 
+                          type: opt.value,
+                          config: { ...f.config, protocolType: opt.value }
+                        }))}
+                        className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors
+                          ${form.type === opt.value
                             ? 'border-blue-500 bg-blue-500/20 text-blue-300'
                             : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
                           }`}
                       >
-                        <span>{opt.icon}</span> {opt.label}
+                        <span className="w-6 h-6 rounded bg-slate-700 flex items-center justify-center text-xs">{opt.icon}</span>
+                        {opt.label}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* MQTT / ModbusTCP 字段 */}
-                {(form.protocolType === 'MQTT' || form.protocolType === 'ModbusTCP') && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-sm text-slate-300 mb-1 block">主机地址</label>
-                      <input
-                        value={form.host ?? ''}
-                        onChange={e => setForm(f => ({ ...f, host: e.target.value }))}
-                        placeholder="192.168.1.100"
-                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm text-slate-300 mb-1 block">端口</label>
-                      <input
-                        type="number"
-                        value={form.port ?? ''}
-                        onChange={e => setForm(f => ({ ...f, port: Number(e.target.value) }))}
-                        placeholder={form.protocolType === 'MQTT' ? '1883' : '502'}
-                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* ModbusRTU 字段 */}
-                {form.protocolType === 'ModbusRTU' && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-sm text-slate-300 mb-1 block">串口</label>
-                      <input
-                        value={form.serialPort ?? ''}
-                        onChange={e => setForm(f => ({ ...f, serialPort: e.target.value }))}
-                        placeholder="COM3 / /dev/ttyUSB0"
-                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm text-slate-300 mb-1 block">波特率</label>
-                      <select
-                        value={form.baudRate ?? 9600}
-                        onChange={e => setForm(f => ({ ...f, baudRate: Number(e.target.value) }))}
-                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                      >
-                        {[2400, 4800, 9600, 19200, 38400, 57600, 115200].map(b => (
-                          <option key={b} value={b}>{b}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {/* OpcUA 字段 */}
-                {form.protocolType === 'OpcUA' && (
+                {/* 连接配置 */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-sm text-slate-300 mb-1 block">端点地址</label>
+                    <label className="text-sm text-slate-300 mb-1 block">主机地址</label>
                     <input
-                      value={form.endpoint ?? ''}
-                      onChange={e => setForm(f => ({ ...f, endpoint: e.target.value }))}
-                      placeholder="opc.tcp://192.168.1.50:4840"
+                      value={getConfigValue(form.config as Record<string, unknown> | undefined, 'host')}
+                      onChange={e => setForm(f => ({ 
+                        ...f, 
+                        config: { ...f.config, host: e.target.value }
+                      }))}
+                      placeholder="192.168.1.100"
                       className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                     />
                   </div>
-                )}
+                  <div>
+                    <label className="text-sm text-slate-300 mb-1 block">端口</label>
+                    <input
+                      type="number"
+                      value={getConfigValue(form.config as Record<string, unknown> | undefined, 'port')}
+                      onChange={e => setForm(f => ({ 
+                        ...f, 
+                        config: { ...f.config, port: e.target.value }
+                      }))}
+                      placeholder="1883"
+                      className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
 
+                {/* 端点地址 */}
+                <div>
+                  <label className="text-sm text-slate-300 mb-1 block">端点地址</label>
+                  <input
+                    value={getConfigValue(form.config as Record<string, unknown> | undefined, 'endpoint')}
+                    onChange={e => setForm(f => ({ 
+                      ...f, 
+                      config: { ...f.config, endpoint: e.target.value }
+                    }))}
+                    placeholder="opc.tcp://192.168.1.50:4840"
+                    className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                {/* 描述 */}
+                <div>
+                  <label className="text-sm text-slate-300 mb-1 block">描述</label>
+                  <textarea
+                    value={form.description ?? ''}
+                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="请输入协议描述"
+                    rows={2}
+                    className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none"
+                  />
+                </div>
+
+                {/* 启用状态 */}
                 <div className="flex items-center gap-2">
                   <input
-                    id="enabled-toggle"
+                    id="status-toggle"
                     type="checkbox"
-                    checked={form.enabled ?? true}
-                    onChange={e => setForm(f => ({ ...f, enabled: e.target.checked }))}
+                    checked={form.isActive ?? true}
+                    onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))}
                     className="w-4 h-4 accent-blue-500"
                   />
-                  <label htmlFor="enabled-toggle" className="text-sm text-slate-300">创建后立即启用</label>
+                  <label htmlFor="status-toggle" className="text-sm text-slate-300">启用此协议</label>
                 </div>
               </div>
 
@@ -524,11 +915,20 @@ export function ProtocolManagementPage() {
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={!form.name}
+                  disabled={!form.name || !form.type || saving}
                   className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
-                  <Save className="w-4 h-4" />
-                  {editTarget ? '保存修改' : '创建协议'}
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      保存中...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      {editTarget ? '保存修改' : '创建协议'}
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>
@@ -571,10 +971,189 @@ export function ProtocolManagementPage() {
                 </button>
                 <button
                   onClick={() => handleDelete(showDeleteConfirm)}
-                  className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                  disabled={deleting}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
+                  {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
                   确认删除
                 </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── 设备选择弹窗 ──────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showDeviceSelector && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={closeDeviceSelector}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* 弹窗头部 */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-blue-400" />
+                  选择设备
+                </h2>
+                <button onClick={closeDeviceSelector} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 搜索框 */}
+              <div className="px-5 py-3 border-b border-slate-700">
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="搜索设备名称..."
+                    value={deviceSearchKeyword}
+                    onChange={(e) => setDeviceSearchKeyword(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 pl-10 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                  <Monitor className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                </div>
+              </div>
+
+              {/* 设备列表 */}
+              <div className="flex-1 overflow-y-auto px-5 py-3">
+                {loadingAllDevices ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+                    <span className="ml-2 text-slate-400">加载设备中...</span>
+                  </div>
+                ) : allDevices.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <Monitor className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                    <p>暂无可用设备</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {allDevices
+                      .filter(device => {
+                        if (!deviceSearchKeyword) return true;
+                        const keyword = deviceSearchKeyword.toLowerCase();
+                        return (
+                          device.name?.toLowerCase().includes(keyword) ||
+                          device.serialNumber?.toLowerCase().includes(keyword) ||
+                          device.projectName?.toLowerCase().includes(keyword) ||
+                          device.areaName?.toLowerCase().includes(keyword)
+                        );
+                      })
+                      .map(device => {
+                        const isSelected = selectedDeviceIds.has(device.id);
+                        const isAlreadyLinked = selectingProtocolId !== null &&
+                          protocols.find(p => p.id === selectingProtocolId)?.deviceIds?.map(id => String(id)).includes(device.id);
+
+                        return (
+                          <div
+                            key={device.id}
+                            onClick={() => !isAlreadyLinked && toggleDeviceSelection(device.id)}
+                            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                              isAlreadyLinked
+                                ? 'opacity-50 cursor-not-allowed bg-slate-800/30'
+                                : isSelected
+                                ? 'bg-blue-500/20 border border-blue-500/40'
+                                : 'hover:bg-slate-700/50'
+                            }`}
+                          >
+                            {/* checkbox */}
+                            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                              isAlreadyLinked
+                                ? 'border-slate-600 bg-slate-700'
+                                : isSelected
+                                ? 'border-blue-500 bg-blue-500'
+                                : 'border-slate-500'
+                            }`}>
+                              {(isSelected || isAlreadyLinked) && <Check className="w-3 h-3 text-white" />}
+                            </div>
+
+                            {/* 设备信息 */}
+                            <div className="w-8 h-8 rounded-md bg-slate-700 flex items-center justify-center flex-shrink-0">
+                              <Monitor className="w-4 h-4 text-slate-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm text-white truncate">{device.name}</p>
+                                {isAlreadyLinked && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs bg-slate-600/50 text-slate-400">
+                                    已关联
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+                                {device.projectName && (
+                                  <span className="flex items-center gap-1">
+                                    <Folder className="w-3 h-3" />
+                                    {device.projectName}
+                                  </span>
+                                )}
+                                {device.areaName && (
+                                  <span className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />
+                                    {device.areaName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* 状态 */}
+                            <span className={`px-1.5 py-0.5 rounded text-xs flex-shrink-0 ${
+                              device.status === 'online'
+                                ? 'bg-green-500/20 text-green-400'
+                                : device.status === 'warning'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-slate-600/50 text-slate-400'
+                            }`}>
+                              {device.status === 'online' ? '在线' : device.status === 'warning' ? '警告' : device.status === 'offline' ? '离线' : device.status}
+                            </span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              {/* 底部按钮 */}
+              <div className="flex items-center justify-between px-5 py-4 border-t border-slate-700">
+                <div className="text-sm text-slate-400">
+                  已选择 <span className="text-blue-400 font-medium">{selectedDeviceIds.size}</span> 台设备
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={closeDeviceSelector}
+                    className="px-4 py-2 text-sm text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleAddDevices}
+                    disabled={selectedDeviceIds.size === 0 || updatingDevices}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {updatingDevices ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        添加中...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        确认添加 ({selectedDeviceIds.size})
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </motion.div>

@@ -139,7 +139,8 @@ public class MappingProfile : Profile
         CreateMap<CreateAreaRequest, Area>()
             .ForMember(dest => dest.DeviceCount, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
-            .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
+            .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore())
+            .ForMember(dest => dest.AppCode, opt => opt.MapFrom(src => src.AppCode));
 
         CreateMap<UpdateAreaRequest, Area>()
             .ForMember(dest => dest.Type, opt => opt.Ignore())
@@ -155,7 +156,9 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.CustomerName, opt => opt.MapFrom(src => src.Customer != null ? src.Customer.Name : null));
 
         CreateMap<Area, AreaTreeNodeDto>()
-            .ForMember(dest => dest.Children, opt => opt.MapFrom(src => src.Children));
+            .ForMember(dest => dest.Children, opt => opt.MapFrom(src => src.Children))
+            .ForMember(dest => dest.AppCode, opt => opt.MapFrom(src => src.AppCode))
+            .ForMember(dest => dest.CustomerId, opt => opt.MapFrom(src => src.CustomerId));
     }
 
     private void ConfigureDeviceMappings()

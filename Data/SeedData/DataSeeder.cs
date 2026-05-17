@@ -52,7 +52,12 @@ namespace IoTPlatform.Data.SeedData
                 );
                 await seedUsers.InitializeAsync(context);
 
-                // 字典初始化
+                // 字典初始化 - 先初始化类型，再初始化项
+                var seedDictionaryTypes = new SeedDictionaryTypes(
+                    _serviceProvider.GetRequiredService<ILogger<SeedDictionaryTypes>>()
+                );
+                await seedDictionaryTypes.InitializeAsync(context);
+
                 var seedDictionaries = new SeedDictionaries(
                     _serviceProvider.GetRequiredService<ILogger<SeedDictionaries>>()
                 );
@@ -107,15 +112,42 @@ namespace IoTPlatform.Data.SeedData
         {
             _logger.LogWarning("正在清空数据库表（仅开发环境）...");
 
-            // 按依赖关系顺序删除数据
-            context.Users.RemoveRange(context.Users);
-            context.Roles.RemoveRange(context.Roles);
-            context.Customers.RemoveRange(context.Customers);
-            context.DictionaryItems.RemoveRange(context.DictionaryItems);
+            // 为避免外键约束阻止清空表，在开发环境临时禁用外键检查
+            try
+            {
+                await context.Database.ExecuteSqlRawAsync("SET FOREIGN_KEY_CHECKS=0;");
 
-            await context.SaveChangesAsync();
+                // 使用模型中的表名逐表删除数据（顺序不重要，因为外键检查已禁用）
+                var entityTypes = context.Model.GetEntityTypes();
+                foreach (var et in entityTypes)
+                {
+                    var tableName = et.GetTableName();
+                    if (string.IsNullOrEmpty(tableName)) continue;
+                    try
+                    {
+                        await context.Database.ExecuteSqlRawAsync($"DELETE FROM `{tableName}`;");
+                    }
+                    catch (Exception ex)
+                    {
+                        // 记录但继续尝试删除其他表
+                        _logger.LogWarning(ex, "删除表 {Table} 时发生错误", tableName);
+                    }
+                }
 
-            _logger.LogWarning("数据库清空完成");
+                await context.Database.ExecuteSqlRawAsync("SET FOREIGN_KEY_CHECKS=1;");
+
+                _logger.LogWarning("数据库清空完成");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "清空数据库时发生错误");
+                try
+                {
+                    await context.Database.ExecuteSqlRawAsync("SET FOREIGN_KEY_CHECKS=1;");
+                }
+                catch { }
+                throw;
+            }
         }
 
         /// <summary>

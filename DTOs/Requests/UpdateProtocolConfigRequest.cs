@@ -13,6 +13,7 @@ public class UpdateProtocolConfigRequest
 
     [MaxLength(20)]
     public string Status { get; set; } = string.Empty; // active, inactive
+    public bool IsActive { get; set; }
 
     [MaxLength(500)]
     public string? Description { get; set; }

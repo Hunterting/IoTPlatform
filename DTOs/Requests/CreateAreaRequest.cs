@@ -22,6 +22,9 @@ public class CreateAreaRequest
 
     public long? CustomerId { get; set; }
 
+    [MaxLength(100, ErrorMessage = "应用编码长度不能超过100字符")]
+    public string? AppCode { get; set; }
+
     [MaxLength(500, ErrorMessage = "描述长度不能超过500字符")]
     public string? Description { get; set; }
 

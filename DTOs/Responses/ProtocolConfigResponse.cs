@@ -9,6 +9,7 @@ public class ProtocolConfigDto
     public string Name { get; set; } = string.Empty;
     public string Type { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
     public List<long>? DeviceIds { get; set; }
     public string? DeviceIdsJson { get; set; } // 内部使用，用于表达式树查询
     public Dictionary<string, object>? Config { get; set; }

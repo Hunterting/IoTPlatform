@@ -4,19 +4,22 @@ import {
   Cpu, Terminal, Play, X, RefreshCw, Clock, CheckCircle2,
   XCircle, Send, RotateCcw, Ban, ChevronRight, ChevronDown,
   Zap, Power, Wrench, Upload, Hash, List, Filter, Search,
-  Activity, AlertCircle, History,
+  Activity, AlertCircle, History, Loader2,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS } from '@/app/config/permissions';
 import { deviceCommandApi } from '@/app/services/api/deviceCommandApi';
+import { deviceApi } from '@/app/services/api/deviceApi';
 import type {
   DeviceCommandDto,
   CommandHistoryDto,
   CommandStatus,
   SendCommandRequest,
 } from '@/app/services/api/types/deviceCommand.types';
+import type { DeviceDto } from '@/app/services/api/types/device.types';
 
-// ── Mock 设备数据（对接真实 DevicesContext 时替换） ──────────────────────────
+// ── 设备类型映射 ──────────────────────────────────────────────────────────────
+// 使用后端 DeviceDto 类型，映射为前端需要的格式
 interface SimpleDevice {
   id: number;
   name: string;
@@ -27,13 +30,20 @@ interface SimpleDevice {
   protocolType: string;
 }
 
-const MOCK_DEVICES: SimpleDevice[] = [
-  { id: 1, name: '冷藏柜 SR-F520BX', serialNumber: 'SN-001', model: 'SR-F520BX', status: 'online', location: '中央厨房', protocolType: 'MQTT' },
-  { id: 2, name: '空调机组 AHU-01', serialNumber: 'SN-002', model: 'AHU-01', status: 'online', location: '一楼大厅', protocolType: 'ModbusTCP' },
-  { id: 3, name: '变频水泵 VFP-01', serialNumber: 'SN-003', model: 'VFP-01', status: 'warning', location: '地下机房', protocolType: 'ModbusTCP' },
-  { id: 4, name: '工业相机 CAM-04', serialNumber: 'SN-004', model: 'CAM-04', status: 'offline', location: '生产车间', protocolType: 'OpcUA' },
-  { id: 5, name: '温湿度传感器 TH-05', serialNumber: 'SN-005', model: 'TH-05', status: 'online', location: '仓储区', protocolType: 'MQTT' },
-];
+// 将 DeviceDto 映射为 SimpleDevice
+function mapDeviceToSimple(d: DeviceDto): SimpleDevice {
+  return {
+    id: Number(d.id),
+    name: d.name,
+    serialNumber: d.serialNumber || d.id,
+    model: d.model || '-',
+    status: (d.status === 'online' || d.status === 'offline' || d.status === 'warning')
+      ? d.status
+      : (d.status === 'error' ? 'warning' : 'offline'),
+    location: d.location || d.areaName || '-',
+    protocolType: d.category || '未知',
+  };
+}
 
 // ── 指令类型 ──────────────────────────────────────────────────────────────────
 interface CommandTemplate {
@@ -109,32 +119,7 @@ const COMMAND_TEMPLATES: CommandTemplate[] = [
   },
 ];
 
-// ── Mock 指令历史（模拟 API 返回）─────────────────────────────────────────────
-const MOCK_COMMANDS: DeviceCommandDto[] = [
-  {
-    id: 1001, appCode: 'demo', deviceId: 1, deviceName: '冷藏柜 SR-F520BX',
-    commandType: 'switch', parameters: '{"action":"on"}',
-    status: 'Success', createdAt: '2026-04-30 08:10:00', completedAt: '2026-04-30 08:10:02',
-    result: '设备已开启', retryCount: 0,
-  },
-  {
-    id: 1002, appCode: 'demo', deviceId: 2, deviceName: '空调机组 AHU-01',
-    commandType: 'setParam', parameters: '{"paramName":"setpoint","paramValue":"22"}',
-    status: 'Success', createdAt: '2026-04-30 08:30:00', completedAt: '2026-04-30 08:30:05',
-    result: '参数已更新', retryCount: 0,
-  },
-  {
-    id: 1003, appCode: 'demo', deviceId: 3, deviceName: '变频水泵 VFP-01',
-    commandType: 'restart', parameters: '{"delaySeconds":5}',
-    status: 'Failed', createdAt: '2026-04-30 09:00:00',
-    errorMessage: '设备离线，指令发送失败', retryCount: 1,
-  },
-  {
-    id: 1004, appCode: 'demo', deviceId: 1, deviceName: '冷藏柜 SR-F520BX',
-    commandType: 'setParam', parameters: '{"paramName":"temperature_threshold","paramValue":"5"}',
-    status: 'Pending', createdAt: '2026-04-30 09:15:00', retryCount: 0,
-  },
-];
+
 
 // ── 辅助函数 ───────────────────────────────────────────────────────────────────
 function getStatusBadge(status: CommandStatus) {
@@ -181,12 +166,19 @@ export function DeviceControlPage() {
   const [selectedDevice, setSelectedDevice] = useState<SimpleDevice | null>(null);
   const [commandsForDevice, setCommandsForDevice] = useState<DeviceCommandDto[]>([]);
 
+  // 设备和指令数据
+  const [devices, setDevices] = useState<SimpleDevice[]>([]);
+  const [devicesLoading, setDevicesLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState<string | null>(null);
+  const [allCommands, setAllCommands] = useState<DeviceCommandDto[]>([]);
+  const [commandsLoading, setCommandsLoading] = useState(false);
+
   // 指令历史
-  const [allCommands, setAllCommands] = useState<DeviceCommandDto[]>(MOCK_COMMANDS);
   const [historySearch, setHistorySearch] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
   const [expandedCommandId, setExpandedCommandId] = useState<number | null>(null);
   const [commandHistories, setCommandHistories] = useState<Record<number, CommandHistoryDto[]>>({});
+  const [loadingHistoryId, setLoadingHistoryId] = useState<number | null>(null);
 
   // 发送指令弹窗
   const [showSendModal, setShowSendModal] = useState(false);
@@ -200,8 +192,57 @@ export function DeviceControlPage() {
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<number[]>([]);
   const [batchMode, setBatchMode] = useState(false);
 
+  // ── 加载设备列表 ─────────────────────────────────────────────────────────────
+  const loadDevices = useCallback(async () => {
+    setDevicesLoading(true);
+    setDevicesError(null);
+    try {
+      const response = await deviceApi.getDevices(1, 100);
+      if (response.data.success && response.data.data) {
+        const deviceList = response.data.data.items || [];
+        setDevices(deviceList.map(mapDeviceToSimple));
+      }
+    } catch (err) {
+      console.error('加载设备列表失败:', err);
+      setDevicesError('加载设备列表失败');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, []);
+
+  // ── 加载指令历史 ─────────────────────────────────────────────────────────────
+  const loadCommands = useCallback(async () => {
+    setCommandsLoading(true);
+    try {
+      const response = await deviceCommandApi.getCommands({ page: 1, pageSize: 50 });
+      if (response.data.success && response.data.data) {
+        const items = response.data.data.items || [];
+        setAllCommands(items);
+      }
+    } catch (err) {
+      console.error('加载指令历史失败:', err);
+    } finally {
+      setCommandsLoading(false);
+    }
+  }, []);
+
+  // 初始加载
+  useEffect(() => {
+    loadDevices();
+    if (canView) {
+      loadCommands();
+    }
+  }, [loadDevices, loadCommands, canView]);
+
+  // 切换到历史 Tab 时刷新
+  useEffect(() => {
+    if (activeTab === 'history' && allCommands.length === 0) {
+      loadCommands();
+    }
+  }, [activeTab, loadCommands, allCommands.length]);
+
   // ── 筛选设备 ─────────────────────────────────────────────────────────────────
-  const filteredDevices = MOCK_DEVICES.filter(d => {
+  const filteredDevices = devices.filter(d => {
     const matchSearch = d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       d.serialNumber.toLowerCase().includes(searchTerm.toLowerCase());
     const matchStatus = statusFilter === 'all' || d.status === statusFilter;
@@ -260,56 +301,50 @@ export function DeviceControlPage() {
         timeoutSeconds: timeoutSec,
       };
 
-      // 实际环境调用 deviceCommandApi.sendCommand(request)
-      // 当前使用 mock 返回
-      await new Promise(r => setTimeout(r, 800));
-      const newCmd: DeviceCommandDto = {
-        id: Date.now(),
-        appCode: 'demo',
-        deviceId: selectedDevice.id,
-        deviceName: selectedDevice.name,
-        commandType: selectedTemplate.type,
-        parameters: JSON.stringify(parameters),
-        status: 'Pending',
-        createdAt: new Date().toLocaleString('zh-CN'),
-        retryCount: 0,
-      };
-      setAllCommands(prev => [newCmd, ...prev]);
-      setSendResult({ success: true, message: `指令已发送，ID: ${newCmd.id}` });
-    } catch (err) {
-      setSendResult({ success: false, message: err instanceof Error ? err.message : '发送失败' });
+      // 调用真实 API
+      const response = await deviceCommandApi.sendCommand(request);
+      if (response.data.success) {
+        // 刷新指令列表
+        await loadCommands();
+        setSendResult({ success: true, message: `指令已发送成功` });
+      } else {
+        setSendResult({ success: false, message: response.data.message || '发送失败' });
+      }
+    } catch (err: any) {
+      setSendResult({ success: false, message: err?.response?.data?.message || err?.message || '发送失败' });
     } finally {
       setSending(false);
     }
-  }, [selectedDevice, selectedTemplate, paramValues, timeoutSec]);
+  }, [selectedDevice, selectedTemplate, paramValues, timeoutSec, loadCommands]);
 
   // ── 取消指令 ─────────────────────────────────────────────────────────────────
   const handleCancel = async (commandId: number) => {
     try {
-      // await deviceCommandApi.cancelCommand(commandId);
-      setAllCommands(prev =>
-        prev.map(c => c.id === commandId
-          ? { ...c, status: 'Failed' as CommandStatus, errorMessage: '已手动取消' }
-          : c
-        )
-      );
+      const response = await deviceCommandApi.cancelCommand(commandId);
+      if (response.data.success) {
+        // 更新本地状态
+        setAllCommands(prev =>
+          prev.map(c => c.id === commandId
+            ? { ...c, status: 'Failed' as CommandStatus, errorMessage: '已手动取消' }
+            : c
+          )
+        );
+      }
     } catch (err) {
-      console.error(err);
+      console.error('取消指令失败:', err);
     }
   };
 
   // ── 重试指令 ─────────────────────────────────────────────────────────────────
   const handleRetry = async (commandId: number) => {
     try {
-      // await deviceCommandApi.retryCommand(commandId);
-      setAllCommands(prev =>
-        prev.map(c => c.id === commandId
-          ? { ...c, status: 'Pending' as CommandStatus, retryCount: c.retryCount + 1 }
-          : c
-        )
-      );
+      const response = await deviceCommandApi.retryCommand(commandId);
+      if (response.data.success) {
+        // 刷新指令列表
+        await loadCommands();
+      }
     } catch (err) {
-      console.error(err);
+      console.error('重试指令失败:', err);
     }
   };
 
@@ -321,12 +356,17 @@ export function DeviceControlPage() {
     }
     setExpandedCommandId(commandId);
     if (!commandHistories[commandId]) {
-      // await deviceCommandApi.getCommandHistory(commandId) 的 mock
-      const mockHistory: CommandHistoryDto[] = [
-        { id: 1, commandId, type: 'Created', description: '指令已创建', createdAt: '2026-04-30 09:00:00' },
-        { id: 2, commandId, type: 'Sent', description: '指令已通过 MQTT 发送', createdAt: '2026-04-30 09:00:01' },
-      ];
-      setCommandHistories(prev => ({ ...prev, [commandId]: mockHistory }));
+      setLoadingHistoryId(commandId);
+      try {
+        const response = await deviceCommandApi.getCommandHistory(commandId);
+        if (response.data.success && response.data.data) {
+          setCommandHistories(prev => ({ ...prev, [commandId]: response.data.data }));
+        }
+      } catch (err) {
+        console.error('加载指令历史失败:', err);
+      } finally {
+        setLoadingHistoryId(null);
+      }
     }
   };
 
@@ -414,7 +454,30 @@ export function DeviceControlPage() {
 
           {/* 设备卡片 */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filteredDevices.map(device => (
+            {/* 加载状态 */}
+            {devicesLoading && (
+              <div className="col-span-3 flex flex-col items-center justify-center py-16 text-slate-400">
+                <Loader2 className="w-8 h-8 animate-spin mb-3 text-blue-400" />
+                <p>加载设备列表...</p>
+              </div>
+            )}
+
+            {/* 错误状态 */}
+            {!devicesLoading && devicesError && (
+              <div className="col-span-3 flex flex-col items-center justify-center py-16 text-slate-400">
+                <AlertCircle className="w-8 h-8 mb-3 text-red-400" />
+                <p className="mb-3">{devicesError}</p>
+                <button
+                  onClick={loadDevices}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+
+            {/* 设备列表 */}
+            {!devicesLoading && !devicesError && filteredDevices.map(device => (
               <motion.div
                 key={device.id}
                 layout
@@ -461,7 +524,7 @@ export function DeviceControlPage() {
               </motion.div>
             ))}
 
-            {filteredDevices.length === 0 && (
+            {!devicesLoading && !devicesError && filteredDevices.length === 0 && (
               <div className="col-span-3 text-center py-16 text-slate-400">
                 <Cpu className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p>没有匹配的设备</p>
@@ -501,7 +564,16 @@ export function DeviceControlPage() {
 
           {/* 指令列表 */}
           <div className="space-y-2">
-            {filteredCommands.map(cmd => (
+            {/* 加载状态 */}
+            {commandsLoading && (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                <Loader2 className="w-8 h-8 animate-spin mb-3 text-blue-400" />
+                <p>加载指令历史...</p>
+              </div>
+            )}
+
+            {/* 指令列表 */}
+            {!commandsLoading && filteredCommands.map(cmd => (
               <motion.div
                 key={cmd.id}
                 layout
@@ -568,7 +640,11 @@ export function DeviceControlPage() {
                       <p className="text-slate-400 text-xs mb-2 flex items-center gap-1">
                         <History className="w-3 h-3" /> 执行轨迹
                       </p>
-                      {commandHistories[cmd.id] ? (
+                      {loadingHistoryId === cmd.id ? (
+                        <div className="flex items-center gap-2 text-slate-500 text-xs">
+                          <RefreshCw className="w-3 h-3 animate-spin" /> 加载中...
+                        </div>
+                      ) : commandHistories[cmd.id] ? (
                         <div className="space-y-1">
                           {commandHistories[cmd.id].map((h, idx) => (
                             <div key={h.id} className="flex items-start gap-3 text-xs">
@@ -579,9 +655,7 @@ export function DeviceControlPage() {
                           ))}
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2 text-slate-500 text-xs">
-                          <RefreshCw className="w-3 h-3 animate-spin" /> 加载中...
-                        </div>
+                        <div className="text-slate-500 text-xs">暂无执行轨迹</div>
                       )}
                       <div className="mt-3 pt-3 border-t border-slate-700">
                         <p className="text-slate-400 text-xs mb-1">指令参数</p>
@@ -595,7 +669,7 @@ export function DeviceControlPage() {
               </motion.div>
             ))}
 
-            {filteredCommands.length === 0 && (
+            {!commandsLoading && filteredCommands.length === 0 && (
               <div className="text-center py-16 text-slate-400">
                 <List className="w-12 h-12 mx-auto mb-3 opacity-30" />
                 <p>暂无指令记录</p>

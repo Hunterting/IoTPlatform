@@ -98,3 +98,7 @@ export * from './authAdapter';
 export * from './customerAdapter';
 export * from './deviceAdapter';
 export * from './areaAdapter';
+export * from './userAdapter';
+export * from './roleAdapter';
+export * from './logAdapter';
+export * from './archiveAdapter';

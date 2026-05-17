@@ -88,6 +88,7 @@ public class UserService : IUserService
                         .ToList()
                     : null,
                 IsActive = user.IsActive,
+                IsSuperAdmin = user.IsSuperAdmin,
                 CreatedAt = user.CreatedAt,
                 UpdatedAt = user.UpdatedAt
             };

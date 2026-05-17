@@ -25,6 +25,8 @@ export interface AreaTreeNodeDto {
   type: string;
   parentId?: string | null; // 后端是long?，前端转为string | null
   deviceCount: number;
+  appCode?: string | null;
+  customerId?: string | null; // 后端是long?，前端转为string | null
   children?: AreaTreeNodeDto[] | null;
 }
 

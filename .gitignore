@@ -90,4 +90,4 @@ jspm_packages/
 
 # DynamoDB Local files
 .dynamodb/
-/uploads/default/contracts
+/uploads/

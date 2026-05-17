@@ -366,9 +366,9 @@ export const adaptAreaTreeNodeDtoToArea = (treeNode: AreaTreeNodeDto): any => {
     deviceCount: treeNode.deviceCount,
     children: treeNode.children?.map(child => adaptAreaTreeNodeDtoToArea(child)) || [],
     image: null, // 树节点可能没有image字段
-    customerId: null,
+    customerId: treeNode.customerId,
     customerName: null,
-    appCode: null,
+    appCode: treeNode.appCode,
     description: null,
     sortOrder: 0,
     createdAt: '',

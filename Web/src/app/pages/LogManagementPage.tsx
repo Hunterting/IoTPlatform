@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   LogIn, Activity, AlertTriangle, ClipboardCheck,
@@ -7,46 +7,31 @@ import {
   Smartphone, Globe, Shield, Cpu, Thermometer, Zap,
   TrendingUp, TrendingDown, BarChart3, Calendar,
   ChevronLeft, ChevronRight, MapPin, Bell, AlertCircle,
-  ArrowRight, Info, Play, Pause, CheckCircle2,
+  ArrowRight, Info, Play, Pause, CheckCircle2, Loader2,
 } from 'lucide-react';
 import { PageType } from '@/app/components/Sidebar';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { SHARED_ALERT_RECORDS, AlertRecord as SharedAlertRecord } from '@/app/config/sharedMockData';
+import { logApi } from '@/app/services/api';
+import { 
+  adaptOperationLogFromBackend, 
+  adaptLoginLogFromBackend,
+  formatLogTime,
+  getLoginStatusInfo,
+  getOperationStatusInfo,
+  parseUserAgent,
+  parseIpLocation,
+  calculateLoginStats,
+  calculateOperationStats
+} from '@/app/services/adapters/logAdapter';
+import { OperationLogDto, LoginLogDto, MODULE_COLORS, LOG_STATUS } from '@/app/services/api/types/log.types';
 
 interface LogManagementPageProps {
   activePage: PageType;
 }
 
 // ── Types ──────────────────────────────────────────────────────────────────────
-interface LoginLog {
-  id: string;
-  userId: string;
-  userName: string;
-  role: string;
-  loginTime: string;
-  logoutTime?: string;
-  ip: string;
-  location: string;
-  device: string;
-  browser: string;
-  status: 'success' | 'failed' | 'locked';
-  failReason?: string;
-}
-
-interface OperationLog {
-  id: string;
-  userId: string;
-  userName: string;
-  role: string;
-  time: string;
-  module: string;
-  action: string;
-  target: string;
-  detail: string;
-  ip: string;
-  status: 'success' | 'failed';
-  duration: number; // ms
-}
+// LoginLog 和 OperationLog 类型现在从 log.types.ts 导入
 
 // AlertRecord is imported from sharedMockData as SharedAlertRecord
 type AlertRecord = SharedAlertRecord;
@@ -77,32 +62,6 @@ interface ProgressStep {
 }
 
 // ── Mock Data ──────────────────────────────────────────────────────────────────
-const mockLoginLogs: LoginLog[] = [
-  { id: 'l1', userId: 'u1', userName: '张管理员', role: '超级管理员', loginTime: '2026-03-04 09:12:33', logoutTime: '2026-03-04 18:03:21', ip: '192.168.1.101', location: '北京市朝阳区', device: 'Windows PC', browser: 'Chrome 122', status: 'success' },
-  { id: 'l2', userId: 'u2', userName: '李运营', role: '运营员', loginTime: '2026-03-04 08:55:14', logoutTime: '2026-03-04 17:45:00', ip: '192.168.1.108', location: '北京市海淀区', device: 'MacBook Pro', browser: 'Safari 17', status: 'success' },
-  { id: 'l3', userId: 'u3', userName: '王工程师', role: '管理员', loginTime: '2026-03-04 10:01:05', ip: '10.0.0.55', location: '上海市浦东新区', device: 'iPhone 15', browser: 'Safari Mobile', status: 'success' },
-  { id: 'l4', userId: 'u4', userName: '赵运维', role: '运营员', loginTime: '2026-03-04 07:30:00', logoutTime: '2026-03-04 07:30:02', ip: '203.45.12.88', location: '未知地区', device: 'Unknown', browser: 'Unknown', status: 'failed', failReason: '密码错误' },
-  { id: 'l5', userId: 'u4', userName: '赵运维', role: '运营员', loginTime: '2026-03-04 07:31:15', logoutTime: '2026-03-04 07:31:15', ip: '203.45.12.88', location: '未知地区', device: 'Unknown', browser: 'Unknown', status: 'locked', failReason: '连续3次密码错误，账号已锁定' },
-  { id: 'l6', userId: 'u5', userName: '陈分析师', role: '管理员', loginTime: '2026-03-04 09:45:00', logoutTime: '2026-03-04 14:30:00', ip: '192.168.2.15', location: '广州市天河区', device: 'Windows PC', browser: 'Edge 122', status: 'success' },
-  { id: 'l7', userId: 'u1', userName: '张管理员', role: '超级管理员', loginTime: '2026-03-03 08:45:00', logoutTime: '2026-03-03 19:20:00', ip: '192.168.1.101', location: '北京市朝阳区', device: 'Windows PC', browser: 'Chrome 122', status: 'success' },
-  { id: 'l8', userId: 'u6', userName: '刘厨师长', role: '厨师长', loginTime: '2026-03-04 11:20:00', ip: '192.168.3.22', location: '北京市西城区', device: 'iPad Pro', browser: 'Safari 17', status: 'success' },
-  { id: 'l9', userId: 'u7', userName: '孙运营总监', role: '运营员', loginTime: '2026-03-04 08:10:00', logoutTime: '2026-03-04 17:00:00', ip: '192.168.1.200', location: '北京市东城区', device: 'Windows PC', browser: 'Firefox 123', status: 'success' },
-  { id: 'l10', userId: 'u2', userName: '李运营', role: '运营员', loginTime: '2026-03-03 09:00:00', logoutTime: '2026-03-03 18:30:00', ip: '192.168.1.108', location: '北京市海淀区', device: 'MacBook Pro', browser: 'Safari 17', status: 'success' },
-];
-
-const mockOperationLogs: OperationLog[] = [
-  { id: 'o1', userId: 'u1', userName: '张管理员', role: '超级管理员', time: '2026-03-04 09:15:22', module: '设备管理', action: '新增设备', target: '蒸烤箱 CVS-1000', detail: '新增设备编号 DEV-A-018，绑定区域：中央厨房', ip: '192.168.1.101', status: 'success', duration: 235 },
-  { id: 'o2', userId: 'u1', userName: '张管理员', role: '超级管理员', time: '2026-03-04 09:22:08', module: '用户管理', action: '修改用户权限', target: '李运营(u2)', detail: '将用户权限由"运营员"提升为"管理员"', ip: '192.168.1.101', status: 'success', duration: 128 },
-  { id: 'o3', userId: 'u2', userName: '李运营', role: '运营员', time: '2026-03-04 09:01:33', module: '工单管理', action: '创建工单', target: 'WO20260304001', detail: '为冷藏柜 SR-F520BX 创建故障工单：温度异常告警', ip: '192.168.1.108', status: 'success', duration: 412 },
-  { id: 'o4', userId: 'u3', userName: '王工程师', role: '管理员', time: '2026-03-04 10:05:00', module: '档案管理', action: '上传文件', target: '北京朝阳店智能化项目', detail: '上传合同文件《2026年度设备维保合同.pdf》，大小 2.3MB', ip: '10.0.0.55', status: 'success', duration: 1850 },
-  { id: 'o5', userId: 'u5', userName: '陈分析师', role: '管理员', time: '2026-03-04 09:52:17', module: '智能分析', action: '导出报告', target: '2月份设备能耗分析', detail: '导出 Excel 报告，数据范围：2026-02-01 至 2026-02-28', ip: '192.168.2.15', status: 'success', duration: 3200 },
-  { id: 'o6', userId: 'u1', userName: '张管理员', role: '超级管理员', time: '2026-03-04 10:30:45', module: '客户管理', action: '新增客户', target: '万达广场中央厨房', detail: '新增客户信息，分配应用编码 APP-2026-009', ip: '192.168.1.101', status: 'success', duration: 302 },
-  { id: 'o7', userId: 'u2', userName: '李运营', role: '运营员', time: '2026-03-04 10:15:00', module: '设备管理', action: '删除设备', target: 'DEV-B-022 旧款排烟机', detail: '设备已报废，执行删除操作', ip: '192.168.1.108', status: 'failed', duration: 89 },
-  { id: 'o8', userId: 'u3', userName: '王工程师', role: '管理员', time: '2026-03-04 11:00:22', module: '区域管理', action: '修改区域', target: '切配区', detail: '更新区域面积：从 120㎡ 修改为 135㎡', ip: '10.0.0.55', status: 'success', duration: 198 },
-  { id: 'o9', userId: 'u1', userName: '张管理员', role: '超级管理员', time: '2026-03-04 11:20:00', module: '系统设置', action: '修改告警阈值', target: '温度告警策略', detail: '冷藏区温度上限从 5°C 调整为 4°C', ip: '192.168.1.101', status: 'success', duration: 155 },
-  { id: 'o10', userId: 'u6', userName: '刘厨师长', role: '厨师长', time: '2026-03-04 11:25:10', module: '视频监控', action: '查看监控', target: '中央厨房 摄像头组', detail: '查看实时视频监控画面，时长 15 分钟', ip: '192.168.3.22', status: 'success', duration: 320 },
-];
-
 const mockAlertRecords: AlertRecord[] = SHARED_ALERT_RECORDS;
 
 const mockProcessProgress: ProcessProgress[] = [
@@ -197,38 +156,76 @@ function LoginLogsView() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'locked'>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(false);
   const pageSize = 8;
+  
+  const [loginLogs, setLoginLogs] = useState<LoginLogDto[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+
+  // 加载登录日志
+  const loadLoginLogs = useCallback(async (page: number, keyword?: string) => {
+    setLoading(true);
+    try {
+      const filters: any = {};
+      if (keyword) {
+        filters.keyword = keyword;
+      }
+      if (statusFilter !== 'all') {
+        filters.status = statusFilter;
+      }
+      
+      const response = await logApi.getLoginLogs(page, pageSize, filters);
+      
+      if (response.data?.code === 200 && response.data?.data) {
+        const adaptedLogs = response.data.data.items.map((item: any) => adaptLoginLogFromBackend(item));
+        setLoginLogs(adaptedLogs);
+        setTotalCount(response.data.data.totalCount || 0);
+      }
+    } catch (error) {
+      console.error('加载登录日志失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter]);
+
+  useEffect(() => {
+    loadLoginLogs(currentPage, search);
+  }, [loadLoginLogs, currentPage]);
 
   const filtered = useMemo(() => {
-    return mockLoginLogs.filter(l => {
-      const matchSearch = !search || l.userName.includes(search) || l.ip.includes(search) || l.location.includes(search);
+    if (!search && statusFilter === 'all') {
+      return loginLogs;
+    }
+    return loginLogs.filter(l => {
+      const matchSearch = !search || l.userName.includes(search) || l.ip.includes(search);
       const matchStatus = statusFilter === 'all' || l.status === statusFilter;
       return matchSearch && matchStatus;
     });
-  }, [search, statusFilter]);
+  }, [loginLogs, search, statusFilter]);
 
-  const totalPages = Math.ceil(filtered.length / pageSize);
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const totalPages = Math.ceil(totalCount / pageSize);
 
-  const total = mockLoginLogs.length;
-  const success = mockLoginLogs.filter(l => l.status === 'success').length;
-  const failed = mockLoginLogs.filter(l => l.status === 'failed').length;
-  const locked = mockLoginLogs.filter(l => l.status === 'locked').length;
+  // 计算统计数据
+  const stats = calculateLoginStats(loginLogs);
 
-  const statusInfo = {
-    success: { label: '成功', color: '#00c3ff', icon: <CheckCircle className="w-3 h-3" /> },
-    failed: { label: '失败', color: '#f59e0b', icon: <XCircle className="w-3 h-3" /> },
-    locked: { label: '锁定', color: '#ef4444', icon: <Shield className="w-3 h-3" /> },
+  const handleSearch = (value: string) => {
+    setSearch(value);
+    setCurrentPage(1);
+  };
+
+  const handleStatusFilter = (status: 'all' | 'success' | 'failed' | 'locked') => {
+    setStatusFilter(status);
+    setCurrentPage(1);
   };
 
   return (
     <div className="space-y-5">
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
-        {statCard(<LogIn className="w-5 h-5" />, '登录总次数', String(total), '#00c3ff', '今日')}
-        {statCard(<CheckCircle className="w-5 h-5" />, '登录成功', String(success), '#10b981', `成功率 ${Math.round(success / total * 100)}%`)}
-        {statCard(<XCircle className="w-5 h-5" />, '登录失败', String(failed), '#f59e0b', '密码错误')}
-        {statCard(<Shield className="w-5 h-5" />, '账号锁定', String(locked), '#ef4444', '安全事件')}
+        {statCard(<LogIn className="w-5 h-5" />, '登录总次数', String(stats.total), '#00c3ff', '今日')}
+        {statCard(<CheckCircle className="w-5 h-5" />, '登录成功', String(stats.success), '#10b981', `成功率 ${stats.total > 0 ? Math.round(stats.success / stats.total * 100) : 0}%`)}
+        {statCard(<XCircle className="w-5 h-5" />, '登录失败', String(stats.failed), '#f59e0b', '密码错误')}
+        {statCard(<Shield className="w-5 h-5" />, '账号锁定', String(stats.locked), '#ef4444', '安全事件')}
       </div>
 
       {/* Filters */}
@@ -238,23 +235,27 @@ function LoginLogsView() {
           <input
             className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-none"
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(0,195,255,0.15)', color: '#c0d8e8' }}
-            placeholder="搜索用户名 / IP / 地区..."
+            placeholder="搜索用户名 / IP..."
             value={search}
-            onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
+            onChange={e => handleSearch(e.target.value)}
           />
         </div>
         {(['all', 'success', 'failed', 'locked'] as const).map(s => (
           <button
             key={s}
-            onClick={() => { setStatusFilter(s); setCurrentPage(1); }}
+            onClick={() => handleStatusFilter(s)}
             className="px-4 py-2 rounded-lg text-sm transition-all"
             style={statusFilter === s ? { background: 'rgba(0,195,255,0.15)', color: '#00c3ff', border: '1px solid rgba(0,195,255,0.3)' } : { background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}
           >
             {s === 'all' ? '全部' : s === 'success' ? '成功' : s === 'failed' ? '失败' : '锁定'}
           </button>
         ))}
-        <button className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" style={{ background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <Download className="w-4 h-4" />导出
+        <button 
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" 
+          style={{ background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}
+          onClick={() => loadLoginLogs(currentPage, search)}
+        >
+          <RefreshCw className="w-4 h-4" />刷新
         </button>
       </div>
 
@@ -263,14 +264,23 @@ function LoginLogsView() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: 'rgba(0,195,255,0.06)', borderBottom: '1px solid rgba(0,195,255,0.12)' }}>
-              {['用户名', '角色', '登录时间', '退出时间', 'IP地址', '登录地区', '设备/浏览器', '状态'].map(h => (
+              {['用户名', '角色', '登录时间', 'IP地址', '设备/浏览器', '状态'].map(h => (
                 <th key={h} className="text-left px-4 py-3 font-medium" style={{ color: '#3a6e9a' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {paginated.map((log, i) => {
-              const si = statusInfo[log.status];
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-12 text-center">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-blue-400" />
+                  <p className="mt-2" style={{ color: '#5a7a90' }}>加载中...</p>
+                </td>
+              </tr>
+            ) : filtered.length > 0 ? filtered.map((log, i) => {
+              const si = getLoginStatusInfo(log.status);
+              const { device, browser } = parseUserAgent(log.userAgent);
+              const location = parseIpLocation(log.ip);
               return (
                 <motion.tr
                   key={log.id}
@@ -289,8 +299,7 @@ function LoginLogsView() {
                     </div>
                   </td>
                   <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{log.role}</td>
-                  <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{log.loginTime}</td>
-                  <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{log.logoutTime || '—'}</td>
+                  <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{formatLogTime(log.loginTime)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5">
                       <Globe className="w-3.5 h-3.5" style={{ color: '#3a6e9a' }} />
@@ -298,27 +307,22 @@ function LoginLogsView() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3.5 h-3.5" style={{ color: '#3a6e9a' }} />
-                      <span style={{ color: '#6a8ca8' }}>{log.location}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
                     <div style={{ color: '#5a7a90' }}>
                       <div className="flex items-center gap-1.5">
                         <Monitor className="w-3 h-3" />
-                        <span className="text-xs">{log.device}</span>
+                        <span className="text-xs">{device}</span>
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <Globe className="w-3 h-3" />
-                        <span className="text-xs">{log.browser}</span>
+                        <span className="text-xs">{browser}</span>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div>
                       <Badge color={si.color}>
-                        {si.icon}{si.label}
+                        {si.label === '成功' ? <CheckCircle className="w-3 h-3" /> : si.label === '失败' ? <XCircle className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
+                        {si.label}
                       </Badge>
                       {log.failReason && (
                         <p className="text-xs mt-1" style={{ color: '#ef4444' }}>{log.failReason}</p>
@@ -327,18 +331,24 @@ function LoginLogsView() {
                   </td>
                 </motion.tr>
               );
-            })}
+            }) : (
+              <tr>
+                <td colSpan={6} className="px-4 py-12 text-center" style={{ color: '#5a7a90' }}>
+                  暂无登录日志记录
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       {/* Pagination */}
       <div className="flex items-center justify-between text-sm" style={{ color: '#5a7a90' }}>
-        <span>共 {filtered.length} 条记录</span>
+        <span>共 {totalCount} 条记录</span>
         <div className="flex items-center gap-2">
-          <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="p-1.5 rounded transition-colors hover:bg-white/5 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
+          <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || loading} className="p-1.5 rounded transition-colors hover:bg-white/5 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
           <span style={{ color: '#c0d8e8' }}>{currentPage} / {totalPages || 1}</span>
-          <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="p-1.5 rounded transition-colors hover:bg-white/5 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages || loading} className="p-1.5 rounded transition-colors hover:bg-white/5 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
         </div>
       </div>
     </div>
@@ -348,39 +358,86 @@ function LoginLogsView() {
 // ── Operation Logs View ────────────────────────────────────────────────────────
 function OperationLogsView() {
   const [search, setSearch] = useState('');
-  const [moduleFilter, setModuleFilter] = useState('全部');
+  const [moduleFilter, setModuleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed'>('all');
   const [currentPage, setCurrentPage] = useState(1);
+  const [loading, setLoading] = useState(false);
   const pageSize = 8;
+  
+  const [operationLogs, setOperationLogs] = useState<OperationLogDto[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [modules, setModules] = useState<string[]>([]);
 
-  const modules = ['全部', ...Array.from(new Set(mockOperationLogs.map(l => l.module)))];
+  // 加载操作日志
+  const loadOperationLogs = useCallback(async (page: number, keyword?: string) => {
+    setLoading(true);
+    try {
+      const filters: any = {};
+      if (keyword) {
+        filters.keyword = keyword;
+      }
+      if (moduleFilter) {
+        filters.module = moduleFilter;
+      }
+      
+      const response = await logApi.getOperationLogs(page, pageSize, filters);
+      
+      if (response.data?.code === 200 && response.data?.data) {
+        const adaptedLogs = response.data.data.items.map((item: any) => adaptOperationLogFromBackend(item));
+        setOperationLogs(adaptedLogs);
+        setTotalCount(response.data.data.totalCount || 0);
+        
+        // 提取所有模块用于筛选
+        const allModules = [...new Set(adaptedLogs.map(l => l.module).filter(Boolean))];
+        setModules(allModules);
+      }
+    } catch (error) {
+      console.error('加载操作日志失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [moduleFilter]);
+
+  useEffect(() => {
+    loadOperationLogs(currentPage, search);
+  }, [loadOperationLogs, currentPage]);
 
   const filtered = useMemo(() => {
-    return mockOperationLogs.filter(l => {
+    return operationLogs.filter(l => {
       const matchSearch = !search || l.userName.includes(search) || l.action.includes(search) || l.target.includes(search);
-      const matchModule = moduleFilter === '全部' || l.module === moduleFilter;
       const matchStatus = statusFilter === 'all' || l.status === statusFilter;
-      return matchSearch && matchModule && matchStatus;
+      return matchSearch && matchStatus;
     });
-  }, [search, moduleFilter, statusFilter]);
+  }, [operationLogs, search, statusFilter]);
 
-  const totalPages = Math.ceil(filtered.length / pageSize);
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const totalPages = Math.ceil(totalCount / pageSize);
 
-  const moduleColors: Record<string, string> = {
-    '设备管理': '#00c3ff', '用户管理': '#a855f7', '工单管理': '#f59e0b',
-    '档案管理': '#10b981', '智能分析': '#3b82f6', '客户管理': '#ec4899',
-    '区域管理': '#14b8a6', '系统设置': '#6366f1', '视频监控': '#84cc16',
+  // 计算统计数据
+  const stats = calculateOperationStats(operationLogs);
+
+  const handleSearch = (value: string) => {
+    setSearch(value);
+    setCurrentPage(1);
+  };
+
+  const handleModuleFilter = (value: string) => {
+    setModuleFilter(value);
+    setCurrentPage(1);
+  };
+
+  const handleStatusFilter = (status: 'all' | 'success' | 'failed') => {
+    setStatusFilter(status);
+    setCurrentPage(1);
   };
 
   return (
     <div className="space-y-5">
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
-        {statCard(<Activity className="w-5 h-5" />, '操作总次数', String(mockOperationLogs.length), '#00c3ff', '今日')}
-        {statCard(<CheckCircle className="w-5 h-5" />, '成功操作', String(mockOperationLogs.filter(l => l.status === 'success').length), '#10b981')}
-        {statCard(<XCircle className="w-5 h-5" />, '失败操作', String(mockOperationLogs.filter(l => l.status === 'failed').length), '#ef4444')}
-        {statCard(<User className="w-5 h-5" />, '活跃用户', '5', '#a855f7', '今日')}
+        {statCard(<Activity className="w-5 h-5" />, '操作总次数', String(stats.total), '#00c3ff', '今日')}
+        {statCard(<CheckCircle className="w-5 h-5" />, '成功操作', String(stats.success), '#10b981')}
+        {statCard(<XCircle className="w-5 h-5" />, '失败操作', String(stats.failed), '#ef4444')}
+        {statCard(<User className="w-5 h-5" />, '活跃用户', String(stats.uniqueUsers), '#a855f7', '今日')}
       </div>
 
       {/* Filters */}
@@ -392,29 +449,34 @@ function OperationLogsView() {
             style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(0,195,255,0.15)', color: '#c0d8e8' }}
             placeholder="搜索用户名 / 操作 / 对象..."
             value={search}
-            onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
+            onChange={e => handleSearch(e.target.value)}
           />
         </div>
         <select
           className="px-3 py-2 rounded-lg text-sm outline-none"
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(0,195,255,0.15)', color: '#c0d8e8' }}
           value={moduleFilter}
-          onChange={e => { setModuleFilter(e.target.value); setCurrentPage(1); }}
+          onChange={e => handleModuleFilter(e.target.value)}
         >
+          <option value="" style={{ background: '#020e25' }}>全部模块</option>
           {modules.map(m => <option key={m} value={m} style={{ background: '#020e25' }}>{m}</option>)}
         </select>
         {(['all', 'success', 'failed'] as const).map(s => (
           <button
             key={s}
-            onClick={() => { setStatusFilter(s); setCurrentPage(1); }}
+            onClick={() => handleStatusFilter(s)}
             className="px-4 py-2 rounded-lg text-sm transition-all"
             style={statusFilter === s ? { background: 'rgba(0,195,255,0.15)', color: '#00c3ff', border: '1px solid rgba(0,195,255,0.3)' } : { background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}
           >
             {s === 'all' ? '全部' : s === 'success' ? '成功' : '失败'}
           </button>
         ))}
-        <button className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm" style={{ background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}>
-          <Download className="w-4 h-4" />导出
+        <button 
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all" 
+          style={{ background: 'rgba(255,255,255,0.04)', color: '#5a7a90', border: '1px solid rgba(255,255,255,0.08)' }}
+          onClick={() => loadOperationLogs(currentPage, search)}
+        >
+          <RefreshCw className="w-4 h-4" />刷新
         </button>
       </div>
 
@@ -429,7 +491,14 @@ function OperationLogsView() {
             </tr>
           </thead>
           <tbody>
-            {paginated.map((log, i) => (
+            {loading ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-12 text-center">
+                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-blue-400" />
+                  <p className="mt-2" style={{ color: '#5a7a90' }}>加载中...</p>
+                </td>
+              </tr>
+            ) : filtered.length > 0 ? filtered.map((log, i) => (
               <motion.tr
                 key={log.id}
                 initial={{ opacity: 0 }}
@@ -438,7 +507,7 @@ function OperationLogsView() {
                 className="border-b transition-colors hover:bg-white/5"
                 style={{ borderColor: 'rgba(0,195,255,0.06)' }}
               >
-                <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{log.time}</td>
+                <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{formatLogTime(log.time)}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: 'rgba(0,195,255,0.15)', color: '#00c3ff' }}>{log.userName[0]}</div>
@@ -449,7 +518,7 @@ function OperationLogsView() {
                   </div>
                 </td>
                 <td className="px-4 py-3">
-                  <Badge color={moduleColors[log.module] || '#6a8ca8'}>{log.module}</Badge>
+                  <Badge color={MODULE_COLORS[log.module] || '#6a8ca8'}>{log.module}</Badge>
                 </td>
                 <td className="px-4 py-3" style={{ color: '#c0d8e8' }}>{log.action}</td>
                 <td className="px-4 py-3" style={{ color: '#6a8ca8' }}>{log.target}</td>
@@ -465,18 +534,24 @@ function OperationLogsView() {
                   </Badge>
                 </td>
               </motion.tr>
-            ))}
+            )) : (
+              <tr>
+                <td colSpan={9} className="px-4 py-12 text-center" style={{ color: '#5a7a90' }}>
+                  暂无操作日志记录
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       {/* Pagination */}
       <div className="flex items-center justify-between text-sm" style={{ color: '#5a7a90' }}>
-        <span>共 {filtered.length} 条记录</span>
+        <span>共 {totalCount} 条记录</span>
         <div className="flex items-center gap-2">
-          <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="p-1.5 rounded hover:bg-white/5 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
+          <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1 || loading} className="p-1.5 rounded hover:bg-white/5 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
           <span style={{ color: '#c0d8e8' }}>{currentPage} / {totalPages || 1}</span>
-          <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} className="p-1.5 rounded hover:bg-white/5 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages || loading} className="p-1.5 rounded hover:bg-white/5 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
         </div>
       </div>
     </div>

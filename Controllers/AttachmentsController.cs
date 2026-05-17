@@ -71,7 +71,10 @@ public class AttachmentsController : ControllerBase
             // 获取当前用户和租户信息
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userId = long.TryParse(userIdClaim, out var uid) ? uid : (long?)null;
-            var appCode = _tenantContextAccessor.Current?.AppCode;
+            
+            // 优先从请求头获取AppCode，其次从租户上下文
+            var appCode = Request.Headers["X-App-Code"].FirstOrDefault() 
+                ?? _tenantContextAccessor.Current?.AppCode;
 
             // 上传文件
             var attachment = await _fileStorageService.UploadFileAsync(
@@ -122,7 +125,10 @@ public class AttachmentsController : ControllerBase
 
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userId = long.TryParse(userIdClaim, out var uid) ? uid : (long?)null;
-            var appCode = _tenantContextAccessor.Current?.AppCode;
+            
+            // 优先从请求头获取AppCode，其次从租户上下文
+            var appCode = Request.Headers["X-App-Code"].FirstOrDefault() 
+                ?? _tenantContextAccessor.Current?.AppCode;
 
             var results = new List<AttachmentDto>();
 

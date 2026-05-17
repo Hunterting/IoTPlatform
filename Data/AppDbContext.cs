@@ -249,17 +249,8 @@ public class AppDbContext : DbContext
 
             entity.Property(e => e.EnergyTypes).HasColumnType("json");
 
-            // 配置与 Area 的关系（可选外键）
-            entity.HasOne(d => d.Area)
-                .WithMany()
-                .HasForeignKey(d => d.AreaId)
-                .OnDelete(DeleteBehavior.SetNull);
-
-            // 配置与 Project 的关系（可选外键）
-            entity.HasOne(d => d.Project)
-                .WithMany()
-                .HasForeignKey(d => d.ProjectId)
-                .OnDelete(DeleteBehavior.SetNull);
+            // Area 关系通过注解 [ForeignKey("AreaId")] 配置
+            // Project 关系通过注解 [ForeignKey("ProjectId")] 和 Project.Devices 导航属性配置
         });
     }
 

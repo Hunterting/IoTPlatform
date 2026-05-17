@@ -302,7 +302,9 @@ public class AreaService : IAreaService
                 Name = a.Name,
                 Type = a.Type,
                 ParentId = a.ParentId,
-                DeviceCount = a.DeviceCount
+                DeviceCount = a.DeviceCount,
+                AppCode = a.AppCode,
+                CustomerId = a.CustomerId
             })
             .ToListAsync();
 
@@ -325,6 +327,8 @@ public class AreaService : IAreaService
                 Type = a.Type,
                 ParentId = a.ParentId,
                 DeviceCount = a.DeviceCount,
+                AppCode = a.AppCode,
+                CustomerId = a.CustomerId,
                 Children = BuildTree(allAreas, a.Id)
             })
             .ToList();

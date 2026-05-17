@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using IoTPlatform.Data.Repositories.Interfaces;
 
 namespace IoTPlatform.Infrastructure.Middleware;
 
@@ -90,9 +92,61 @@ public class OperationLoggingMiddleware
             var logMessage = $"[{method}] {path} - {statusCode} - {duration}ms - User: {userEmail ?? "Anonymous"} ({userRole})";
 
             _logger.Log(logLevel, logMessage);
+            // 将操作日志保存到数据库（通过作用域解析仓储）
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var logRepository = scope.ServiceProvider.GetService<ILogRepository>();
+                if (logRepository != null)
+                {
+                    long parsedUserId = 0;
+                    if (!string.IsNullOrEmpty(userId) && long.TryParse(userId, out var uid))
+                    {
+                        parsedUserId = uid;
+                    }
 
-            // TODO: 在后续实现中，将操作日志保存到数据库
-            // await SaveOperationLogAsync(userId, userEmail, userRole, method, path, clientIp, statusCode, duration, responseBody);
+                    var status = statusCode >= 400 ? "failed" : "success";
+
+                    // derive appCode and allowed friendly action/module names
+                    var appCode = context.User.FindFirst("AppCode")?.Value;
+
+                    // Prefer controller/action from route values when available
+                    string? controller = null;
+                    string? action = null;
+                    try
+                    {
+                        controller = context.Request.RouteValues?[
+                            "controller"]?.ToString();
+                        action = context.Request.RouteValues?["action"]?.ToString();
+                    }
+                    catch
+                    {
+                        // ignore
+                    }
+
+                    var moduleName = !string.IsNullOrEmpty(controller) ? controller : path;
+                    var actionName = !string.IsNullOrEmpty(action) ? action : method.ToUpperInvariant();
+                    var targetName = !string.IsNullOrEmpty(controller) && !string.IsNullOrEmpty(action) ? $"{controller}/{action}" : path;
+
+                    await logRepository.LogOperationAsync(
+                        userId: parsedUserId,
+                        userName: userEmail ?? context.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value,
+                        role: userRole,
+                        module: moduleName,
+                        action: actionName,
+                        target: targetName,
+                        detail: responseBody,
+                        ip: clientIp,
+                        status: status,
+                        duration: (int)duration,
+                        appCode: appCode
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "将操作日志保存到数据库时发生错误");
+            }
         }
         catch (Exception ex)
         {
