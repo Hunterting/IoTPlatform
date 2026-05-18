@@ -119,6 +119,10 @@ builder.Services.AddScoped<IoTPlatform.Services.FileStorageService, IoTPlatform.
 builder.Services.AddScoped<IoTPlatform.Services.IProtocolConfigService, IoTPlatform.Services.ProtocolConfigService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDataRuleService, IoTPlatform.Services.DataRuleService>();
 builder.Services.AddScoped<IoTPlatform.Services.IETLTaskService, IoTPlatform.Services.ETLTaskService>();
+builder.Services.AddScoped<IoTPlatform.Services.IGatewayService, IoTPlatform.Services.GatewayService>();
+builder.Services.AddScoped<IoTPlatform.Services.ITunnelService, IoTPlatform.Services.TunnelService>();
+builder.Services.AddScoped<IoTPlatform.Services.IPluginService, IoTPlatform.Services.PluginService>();
+builder.Services.AddScoped<IoTPlatform.Services.IDatabaseConfigService, IoTPlatform.Services.DatabaseConfigService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDataCollectionService, IoTPlatform.Services.DataCollectionService>();
 builder.Services.AddSingleton<IoTPlatform.Services.IMqttClientService, IoTPlatform.Services.MqttClientService>();
 builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();

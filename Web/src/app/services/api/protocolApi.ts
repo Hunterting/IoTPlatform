@@ -8,12 +8,13 @@ export interface ProtocolConfig {
   name: string;
   type: string;
   status: string;
+  isActive?: boolean;
   deviceIds?: number[];
   config?: Record<string, unknown>;
   description?: string;
   appCode?: string;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
 }
 
 /** 创建协议配置请求 */
@@ -144,7 +145,7 @@ export async function getDevicesByIds(deviceIds: number[]): Promise<ApiResponse<
   location?: string;
 }>>> {
   if (!deviceIds || deviceIds.length === 0) {
-    return { code: 200, data: [], success: true };
+    return { code: 200, data: [], message: '成功', success: true };
   }
   const idsParam = deviceIds.join(',');
   const response = await apiClient.get<ApiResponse<any[]>>(

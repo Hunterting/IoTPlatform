@@ -33,12 +33,23 @@ import {
 import { useDevices } from '@/app/contexts/DeviceContext';
 import type { PageType } from '@/app/components/Sidebar';
 import {
-  RuleEnginePage,
-  DatabaseConfigPage,
-  DataExportPage,
-} from './DataCollectionSubPages';
+  RuleEnginePage as RuleEnginePageApi,
+  DatabaseConfigPage as DatabaseConfigPageApi,
+} from './DataCollectionApiSubPages';
+import { DataExportPage } from './DataCollectionSubPages';
+import {
+  ProtocolGatewayPage as ProtocolGatewayPageApi,
+  NetworkTunnelPage as NetworkTunnelPageApi,
+  PluginSystemPage as PluginSystemPageApi,
+} from './DataCollectionApiPages';
 import { DataTransformPageNew } from './DataTransformPageNew';
 import { DataCenterPageEnhanced } from './DataCenterPageEnhanced';
+import {
+  protocolApi,
+  ProtocolConfig,
+  CreateProtocolConfigRequest,
+  UpdateProtocolConfigRequest,
+} from '@/app/services/api/protocolApi';
 
 interface DataCollectionPageProps {
   activePage: PageType;
@@ -46,11 +57,18 @@ interface DataCollectionPageProps {
 
 // 协议配置接口
 interface ProtocolConfig {
-  id: string;
+  id: number;
   name: string;
   type: string;
-  status: 'running' | 'stopped' | 'error';
-  deviceIds: string[]; // 关联的设备ID列表
+  status: string;
+  isActive?: boolean;
+  deviceIds?: number[]; // 关联的设备ID列表
+  config?: Record<string, unknown>;
+  description?: string;
+  appCode?: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  lastSync?: string;
   host?: string;
   port?: number;
   endpoint?: string;
@@ -61,7 +79,6 @@ interface ProtocolConfig {
   qos?: 0 | 1 | 2;
   useSsl?: boolean;
   keepalive?: number;
-  lastSync: string;
 }
 
 // 网关配置接口
@@ -123,19 +140,19 @@ export function DataCollectionPage({ activePage }: DataCollectionPageProps) {
     case 'data-collection-protocol':
       return <ProtocolConfigPage devices={collectionDevices} />;
     case 'data-collection-gateway':
-      return <ProtocolGatewayPage />;
+      return <ProtocolGatewayPageApi />;
     case 'data-collection-tunnel':
-      return <NetworkTunnelPage />;
+      return <NetworkTunnelPageApi />;
     case 'data-collection-plugin':
-      return <PluginSystemPage />;
+      return <PluginSystemPageApi />;
     case 'data-collection-center':
       return <DataCenterPageEnhanced devices={collectionDevices} getEnergyIcon={getEnergyIcon} />;
     case 'data-collection-rules':
-      return <RuleEnginePage />;
+      return <RuleEnginePageApi />;
     case 'data-collection-transform':
       return <DataTransformPageNew />;
     case 'data-collection-database':
-      return <DatabaseConfigPage />;
+      return <DatabaseConfigPageApi />;
     case 'data-collection-export':
       return <DataExportPage devices={collectionDevices} getEnergyIcon={getEnergyIcon} />;
     default:
@@ -145,44 +162,8 @@ export function DataCollectionPage({ activePage }: DataCollectionPageProps) {
 
 // ========== 1. 协议配置 ==========
 function ProtocolConfigPage({ devices }: { devices: any[] }) {
-  const [protocols, setProtocols] = useState<ProtocolConfig[]>([
-    {
-      id: 'proto-001',
-      name: 'Modbus TCP主站',
-      type: 'Modbus TCP',
-      status: 'running',
-      deviceIds: devices.slice(0, 3).map(d => d.id),
-      host: '192.168.1.100',
-      port: 502,
-      lastSync: '2026-03-24 14:30:25',
-    },
-    {
-      id: 'proto-002',
-      name: 'OPC UA服务器',
-      type: 'OPC UA',
-      status: 'running',
-      deviceIds: devices.slice(3, 5).map(d => d.id),
-      endpoint: 'opc.tcp://192.168.1.200:4840',
-      lastSync: '2026-03-24 14:30:20',
-    },
-    {
-      id: 'proto-003',
-      name: 'MQTT能源采集',
-      type: 'MQTT',
-      status: 'running',
-      deviceIds: devices.slice(5, 8).map(d => d.id),
-      host: 'mqtt.example.com',
-      port: 1883,
-      topic: 'devices/energy/#',
-      clientId: 'energy_collector_001',
-      username: 'admin',
-      qos: 1,
-      useSsl: false,
-      keepalive: 60,
-      lastSync: '2026-03-24 14:30:15',
-    },
-  ]);
-
+  const [loading, setLoading] = useState(false);
+  const [protocols, setProtocols] = useState<ProtocolConfig[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingProtocol, setEditingProtocol] = useState<ProtocolConfig | null>(null);
   const [showDeviceModal, setShowDeviceModal] = useState(false);
@@ -200,62 +181,158 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
     qos: 0,
     useSsl: false,
     keepalive: 60,
+    description: '',
   });
+
+  // 加载协议列表
+  const loadProtocols = async () => {
+    try {
+      setLoading(true);
+      const response = await protocolApi.getProtocolConfigs({ pageSize: 100 });
+      if (response.code === 200 && response.data) {
+        setProtocols(response.data.items);
+      }
+    } catch (error) {
+      console.error('加载协议列表失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProtocols();
+  }, []);
+
+  // 格式化日期
+  const formatDate = (dateStr: string | Date | undefined) => {
+    if (!dateStr) return '-';
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return String(dateStr);
+      return date.toLocaleString('zh-CN');
+    } catch {
+      return String(dateStr);
+    }
+  };
+
+  // 从config中提取配置信息
+  const getConfigValue = (config: Record<string, unknown> | undefined, key: string): string => {
+    if (!config) return '';
+    return (config[key] as string) || '';
+  };
+
+  const getConfigNumber = (config: Record<string, unknown> | undefined, key: string, defaultValue: number): number => {
+    if (!config) return defaultValue;
+    const val = config[key];
+    return typeof val === 'number' ? val : defaultValue;
+  };
+
+  const getConfigBool = (config: Record<string, unknown> | undefined, key: string, defaultValue: boolean): boolean => {
+    if (!config) return defaultValue;
+    const val = config[key];
+    return typeof val === 'boolean' ? val : defaultValue;
+  };
+
+  // 构建config对象
+  const buildConfig = () => {
+    const config: Record<string, unknown> = {};
+    if (formData.host) config.host = formData.host;
+    if (formData.port) config.port = formData.port;
+    if (formData.endpoint) config.endpoint = formData.endpoint;
+    if (formData.topic) config.topic = formData.topic;
+    if (formData.clientId) config.clientId = formData.clientId;
+    if (formData.username) config.username = formData.username;
+    if (formData.password) config.password = formData.password;
+    if (formData.qos !== undefined) config.qos = formData.qos;
+    config.useSsl = formData.useSsl;
+    if (formData.keepalive) config.keepalive = formData.keepalive;
+    return config;
+  };
 
   const handleAdd = () => {
     setEditingProtocol(null);
-    setFormData({ name: '', type: 'Modbus TCP', host: '', port: 502, endpoint: '', topic: '', clientId: '', username: '', password: '', qos: 0, useSsl: false, keepalive: 60 });
+    setFormData({ name: '', type: 'Modbus TCP', host: '', port: 502, endpoint: '', topic: '', clientId: '', username: '', password: '', qos: 0, useSsl: false, keepalive: 60, description: '' });
     setShowModal(true);
   };
 
   const handleEdit = (protocol: ProtocolConfig) => {
     setEditingProtocol(protocol);
+    const config = protocol.config || {};
     setFormData({
       name: protocol.name,
       type: protocol.type,
-      host: protocol.host || '',
-      port: protocol.port || 502,
-      endpoint: protocol.endpoint || '',
-      topic: protocol.topic || '',
-      clientId: protocol.clientId || '',
-      username: protocol.username || '',
-      password: protocol.password || '',
-      qos: protocol.qos || 0,
-      useSsl: protocol.useSsl || false,
-      keepalive: protocol.keepalive || 60,
+      host: getConfigValue(config, 'host'),
+      port: getConfigNumber(config, 'port', 502),
+      endpoint: getConfigValue(config, 'endpoint'),
+      topic: getConfigValue(config, 'topic'),
+      clientId: getConfigValue(config, 'clientId'),
+      username: getConfigValue(config, 'username'),
+      password: getConfigValue(config, 'password'),
+      qos: getConfigNumber(config, 'qos', 0),
+      useSsl: getConfigBool(config, 'useSsl', false),
+      keepalive: getConfigNumber(config, 'keepalive', 60),
+      description: protocol.description || '',
     });
     setShowModal(true);
   };
 
-  const handleSave = () => {
-    if (editingProtocol) {
-      setProtocols(protocols.map(p =>
-        p.id === editingProtocol.id
-          ? { ...p, ...formData, lastSync: new Date().toLocaleString() }
-          : p
-      ));
-    } else {
-      const newProtocol: ProtocolConfig = {
-        id: `proto-${Date.now()}`,
-        ...formData,
-        status: 'stopped',
-        deviceIds: [],
-        lastSync: new Date().toLocaleString(),
-      };
-      setProtocols([...protocols, newProtocol]);
+  const handleSave = async () => {
+    try {
+      if (editingProtocol) {
+        // 更新
+        const request: UpdateProtocolConfigRequest = {
+          name: formData.name,
+          description: formData.description,
+          config: buildConfig(),
+          deviceIds: editingProtocol.deviceIds,
+        };
+        await protocolApi.updateProtocolConfig(editingProtocol.id, request);
+      } else {
+        // 创建
+        const request: CreateProtocolConfigRequest = {
+          name: formData.name,
+          type: formData.type,
+          description: formData.description,
+          config: buildConfig(),
+          deviceIds: [],
+          isActive: true,
+        };
+        await protocolApi.createProtocolConfig(request);
+      }
+      setShowModal(false);
+      loadProtocols();
+    } catch (error) {
+      console.error('保存协议失败:', error);
+      alert('保存失败，请重试');
     }
-    setShowModal(false);
   };
 
-  const handleToggle = (id: string) => {
-    setProtocols(protocols.map(p =>
-      p.id === id ? { ...p, status: p.status === 'running' ? 'stopped' : 'running' } : p
-    ));;
+  const handleToggle = async (id: number) => {
+    const protocol = protocols.find(p => p.id === id);
+    if (!protocol) return;
+    try {
+      // 根据 isActive 或 status 判断运行状态
+      const isRunning = protocol.isActive || protocol.status === 'running';
+      if (isRunning) {
+        await protocolApi.stopProtocol(id);
+      } else {
+        await protocolApi.startProtocol(id);
+      }
+      loadProtocols();
+    } catch (error) {
+      console.error('操作失败:', error);
+      alert('操作失败，请重试');
+    }
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('确定要删除此协议配置吗？')) {
-      setProtocols(protocols.filter(p => p.id !== id));
+  const handleDelete = async (id: number) => {
+    if (!confirm('确定要删除此协议配置吗？')) return;
+    try {
+      await protocolApi.deleteProtocolConfig(id);
+      loadProtocols();
+    } catch (error) {
+      console.error('删除失败:', error);
+      alert('删除失败，请重试');
     }
   };
 
@@ -264,36 +341,58 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
     setShowDeviceModal(true);
   };
 
-  const handleAddDevice = (deviceId: string) => {
-    if (managingProtocol) {
+  const handleAddDevice = async (deviceId: number) => {
+    if (!managingProtocol) return;
+    const newDeviceIds = [...(managingProtocol.deviceIds || []), deviceId];
+    try {
+      await protocolApi.updateProtocolConfig(managingProtocol.id, {
+        name: managingProtocol.name,
+        description: managingProtocol.description,
+        deviceIds: newDeviceIds,
+        config: managingProtocol.config,
+        isActive: managingProtocol.isActive,
+      });
+      setManagingProtocol({ ...managingProtocol, deviceIds: newDeviceIds });
       setProtocols(protocols.map(p =>
-        p.id === managingProtocol.id
-          ? { ...p, deviceIds: [...p.deviceIds, deviceId] }
-          : p
+        p.id === managingProtocol.id ? { ...p, deviceIds: newDeviceIds } : p
       ));
-      setManagingProtocol({ ...managingProtocol, deviceIds: [...managingProtocol.deviceIds, deviceId] });
+    } catch (error) {
+      console.error('添加设备失败:', error);
+      alert('添加失败，请重试');
     }
   };
 
-  const handleRemoveDevice = (deviceId: string) => {
-    if (managingProtocol) {
+  const handleRemoveDevice = async (deviceId: number) => {
+    if (!managingProtocol) return;
+    const newDeviceIds = (managingProtocol.deviceIds || []).filter(id => id !== deviceId);
+    try {
+      await protocolApi.updateProtocolConfig(managingProtocol.id, {
+        name: managingProtocol.name,
+        description: managingProtocol.description,
+        deviceIds: newDeviceIds,
+        config: managingProtocol.config,
+        isActive: managingProtocol.isActive,
+      });
+      setManagingProtocol({ ...managingProtocol, deviceIds: newDeviceIds });
       setProtocols(protocols.map(p =>
-        p.id === managingProtocol.id
-          ? { ...p, deviceIds: p.deviceIds.filter(id => id !== deviceId) }
-          : p
+        p.id === managingProtocol.id ? { ...p, deviceIds: newDeviceIds } : p
       ));
-      setManagingProtocol({ ...managingProtocol, deviceIds: managingProtocol.deviceIds.filter(id => id !== deviceId) });
+    } catch (error) {
+      console.error('移除设备失败:', error);
+      alert('移除失败，请重试');
     }
   };
 
   // 获取协议关联的设备列表
   const getProtocolDevices = (protocol: ProtocolConfig) => {
-    return devices.filter(d => protocol.deviceIds.includes(d.id));
+    const deviceIds = (protocol.deviceIds || []).map(id => String(id));
+    return devices.filter(d => deviceIds.includes(d.id));
   };
 
   // 获取未关联的设备列表
   const getAvailableDevices = (protocol: ProtocolConfig) => {
-    return devices.filter(d => !protocol.deviceIds.includes(d.id));
+    const deviceIds = (protocol.deviceIds || []).map(id => String(id));
+    return devices.filter(d => !deviceIds.includes(d.id));
   };
 
   return (
@@ -313,37 +412,63 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
       <div className="flex justify-between items-center">
         <div className="text-sm text-gray-400">
           已配置 {protocols.length} 个协议，接入设备 {devices.length} 台
+          {loading && <span className="ml-2 text-blue-400">(加载中...)</span>}
         </div>
         <button
           onClick={handleAdd}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors"
+          disabled={loading}
         >
           <Plus className="w-4 h-4" />
           <span>添加协议</span>
         </button>
       </div>
 
+      {/* 加载状态 */}
+      {loading && protocols.length === 0 && (
+        <div className="flex justify-center items-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          <span className="ml-3 text-gray-400">加载协议配置中...</span>
+        </div>
+      )}
+
+      {/* 空状态 */}
+      {!loading && protocols.length === 0 && (
+        <div className="text-center py-12 bg-gray-800/50 rounded-lg border border-gray-700">
+          <Tag className="w-12 h-12 mx-auto text-gray-500 mb-3" />
+          <p className="text-gray-400">暂无协议配置</p>
+          <p className="text-sm text-gray-500 mt-1">点击上方按钮添加第一个协议配置</p>
+        </div>
+      )}
+
       {/* 协议列表 */}
       <div className="space-y-4">
         {protocols.map((protocol) => {
-          const protocolDevices = getProtocolDevices(protocol);
+          const config = protocol.config || {};
+          const host = getConfigValue(config, 'host');
+          const port = getConfigNumber(config, 'port', 0);
+          const endpoint = getConfigValue(config, 'endpoint');
+          // 根据 isActive 或 status 判断运行状态
+          const isRunning = protocol.isActive || protocol.status === 'running';
+          const deviceIds = (protocol.deviceIds || []).map(id => String(id));
+          const protocolDevices = devices.filter(d => deviceIds.includes(d.id));
           return (
             <div key={protocol.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    {protocol.status === 'running' ? (
+                    {isRunning ? (
                       <Wifi className="w-5 h-5 text-green-500" />
                     ) : (
                       <WifiOff className="w-5 h-5 text-gray-500" />
                     )}
                     <h3 className="text-lg font-semibold text-white">{protocol.name}</h3>
                     <span className={`px-2 py-1 rounded text-xs font-medium ${
-                      protocol.status === 'running'
+                      isRunning
                         ? 'bg-green-500/20 text-green-300'
                         : 'bg-gray-500/20 text-gray-300'
                     }`}>
-                      {protocol.status === 'running' ? '运行中' : '已停止'}
+                      {isRunning ? '运行中' : '已停止'}
                     </span>
                   </div>
 
@@ -354,17 +479,17 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                     </div>
                     <div>
                       <span className="text-gray-400">接入设备：</span>
-                      <span className="text-white ml-1 font-semibold">{protocol.deviceIds.length} 台</span>
+                      <span className="text-white ml-1 font-semibold">{deviceIds.length} 台</span>
                     </div>
                     <div>
-                      <span className="text-gray-400">最后同步：</span>
-                      <span className="text-white ml-1">{protocol.lastSync}</span>
+                      <span className="text-gray-400">更新时间：</span>
+                      <span className="text-white ml-1">{formatDate(protocol.updatedAt)}</span>
                     </div>
                     <div>
                       <span className="text-gray-400">配置：</span>
                       <span className="text-white ml-1">
-                        {protocol.host && `${protocol.host}:${protocol.port}`}
-                        {protocol.endpoint && protocol.endpoint}
+                        {host && port && `${host}:${port}`}
+                        {endpoint && endpoint}
                       </span>
                     </div>
                   </div>
@@ -381,13 +506,13 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                   <button
                     onClick={() => handleToggle(protocol.id)}
                     className={`p-2 rounded-lg transition-colors ${
-                      protocol.status === 'running'
+                      isRunning
                         ? 'bg-orange-500/20 hover:bg-orange-500/30 text-orange-300'
                         : 'bg-green-500/20 hover:bg-green-500/30 text-green-300'
                     }`}
-                    title={protocol.status === 'running' ? '停止' : '启动'}
+                    title={isRunning ? '停止' : '启动'}
                   >
-                    {protocol.status === 'running' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                   </button>
                   <button
                     onClick={() => handleEdit(protocol)}
@@ -708,7 +833,7 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                             </div>
                           </div>
                           <button
-                            onClick={() => handleRemoveDevice(device.id)}
+                            onClick={() => handleRemoveDevice(device.id as number)}
                             className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
                             title="移除"
                           >
@@ -753,7 +878,7 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                             </div>
                           </div>
                           <button
-                            onClick={() => handleAddDevice(device.id)}
+                            onClick={() => handleAddDevice(device.id as number)}
                             className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-300 rounded-lg transition-colors"
                             title="添加"
                           >

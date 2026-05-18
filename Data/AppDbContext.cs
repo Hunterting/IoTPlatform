@@ -69,6 +69,10 @@ public class AppDbContext : DbContext
     public DbSet<ProtocolConfig> ProtocolConfigs { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
+    public DbSet<Gateway> Gateways { get; set; }
+    public DbSet<Tunnel> Tunnels { get; set; }
+    public DbSet<Plugin> Plugins { get; set; }
+    public DbSet<DatabaseConfig> DatabaseConfigs { get; set; }
 
     // 设备指令
     public DbSet<DeviceCommand> DeviceCommands { get; set; }
@@ -126,6 +130,10 @@ public class AppDbContext : DbContext
         ConfigureAreaDevices(modelBuilder);
         ConfigureDataRules(modelBuilder);
         ConfigureEtlTasks(modelBuilder);
+        ConfigureGateways(modelBuilder);
+        ConfigureTunnels(modelBuilder);
+        ConfigurePlugins(modelBuilder);
+        ConfigureDatabaseConfigs(modelBuilder);
         ConfigureDeviceCommands(modelBuilder);
         ConfigureCommandHistories(modelBuilder);
         ConfigureControlledDevices(modelBuilder);
@@ -622,6 +630,51 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.AppCode);
             entity.HasIndex(e => e.UploadDate);
+        });
+    }
+
+    private void ConfigureGateways(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Gateway>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.SourceProtocol);
+            entity.HasIndex(e => e.TargetProtocol);
+            entity.HasIndex(e => e.Status);
+        });
+    }
+
+    private void ConfigureTunnels(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Tunnel>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.TunnelType);
+            entity.HasIndex(e => e.Status);
+        });
+    }
+
+    private void ConfigurePlugins(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Plugin>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.PluginType);
+            entity.HasIndex(e => e.Status);
+        });
+    }
+
+    private void ConfigureDatabaseConfigs(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DatabaseConfig>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.AppCode);
+            entity.HasIndex(e => e.DatabaseType);
+            entity.HasIndex(e => e.Status);
         });
     }
 

@@ -97,8 +97,10 @@ public static class Permissions
     public const string MANAGE_PROTOCOL_CONFIG = "manage_protocol_config";
     public const string VIEW_PROTOCOL_GATEWAY = "view_protocol_gateway";
     public const string MANAGE_PROTOCOL_GATEWAY = "manage_protocol_gateway";
+    public const string MANAGE_GATEWAY_CONFIG = "manage_gateway_config";
     public const string VIEW_NETWORK_TUNNEL = "view_network_tunnel";
     public const string MANAGE_NETWORK_TUNNEL = "manage_network_tunnel";
+    public const string MANAGE_TUNNEL_CONFIG = "manage_tunnel_config";
     public const string VIEW_PLUGIN_SYSTEM = "view_plugin_system";
     public const string MANAGE_PLUGIN_SYSTEM = "manage_plugin_system";
 
