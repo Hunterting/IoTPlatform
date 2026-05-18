@@ -26,6 +26,9 @@ public class UpdateETLTaskRequest
     [MaxLength(20)]
     public string? Status { get; set; } // active, paused, completed, failed
 
+    [MaxLength(20)]
+    public string? AppCode { get; set; }
+
     [MaxLength(1000)]
     public string? Description { get; set; }
 }

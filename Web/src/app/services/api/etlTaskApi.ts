@@ -7,65 +7,47 @@ export interface ETLTask {
   id: number;
   name: string;
   taskType?: string;
-  sourceType?: string;
-  targetType?: string;
-  status: 'running' | 'stopped' | 'failed' | 'pending';
-  isActive: boolean;
-  config?: Record<string, unknown>;
-  transformRules?: TransformRule[];
-  fieldMappings?: FieldMapping[];
+  sourceConfig?: string;
+  targetConfig?: string;
+  transformRule?: string;
+  schedule?: string;
+  status?: string;
+  lastRunTime?: string;
+  nextRunTime?: string;
   lastRunAt?: string;
-  recordsProcessed?: number;
-  errorMessage?: string;
+  nextRunAt?: string;
+  isActive?: boolean;
   description?: string;
   appCode?: string;
   createdAt?: string;
   updatedAt?: string;
 }
 
-/** 转换规则 */
-export interface TransformRule {
-  id?: string;
-  type: 'format' | 'calculate' | 'filter' | 'merge';
-  name: string;
-  description?: string;
-  config?: Record<string, unknown>;
-}
-
-/** 字段映射 */
-export interface FieldMapping {
-  id?: string;
-  sourceField: string;
-  targetField: string;
-  dataType?: string;
-  transform?: string;
-}
-
 /** 创建ETL任务请求 */
 export interface CreateETLTaskRequest {
   name: string;
   taskType?: string;
-  sourceType?: string;
-  targetType?: string;
+  sourceConfig?: string;
+  targetConfig?: string;
+  transformRule?: string;
+  schedule?: string;
   isActive?: boolean;
-  config?: Record<string, unknown>;
-  transformRules?: TransformRule[];
-  fieldMappings?: FieldMapping[];
   description?: string;
+  appCode?: string;
 }
 
 /** 更新ETL任务请求 */
 export interface UpdateETLTaskRequest {
   name?: string;
   taskType?: string;
-  sourceType?: string;
-  targetType?: string;
+  sourceConfig?: string;
+  targetConfig?: string;
+  transformRule?: string;
+  schedule?: string;
   status?: string;
   isActive?: boolean;
-  config?: Record<string, unknown>;
-  transformRules?: TransformRule[];
-  fieldMappings?: FieldMapping[];
   description?: string;
+  appCode?: string;
 }
 
 /** 分页响应 */

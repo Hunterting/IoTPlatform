@@ -24,6 +24,7 @@ export interface CreateProtocolConfigRequest {
   description?: string;
   deviceIds?: number[];
   config?: Record<string, unknown>;
+  status?: string;
   isActive?: boolean;
   appCode?: string;
 }
@@ -36,6 +37,7 @@ export interface UpdateProtocolConfigRequest {
   description?: string;
   deviceIds?: number[];
   config?: Record<string, unknown>;
+  appCode?: string;
 }
 
 /** 分页响应 */

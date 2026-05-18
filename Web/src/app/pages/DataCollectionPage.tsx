@@ -29,8 +29,12 @@ import {
   Settings,
   Users,
   CheckCircle,
+  MapPin,
+  Building2,
+  Hash,
 } from 'lucide-react';
 import { useDevices } from '@/app/contexts/DeviceContext';
+import { useAuth } from '@/app/contexts/AuthContext';
 import type { PageType } from '@/app/components/Sidebar';
 import {
   RuleEnginePage as RuleEnginePageApi,
@@ -162,6 +166,10 @@ export function DataCollectionPage({ activePage }: DataCollectionPageProps) {
 
 // ========== 1. 协议配置 ==========
 function ProtocolConfigPage({ devices }: { devices: any[] }) {
+  // 使用 DeviceContext 获取完整设备列表用于协议关联
+  const { devices: allDevices } = useDevices();
+  // 使用 AuthContext 获取当前用户的 appCode
+  const { currentCustomer } = useAuth();
   const [loading, setLoading] = useState(false);
   const [protocols, setProtocols] = useState<ProtocolConfig[]>([]);
   const [showModal, setShowModal] = useState(false);
@@ -282,9 +290,12 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
         // 更新
         const request: UpdateProtocolConfigRequest = {
           name: formData.name,
+          status: editingProtocol.status,
           description: formData.description,
           config: buildConfig(),
           deviceIds: editingProtocol.deviceIds,
+          isActive: editingProtocol.isActive,
+          appCode: editingProtocol.appCode || currentCustomer?.appCode,
         };
         await protocolApi.updateProtocolConfig(editingProtocol.id, request);
       } else {
@@ -295,7 +306,9 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
           description: formData.description,
           config: buildConfig(),
           deviceIds: [],
+          status: 'active',
           isActive: true,
+          appCode: currentCustomer?.appCode,
         };
         await protocolApi.createProtocolConfig(request);
       }
@@ -347,10 +360,12 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
     try {
       await protocolApi.updateProtocolConfig(managingProtocol.id, {
         name: managingProtocol.name,
+        status: managingProtocol.status,
         description: managingProtocol.description,
         deviceIds: newDeviceIds,
         config: managingProtocol.config,
         isActive: managingProtocol.isActive,
+        appCode: managingProtocol.appCode || currentCustomer?.appCode,
       });
       setManagingProtocol({ ...managingProtocol, deviceIds: newDeviceIds });
       setProtocols(protocols.map(p =>
@@ -368,10 +383,12 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
     try {
       await protocolApi.updateProtocolConfig(managingProtocol.id, {
         name: managingProtocol.name,
+        status: managingProtocol.status,
         description: managingProtocol.description,
         deviceIds: newDeviceIds,
         config: managingProtocol.config,
         isActive: managingProtocol.isActive,
+        appCode: managingProtocol.appCode || currentCustomer?.appCode,
       });
       setManagingProtocol({ ...managingProtocol, deviceIds: newDeviceIds });
       setProtocols(protocols.map(p =>
@@ -386,13 +403,13 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
   // 获取协议关联的设备列表
   const getProtocolDevices = (protocol: ProtocolConfig) => {
     const deviceIds = (protocol.deviceIds || []).map(id => String(id));
-    return devices.filter(d => deviceIds.includes(d.id));
+    return allDevices.filter(d => deviceIds.includes(d.id));
   };
 
   // 获取未关联的设备列表
   const getAvailableDevices = (protocol: ProtocolConfig) => {
     const deviceIds = (protocol.deviceIds || []).map(id => String(id));
-    return devices.filter(d => !deviceIds.includes(d.id));
+    return allDevices.filter(d => !deviceIds.includes(d.id));
   };
 
   return (
@@ -817,28 +834,45 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                       getProtocolDevices(managingProtocol).map((device) => (
                         <div
                           key={device.id}
-                          className="bg-gray-900 border border-gray-700 rounded-lg p-3 flex items-center justify-between hover:bg-gray-700/30 transition-colors"
+                          className="bg-gray-900 border border-gray-700 rounded-lg p-3 hover:bg-gray-700/30 transition-colors"
                         >
-                          <div className="flex items-center gap-3 flex-1">
-                            {device.energyType && device.energyType.length > 0 && (
-                              <>
-                                {device.energyType[0] === 'electric' && <Zap className="w-5 h-5 text-yellow-500" />}
-                                {device.energyType[0] === 'water' && <Droplet className="w-5 h-5 text-blue-500" />}
-                                {device.energyType[0] === 'gas' && <Flame className="w-5 h-5 text-orange-500" />}
-                              </>
-                            )}
-                            <div className="flex-1">
-                              <p className="text-white font-medium">{device.name}</p>
-                              <p className="text-xs text-gray-400">{device.serialNumber} · {device.location}</p>
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3 flex-1">
+                              {device.energyType && device.energyType.length > 0 && (
+                                <>
+                                  {device.energyType[0] === 'electric' && <Zap className="w-5 h-5 text-yellow-500" />}
+                                  {device.energyType[0] === 'water' && <Droplet className="w-5 h-5 text-blue-500" />}
+                                  {device.energyType[0] === 'gas' && <Flame className="w-5 h-5 text-orange-500" />}
+                                </>
+                              )}
+                              <div className="flex-1">
+                                <p className="text-white font-medium">{device.name}</p>
+                                <div className="text-xs text-gray-400 mt-1 space-y-0.5">
+                                  <p className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />
+                                    所属区域：{device.area || device.areaName || '-'}
+                                  </p>
+                                  {device.projectName && (
+                                    <p className="flex items-center gap-1">
+                                      <Building2 className="w-3 h-3" />
+                                      所属项目：{device.projectName}
+                                    </p>
+                                  )}
+                                  <p className="flex items-center gap-1">
+                                    <Hash className="w-3 h-3" />
+                                    {device.serialNumber || '-'}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
+                            <button
+                              onClick={() => handleRemoveDevice(device.id as number)}
+                              className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
+                              title="移除"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleRemoveDevice(device.id as number)}
-                            className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
-                            title="移除"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
                         </div>
                       ))
                     )}
@@ -862,28 +896,45 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                       getAvailableDevices(managingProtocol).map((device) => (
                         <div
                           key={device.id}
-                          className="bg-gray-900 border border-gray-700 rounded-lg p-3 flex items-center justify-between hover:bg-gray-700/30 transition-colors"
+                          className="bg-gray-900 border border-gray-700 rounded-lg p-3 hover:bg-gray-700/30 transition-colors"
                         >
-                          <div className="flex items-center gap-3 flex-1">
-                            {device.energyType && device.energyType.length > 0 && (
-                              <>
-                                {device.energyType[0] === 'electric' && <Zap className="w-5 h-5 text-yellow-500" />}
-                                {device.energyType[0] === 'water' && <Droplet className="w-5 h-5 text-blue-500" />}
-                                {device.energyType[0] === 'gas' && <Flame className="w-5 h-5 text-orange-500" />}
-                              </>
-                            )}
-                            <div className="flex-1">
-                              <p className="text-white font-medium">{device.name}</p>
-                              <p className="text-xs text-gray-400">{device.serialNumber} · {device.location}</p>
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3 flex-1">
+                              {device.energyType && device.energyType.length > 0 && (
+                                <>
+                                  {device.energyType[0] === 'electric' && <Zap className="w-5 h-5 text-yellow-500" />}
+                                  {device.energyType[0] === 'water' && <Droplet className="w-5 h-5 text-blue-500" />}
+                                  {device.energyType[0] === 'gas' && <Flame className="w-5 h-5 text-orange-500" />}
+                                </>
+                              )}
+                              <div className="flex-1">
+                                <p className="text-white font-medium">{device.name}</p>
+                                <div className="text-xs text-gray-400 mt-1 space-y-0.5">
+                                  <p className="flex items-center gap-1">
+                                    <MapPin className="w-3 h-3" />
+                                    所属区域：{device.area || device.areaName || '-'}
+                                  </p>
+                                  {device.projectName && (
+                                    <p className="flex items-center gap-1">
+                                      <Building2 className="w-3 h-3" />
+                                      所属项目：{device.projectName}
+                                    </p>
+                                  )}
+                                  <p className="flex items-center gap-1">
+                                    <Hash className="w-3 h-3" />
+                                    {device.serialNumber || '-'}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
+                            <button
+                              onClick={() => handleAddDevice(device.id as number)}
+                              className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-300 rounded-lg transition-colors"
+                              title="添加"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleAddDevice(device.id as number)}
-                            className="p-2 bg-green-500/20 hover:bg-green-500/30 text-green-300 rounded-lg transition-colors"
-                            title="添加"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
                         </div>
                       ))
                     )}

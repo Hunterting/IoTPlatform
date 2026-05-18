@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   BookOpen,
   Plus,
@@ -15,28 +15,37 @@ import {
   Calculator,
   GitMerge,
   FileType,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
+import { useAuth } from '@/app/contexts/AuthContext';
+import {
+  etlTaskApi,
+  ETLTask,
+  CreateETLTaskRequest,
+  UpdateETLTaskRequest,
+} from '@/app/services/api/etlTaskApi';
 
-// 数据转换规则接口
+// 转换规则接口
 interface TransformRule {
-  id: string;
+  id?: string;
   type: 'format' | 'calculate' | 'filter' | 'merge';
   name: string;
-  description: string;
-  config: any;
+  description?: string;
+  config?: Record<string, unknown>;
 }
 
 // 字段映射接口
 interface FieldMapping {
-  id: string;
+  id?: string;
   sourceField: string;
   targetField: string;
-  dataType: string;
+  dataType?: string;
   transform?: string;
 }
 
-// ETL任务接口
-interface ETLTask {
+// UI层使用的ETL任务类型
+interface UIETLTask {
   id: string;
   name: string;
   source: string;
@@ -46,53 +55,91 @@ interface ETLTask {
   recordsProcessed: number;
   transformRules?: TransformRule[];
   fieldMapping?: FieldMapping[];
+  sourceConfig?: string;
+  targetConfig?: string;
+  transformRule?: string;
+  appCode?: string;
+  description?: string;
+  isActive?: boolean;
 }
 
+// API模型转换为UI模型
+const toUITask = (task: ETLTask): UIETLTask => {
+  // 解析sourceConfig和targetConfig
+  let source = 'Modbus TCP';
+  let target = 'MySQL';
+  
+  try {
+    if (task.sourceConfig) {
+      const srcConfig = JSON.parse(task.sourceConfig);
+      source = srcConfig.type || source;
+    }
+  } catch {}
+  
+  try {
+    if (task.targetConfig) {
+      const tgtConfig = JSON.parse(task.targetConfig);
+      target = tgtConfig.type || target;
+    }
+  } catch {}
+
+  // 解析transformRule
+  let transformRules: TransformRule[] = [];
+  let fieldMapping: FieldMapping[] = [];
+  
+  try {
+    if (task.transformRule) {
+      const ruleObj = JSON.parse(task.transformRule);
+      transformRules = ruleObj.rules || [];
+      fieldMapping = ruleObj.mappings || [];
+    }
+  } catch {}
+
+  // 状态转换
+  let status: 'running' | 'stopped' | 'failed' = 'stopped';
+  if (task.status === 'active' || task.status === 'running') {
+    status = 'running';
+  } else if (task.status === 'failed') {
+    status = 'failed';
+  } else {
+    status = 'stopped';
+  }
+
+  return {
+    id: String(task.id),
+    name: task.name,
+    source,
+    target,
+    status,
+    lastRun: task.lastRunAt || task.lastRunTime?.toString() || '-',
+    recordsProcessed: 0,
+    transformRules,
+    fieldMapping,
+    sourceConfig: task.sourceConfig,
+    targetConfig: task.targetConfig,
+    transformRule: task.transformRule,
+    appCode: task.appCode,
+    description: task.description,
+    isActive: task.isActive,
+  };
+};
+
+// UI模型转换为API模型
+const toAPITransformRule = (rules: TransformRule[], mappings: FieldMapping[]) => {
+  return JSON.stringify({ rules, mappings });
+};
+
 export function DataTransformPageNew() {
-  const [tasks, setTasks] = useState<ETLTask[]>([
-    {
-      id: 'etl-001',
-      name: '能耗数据ETL',
-      source: 'Modbus TCP',
-      target: 'MySQL',
-      status: 'running',
-      lastRun: '2026-03-23 14:30:00',
-      recordsProcessed: 15847,
-      fieldMapping: [
-        { id: 'fm-1', sourceField: 'register_40001', targetField: 'power_consumption', dataType: 'FLOAT', transform: 'value / 1000' },
-        { id: 'fm-2', sourceField: 'register_40002', targetField: 'voltage', dataType: 'INT', transform: 'value' },
-      ],
-      transformRules: [
-        { id: 'tr-1', type: 'calculate', name: '功率计算', description: '根据电压和电流计算功率', config: { formula: 'voltage * current' } },
-        { id: 'tr-2', type: 'filter', name: '数据过滤', description: '过滤异常数据', config: { condition: 'value > 0 && value < 10000' } },
-      ],
-    },
-    {
-      id: 'etl-002',
-      name: 'MQTT传感器数据ETL',
-      source: 'MQTT',
-      target: 'MySQL',
-      status: 'running',
-      lastRun: '2026-03-23 14:35:10',
-      recordsProcessed: 23456,
-      fieldMapping: [
-        { id: 'fm-3', sourceField: 'payload.temperature', targetField: 'temp', dataType: 'FLOAT', transform: 'value' },
-        { id: 'fm-4', sourceField: 'payload.humidity', targetField: 'humidity', dataType: 'FLOAT', transform: 'value' },
-        { id: 'fm-5', sourceField: 'payload.deviceId', targetField: 'device_id', dataType: 'STRING', transform: 'value' },
-        { id: 'fm-6', sourceField: 'timestamp', targetField: 'ts', dataType: 'INT', transform: 'Date.parse(value)' },
-      ],
-      transformRules: [
-        { id: 'tr-3', type: 'format', name: 'JSON解析', description: '解析MQTT消息体JSON格式', config: { inputFormat: 'JSON', outputFormat: 'TABLE' } },
-        { id: 'tr-4', type: 'filter', name: '温度范围过滤', description: '过滤温度异常数据', config: { condition: 'temperature >= -40 && temperature <= 125' } },
-        { id: 'tr-5', type: 'calculate', name: '时间戳转换', description: '转换为Unix时间戳', config: { formula: 'Date.now()' } },
-      ],
-    },
-  ]);
+  const { currentCustomer } = useAuth();
+  const [tasks, setTasks] = useState<UIETLTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [showModal, setShowModal] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [editingTask, setEditingTask] = useState<ETLTask | null>(null);
-  const [selectedTask, setSelectedTask] = useState<ETLTask | null>(null);
+  const [editingTask, setEditingTask] = useState<UIETLTask | null>(null);
+  const [selectedTask, setSelectedTask] = useState<UIETLTask | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   
   const [formData, setFormData] = useState({
     name: '',
@@ -116,22 +163,67 @@ export function DataTransformPageNew() {
     config: '',
   });
 
-  const handleAdd = () => {
-    const newTask: ETLTask = {
-      id: `etl-${Date.now()}`,
-      ...formData,
-      status: 'stopped',
-      lastRun: new Date().toLocaleString('zh-CN'),
-      recordsProcessed: 0,
-      fieldMapping: [],
-      transformRules: [],
-    };
-    setTasks([...tasks, newTask]);
-    setShowModal(false);
-    setFormData({ name: '', source: 'Modbus TCP', target: 'MySQL' });
+  // 加载ETL任务列表
+  const loadTasks = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await etlTaskApi.getETLTasks({ page: 1, pageSize: 100 });
+      if (response.code === 200 && response.data) {
+        setTasks(response.data.items.map(toUITask));
+      } else {
+        setError(response.message || '加载失败');
+      }
+    } catch (err) {
+      setError('加载ETL任务失败');
+      console.error('加载ETL任务失败:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
+
+  // 创建任务
+  const handleAdd = async () => {
+    if (!formData.name.trim()) {
+      alert('请输入任务名称');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const request: CreateETLTaskRequest = {
+        name: formData.name,
+        taskType: 'transform',
+        sourceConfig: JSON.stringify({ type: formData.source }),
+        targetConfig: JSON.stringify({ type: formData.target }),
+        transformRule: '{}',
+        description: '',
+        isActive: true,
+        appCode: currentCustomer?.appCode,
+      };
+      
+      const response = await etlTaskApi.createETLTask(request);
+      if (response.code === 200) {
+        setShowModal(false);
+        setFormData({ name: '', source: 'Modbus TCP', target: 'MySQL' });
+        loadTasks();
+      } else {
+        alert(response.message || '创建失败');
+      }
+    } catch (err) {
+      console.error('创建ETL任务失败:', err);
+      alert('创建失败，请重试');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleEdit = (task: ETLTask) => {
+  // 编辑任务
+  const handleEdit = (task: UIETLTask) => {
     setEditingTask(task);
     setFormData({
       name: task.name,
@@ -141,114 +233,198 @@ export function DataTransformPageNew() {
     setShowModal(true);
   };
 
-  const handleUpdate = () => {
-    if (editingTask) {
-      setTasks(tasks.map(t => 
-        t.id === editingTask.id 
-          ? { ...t, ...formData }
-          : t
-      ));
-      setShowModal(false);
-      setEditingTask(null);
-      setFormData({ name: '', source: 'Modbus TCP', target: 'MySQL' });
+  // 更新任务
+  const handleUpdate = async () => {
+    if (!editingTask) return;
+
+    try {
+      setSubmitting(true);
+      const request: UpdateETLTaskRequest = {
+        name: formData.name,
+        sourceConfig: JSON.stringify({ type: formData.source }),
+        targetConfig: JSON.stringify({ type: formData.target }),
+        status: editingTask.status === 'running' ? 'active' : 'paused',
+        description: editingTask.description,
+        appCode: editingTask.appCode || currentCustomer?.appCode,
+      };
+      
+      const response = await etlTaskApi.updateETLTask(Number(editingTask.id), request);
+      if (response.code === 200) {
+        setShowModal(false);
+        setEditingTask(null);
+        setFormData({ name: '', source: 'Modbus TCP', target: 'MySQL' });
+        loadTasks();
+      } else {
+        alert(response.message || '更新失败');
+      }
+    } catch (err) {
+      console.error('更新ETL任务失败:', err);
+      alert('更新失败，请重试');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const handleConfigure = (task: ETLTask) => {
+  // 配置任务（字段映射和转换规则）
+  const handleConfigure = (task: UIETLTask) => {
     setSelectedTask(task);
     setShowConfigModal(true);
   };
 
+  // 添加字段映射
   const handleAddMapping = () => {
-    if (selectedTask && mappingForm.sourceField && mappingForm.targetField) {
-      const newMapping: FieldMapping = {
-        id: `fm-${Date.now()}`,
-        ...mappingForm,
-      };
-      
-      const updatedTask = {
-        ...selectedTask,
-        fieldMapping: [...(selectedTask.fieldMapping || []), newMapping],
-      };
-      
-      setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
-      setSelectedTask(updatedTask);
-      setMappingForm({ sourceField: '', targetField: '', dataType: 'STRING', transform: 'value' });
-    }
+    if (!selectedTask || !mappingForm.sourceField || !mappingForm.targetField) return;
+
+    const newMapping: FieldMapping = {
+      id: `fm-${Date.now()}`,
+      sourceField: mappingForm.sourceField,
+      targetField: mappingForm.targetField,
+      dataType: mappingForm.dataType,
+      transform: mappingForm.transform,
+    };
+
+    const updatedMappings = [...(selectedTask.fieldMapping || []), newMapping];
+    const updatedTask = { ...selectedTask, fieldMapping: updatedMappings };
+    
+    // 同步更新到后端
+    saveTaskConfig(updatedTask);
+    
+    setSelectedTask(updatedTask);
+    setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+    setMappingForm({ sourceField: '', targetField: '', dataType: 'STRING', transform: 'value' });
   };
 
+  // 删除字段映射
   const handleDeleteMapping = (mappingId: string) => {
-    if (selectedTask) {
-      const updatedTask = {
-        ...selectedTask,
-        fieldMapping: selectedTask.fieldMapping?.filter(m => m.id !== mappingId),
-      };
-      setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
-      setSelectedTask(updatedTask);
-    }
+    if (!selectedTask) return;
+
+    const updatedTask = {
+      ...selectedTask,
+      fieldMapping: selectedTask.fieldMapping?.filter(m => m.id !== mappingId),
+    };
+    
+    // 同步更新到后端
+    saveTaskConfig(updatedTask);
+    
+    setSelectedTask(updatedTask);
+    setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
   };
 
+  // 添加转换规则
   const handleAddRule = () => {
-    if (selectedTask && ruleForm.name && ruleForm.config) {
-      let config;
-      try {
-        config = JSON.parse(ruleForm.config);
-      } catch {
-        config = { value: ruleForm.config };
-      }
-      
-      const newRule: TransformRule = {
-        id: `tr-${Date.now()}`,
-        type: ruleForm.type,
-        name: ruleForm.name,
-        description: ruleForm.description,
-        config,
-      };
-      
-      const updatedTask = {
-        ...selectedTask,
-        transformRules: [...(selectedTask.transformRules || []), newRule],
-      };
-      
-      setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
-      setSelectedTask(updatedTask);
-      setRuleForm({ type: 'filter', name: '', description: '', config: '' });
+    if (!selectedTask || !ruleForm.name || !ruleForm.config) return;
+
+    let config: Record<string, unknown>;
+    try {
+      config = JSON.parse(ruleForm.config);
+    } catch {
+      config = { value: ruleForm.config };
     }
+
+    const newRule: TransformRule = {
+      id: `tr-${Date.now()}`,
+      type: ruleForm.type,
+      name: ruleForm.name,
+      description: ruleForm.description,
+      config,
+    };
+
+    const updatedRules = [...(selectedTask.transformRules || []), newRule];
+    const updatedTask = { ...selectedTask, transformRules: updatedRules };
+    
+    // 同步更新到后端
+    saveTaskConfig(updatedTask);
+    
+    setSelectedTask(updatedTask);
+    setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+    setRuleForm({ type: 'filter', name: '', description: '', config: '' });
   };
 
+  // 删除转换规则
   const handleDeleteRule = (ruleId: string) => {
-    if (selectedTask) {
-      const updatedTask = {
-        ...selectedTask,
-        transformRules: selectedTask.transformRules?.filter(r => r.id !== ruleId),
-      };
-      setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
-      setSelectedTask(updatedTask);
+    if (!selectedTask) return;
+
+    const updatedTask = {
+      ...selectedTask,
+      transformRules: selectedTask.transformRules?.filter(r => r.id !== ruleId),
+    };
+    
+    // 同步更新到后端
+    saveTaskConfig(updatedTask);
+    
+    setSelectedTask(updatedTask);
+    setTasks(tasks.map(t => t.id === selectedTask.id ? updatedTask : t));
+  };
+
+  // 保存任务配置到后端
+  const saveTaskConfig = async (task: UIETLTask) => {
+    try {
+      const transformRule = toAPITransformRule(
+        task.transformRules || [],
+        task.fieldMapping || []
+      );
+      
+      await etlTaskApi.updateETLTask(Number(task.id), {
+        name: task.name,
+        transformRule,
+        appCode: task.appCode || currentCustomer?.appCode,
+      });
+    } catch (err) {
+      console.error('保存配置失败:', err);
     }
   };
 
-  const handleToggle = (id: string) => {
-    setTasks(tasks.map(t =>
-      t.id === id ? { ...t, status: t.status === 'running' ? 'stopped' : 'running' as any } : t
-    ));
+  // 启动/停止任务
+  const handleToggle = async (id: string) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+
+    try {
+      if (task.status === 'running') {
+        await etlTaskApi.stopETLTask(Number(id));
+      } else {
+        await etlTaskApi.startETLTask(Number(id));
+      }
+      loadTasks();
+    } catch (err) {
+      console.error('切换任务状态失败:', err);
+      alert('操作失败，请重试');
+    }
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('确定要删除此ETL任务吗？')) {
-      setTasks(tasks.filter(t => t.id !== id));
+  // 删除任务
+  const handleDelete = async (id: string) => {
+    if (!confirm('确定要删除此ETL任务吗？')) return;
+
+    try {
+      await etlTaskApi.deleteETLTask(Number(id));
+      loadTasks();
+    } catch (err) {
+      console.error('删除ETL任务失败:', err);
+      alert('删除失败，请重试');
     }
   };
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <BookOpen className="w-7 h-7 text-orange-500" />
-          数据转换
-        </h1>
-        <p className="text-sm text-gray-400 mt-1">
-          ETL 管道、数据格式转换、字段映射
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <BookOpen className="w-7 h-7 text-orange-500" />
+            数据转换
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            ETL 管道、数据格式转换、字段映射
+          </p>
+        </div>
+        <button
+          onClick={loadTasks}
+          disabled={loading}
+          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
       </div>
 
       <div className="flex justify-between items-center">
@@ -279,127 +455,151 @@ export function DataTransformPageNew() {
         </button>
       </div>
 
-      <div className="space-y-4">
-        {tasks.map((task) => (
-          <div key={task.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-3 mb-2">
-                  <BookOpen className="w-5 h-5 text-orange-500" />
-                  <h3 className="text-lg font-semibold text-white">{task.name}</h3>
-                  <span className={`px-2 py-1 rounded text-xs font-medium ${
-                    task.status === 'running'
-                      ? 'bg-green-500/20 text-green-300'
-                      : task.status === 'failed'
-                      ? 'bg-red-500/20 text-red-300'
-                      : 'bg-gray-500/20 text-gray-300'
-                  }`}>
-                    {task.status === 'running' ? '运行中' : task.status === 'failed' ? '失败' : '已停止'}
-                  </span>
-                </div>
+      {/* 加载状态 */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          <span className="ml-3 text-gray-400">加载中...</span>
+        </div>
+      )}
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-400">数据源：</span>
-                    <span className="text-white ml-1">{task.source}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">目标：</span>
-                    <span className="text-white ml-1">{task.target}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">最后运行：</span>
-                    <span className="text-white ml-1">{task.lastRun}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">处理记录：</span>
-                    <span className="text-white ml-1">{task.recordsProcessed.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
+      {/* 错误提示 */}
+      {error && !loading && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-red-300">
+          {error}
+        </div>
+      )}
 
-              <div className="flex items-center gap-2 ml-4">
-                <button
-                  onClick={() => handleToggle(task.id)}
-                  className={`p-2 rounded-lg transition-colors ${
-                    task.status === 'running'
-                      ? 'bg-orange-500/20 hover:bg-orange-500/30 text-orange-300'
-                      : 'bg-green-500/20 hover:bg-green-500/30 text-green-300'
-                  }`}
-                  title={task.status === 'running' ? '暂停' : '启动'}
-                >
-                  {task.status === 'running' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                </button>
-                <button
-                  onClick={() => handleConfigure(task)}
-                  className="p-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg transition-colors"
-                  title="配置转换规则"
-                >
-                  <Settings className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleEdit(task)}
-                  className="p-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors"
-                  title="编辑"
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => handleDelete(task.id)}
-                  className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
-                  title="删除"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
+      {/* 任务列表 */}
+      {!loading && !error && (
+        <div className="space-y-4">
+          {tasks.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              暂无ETL任务，请点击"创建任务"添加
             </div>
-
-            {/* 转换规则预览 */}
-            {task.transformRules && task.transformRules.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-700">
-                <p className="text-sm text-gray-400 mb-2">转换规则：</p>
-                <div className="flex flex-wrap gap-2">
-                  {task.transformRules.map((rule) => (
-                    <div key={rule.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 rounded-lg">
-                      {rule.type === 'format' && <FileType className="w-3.5 h-3.5 text-blue-400" />}
-                      {rule.type === 'calculate' && <Calculator className="w-3.5 h-3.5 text-green-400" />}
-                      {rule.type === 'filter' && <Filter className="w-3.5 h-3.5 text-yellow-400" />}
-                      {rule.type === 'merge' && <GitMerge className="w-3.5 h-3.5 text-purple-400" />}
-                      <span className="text-xs text-gray-300">{rule.name}</span>
+          ) : (
+            tasks.map((task) => (
+              <div key={task.id} className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <BookOpen className="w-5 h-5 text-orange-500" />
+                      <h3 className="text-lg font-semibold text-white">{task.name}</h3>
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        task.status === 'running'
+                          ? 'bg-green-500/20 text-green-300'
+                          : task.status === 'failed'
+                          ? 'bg-red-500/20 text-red-300'
+                          : 'bg-gray-500/20 text-gray-300'
+                      }`}>
+                        {task.status === 'running' ? '运行中' : task.status === 'failed' ? '失败' : '已停止'}
+                      </span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {/* 字段映射预览 */}
-            {task.fieldMapping && task.fieldMapping.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-700">
-                <p className="text-sm text-gray-400 mb-2">字段映射：</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {task.fieldMapping.slice(0, 4).map((mapping) => (
-                    <div key={mapping.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 rounded-lg text-xs">
-                      <span className="text-blue-300">{mapping.sourceField}</span>
-                      <ArrowRight className="w-3 h-3 text-gray-500" />
-                      <span className="text-green-300">{mapping.targetField}</span>
-                      {mapping.transform && mapping.transform !== 'value' && (
-                        <code className="ml-auto text-orange-300 bg-orange-500/10 px-2 py-0.5 rounded">
-                          {mapping.transform}
-                        </code>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-400">数据源：</span>
+                        <span className="text-white ml-1">{task.source}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">目标：</span>
+                        <span className="text-white ml-1">{task.target}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">最后运行：</span>
+                        <span className="text-white ml-1">{task.lastRun}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">处理记录：</span>
+                        <span className="text-white ml-1">{task.recordsProcessed.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 ml-4">
+                    <button
+                      onClick={() => handleToggle(task.id)}
+                      className={`p-2 rounded-lg transition-colors ${
+                        task.status === 'running'
+                          ? 'bg-orange-500/20 hover:bg-orange-500/30 text-orange-300'
+                          : 'bg-green-500/20 hover:bg-green-500/30 text-green-300'
+                      }`}
+                      title={task.status === 'running' ? '暂停' : '启动'}
+                    >
+                      {task.status === 'running' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={() => handleConfigure(task)}
+                      className="p-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-lg transition-colors"
+                      title="配置转换规则"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleEdit(task)}
+                      className="p-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 rounded-lg transition-colors"
+                      title="编辑"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(task.id)}
+                      className="p-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 转换规则预览 */}
+                {task.transformRules && task.transformRules.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-700">
+                    <p className="text-sm text-gray-400 mb-2">转换规则：</p>
+                    <div className="flex flex-wrap gap-2">
+                      {task.transformRules.map((rule, idx) => (
+                        <div key={rule.id || idx} className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 rounded-lg">
+                          {rule.type === 'format' && <FileType className="w-3.5 h-3.5 text-blue-400" />}
+                          {rule.type === 'calculate' && <Calculator className="w-3.5 h-3.5 text-green-400" />}
+                          {rule.type === 'filter' && <Filter className="w-3.5 h-3.5 text-yellow-400" />}
+                          {rule.type === 'merge' && <GitMerge className="w-3.5 h-3.5 text-purple-400" />}
+                          <span className="text-xs text-gray-300">{rule.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 字段映射预览 */}
+                {task.fieldMapping && task.fieldMapping.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-700">
+                    <p className="text-sm text-gray-400 mb-2">字段映射：</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {task.fieldMapping.slice(0, 4).map((mapping, idx) => (
+                        <div key={mapping.id || idx} className="flex items-center gap-2 px-3 py-1.5 bg-gray-900/50 rounded-lg text-xs">
+                          <span className="text-blue-300">{mapping.sourceField}</span>
+                          <ArrowRight className="w-3 h-3 text-gray-500" />
+                          <span className="text-green-300">{mapping.targetField}</span>
+                          {mapping.transform && mapping.transform !== 'value' && (
+                            <code className="ml-auto text-orange-300 bg-orange-500/10 px-2 py-0.5 rounded">
+                              {mapping.transform}
+                            </code>
+                          )}
+                        </div>
+                      ))}
+                      {task.fieldMapping.length > 4 && (
+                        <div className="text-xs text-gray-500 px-3 py-1.5">
+                          还有 {task.fieldMapping.length - 4} 个映射...
+                        </div>
                       )}
                     </div>
-                  ))}
-                  {task.fieldMapping.length > 4 && (
-                    <div className="text-xs text-gray-500 px-3 py-1.5">
-                      还有 {task.fieldMapping.length - 4} 个映射...
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        ))}
-      </div>
+            ))
+          )}
+        </div>
+      )}
 
       {/* 创建/编辑ETL任务弹窗 */}
       <AnimatePresence>
@@ -482,14 +682,17 @@ export function DataTransformPageNew() {
                 <div className="flex gap-3 pt-4">
                   <button
                     onClick={() => setShowModal(false)}
-                    className="flex-1 px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+                    disabled={submitting}
+                    className="flex-1 px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors disabled:opacity-50"
                   >
                     取消
                   </button>
                   <button
                     onClick={editingTask ? handleUpdate : handleAdd}
-                    className="flex-1 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                    disabled={submitting}
+                    className="flex-1 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
+                    {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
                     {editingTask ? '保存' : '创建'}
                   </button>
                 </div>
@@ -579,8 +782,8 @@ export function DataTransformPageNew() {
                   {/* 字段映射列表 */}
                   <div className="space-y-2">
                     {selectedTask.fieldMapping && selectedTask.fieldMapping.length > 0 ? (
-                      selectedTask.fieldMapping.map((mapping) => (
-                        <div key={mapping.id} className="bg-gray-900/50 border border-gray-700 rounded-lg p-3 flex items-center justify-between">
+                      selectedTask.fieldMapping.map((mapping, idx) => (
+                        <div key={mapping.id || idx} className="bg-gray-900/50 border border-gray-700 rounded-lg p-3 flex items-center justify-between">
                           <div className="grid grid-cols-4 gap-3 flex-1">
                             <div>
                               <span className="text-xs text-gray-400 block mb-1">源字段</span>
@@ -600,7 +803,7 @@ export function DataTransformPageNew() {
                             </div>
                           </div>
                           <button
-                            onClick={() => handleDeleteMapping(mapping.id)}
+                            onClick={() => handleDeleteMapping(mapping.id!)}
                             className="ml-3 p-2 hover:bg-red-500/20 text-red-400 rounded transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -670,8 +873,8 @@ export function DataTransformPageNew() {
                   {/* 转换规则列表 */}
                   <div className="grid grid-cols-2 gap-3">
                     {selectedTask.transformRules && selectedTask.transformRules.length > 0 ? (
-                      selectedTask.transformRules.map((rule) => (
-                        <div key={rule.id} className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+                      selectedTask.transformRules.map((rule, idx) => (
+                        <div key={rule.id || idx} className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex items-center gap-2">
                               {rule.type === 'format' && <FileType className="w-4 h-4 text-blue-400" />}
@@ -681,7 +884,7 @@ export function DataTransformPageNew() {
                               <h5 className="font-semibold text-white text-sm">{rule.name}</h5>
                             </div>
                             <button
-                              onClick={() => handleDeleteRule(rule.id)}
+                              onClick={() => handleDeleteRule(rule.id!)}
                               className="p-1 hover:bg-gray-800 rounded transition-colors"
                             >
                               <Trash2 className="w-3.5 h-3.5 text-gray-400" />
@@ -711,7 +914,7 @@ export function DataTransformPageNew() {
                   </h4>
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex-1 bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
-                      <p className="text-xs text-blue-400 mb-1">数据���</p>
+                      <p className="text-xs text-blue-400 mb-1">数据源</p>
                       <p className="text-sm text-white font-medium">{selectedTask.source}</p>
                       <p className="text-xs text-gray-400 mt-1">{selectedTask.fieldMapping?.length || 0} 个字段</p>
                     </div>
