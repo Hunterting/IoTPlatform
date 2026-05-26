@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Infrastructure.Protocol;
+using IoTPlatform.Infrastructure.Protocol.Adapters;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -11,23 +12,36 @@ namespace IoTPlatform.Services;
 
 /// <summary>
 /// 协议配置服务实现（使用仓储模式）
+///
+/// 生命周期管理 + 协议适配器事件桥接：
+/// StartProtocolAsync 中创建适配器并订阅 DataReceived 事件，
+/// 将协议采集数据桥接到 IDataCollectionService.ProcessDeviceDataAsync()。
+/// StopProtocolAsync 中取消订阅后释放适配器。
 /// </summary>
 public class ProtocolConfigService : IProtocolConfigService
 {
     private readonly IProtocolConfigRepository _protocolConfigRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IProtocolAdapterFactory _adapterFactory;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ProtocolConfigService>? _logger;
+
+    /// <summary>
+    /// 活跃的事件订阅字典：configId → 事件处理器（用于停止时反注册）
+    /// </summary>
+    private readonly Dictionary<int, EventHandler<DeviceDataReceivedEventArgs>> _activeSubscriptions = new();
 
     public ProtocolConfigService(
         IProtocolConfigRepository protocolConfigRepository,
         IUnitOfWork unitOfWork,
         IProtocolAdapterFactory adapterFactory,
+        IServiceScopeFactory scopeFactory,
         ILogger<ProtocolConfigService>? logger = null)
     {
         _protocolConfigRepository = protocolConfigRepository;
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -249,6 +263,12 @@ public class ProtocolConfigService : IProtocolConfigService
 
     /// <summary>
     /// 启动协议
+    ///
+    /// 执行流程：
+    /// 1. 创建协议适配器（工厂缓存）
+    /// 2. 连接并启动数据采集
+    /// 3. 【P2】订阅 DataReceived 事件 → 桥接到 IDataCollectionService
+    /// 4. 更新数据库状态为 active
     /// </summary>
     public async Task StartProtocolAsync(long id, string? appCode)
     {
@@ -293,6 +313,9 @@ public class ProtocolConfigService : IProtocolConfigService
             {
                 await adapter.StartDataCollectionAsync();
                 _logger?.LogInformation("协议已启动: {Name}, Type={Type}", config.Name, config.Type);
+
+                // ═════════════ P2: 订阅 DataReceived 事件，桥接到主采集链路 ═════════════
+                SubscribeAdapterDataReceived(adapter, (int)config.Id, config.AppCode);
             }
             else
             {
@@ -314,6 +337,11 @@ public class ProtocolConfigService : IProtocolConfigService
 
     /// <summary>
     /// 停止协议
+    ///
+    /// 执行流程：
+    /// 1. 【P2】取消订阅 DataReceived 事件
+    /// 2. 释放协议适配器（断开 + Dispose）
+    /// 3. 更新数据库状态为 inactive
     /// </summary>
     public async Task StopProtocolAsync(long id, string? appCode)
     {
@@ -337,6 +365,9 @@ public class ProtocolConfigService : IProtocolConfigService
 
         try
         {
+            // ═════════════ P2: 反注册 DataReceived 事件订阅 ═════════════
+            UnsubscribeAdapterDataReceived((int)config.Id);
+
             // 释放协议适配器
             _adapterFactory.ReleaseAdapter((int)config.Id);
             _logger?.LogInformation("协议已停止: {Name}, Type={Type}", config.Name, config.Type);
@@ -353,4 +384,95 @@ public class ProtocolConfigService : IProtocolConfigService
             throw;
         }
     }
+
+    #region ── P2: 协议适配器 DataReceived 事件桥接到主采集链路 ──
+
+    /// <summary>
+    /// 为协议适配器订阅 DataReceived 事件，将采集数据桥接到 IDataCollectionService
+    ///
+    /// 设计要点：
+    /// - 使用 IServiceScopeFactory 创建 Scope 以获取 Scoped 生命周期的 DataCollectionService
+    /// - 异步 fire-and-forget 模式，不阻塞适配器的数据接收线程
+    /// - 异常隔离：单条数据处理失败不影响后续数据
+    /// - 通过 _activeSubscriptions 字典追踪订阅，确保 Stop 时能正确反注册
+    /// </summary>
+    private void SubscribeAdapterDataReceived(IProtocolAdapter adapter, int configId, string? appCode)
+    {
+        // 如果已有订阅，先反注册（防止重复）
+        if (_activeSubscriptions.ContainsKey(configId))
+        {
+            UnsubscribeAdapterDataReceived(configId);
+        }
+
+        EventHandler<DeviceDataReceivedEventArgs> handler = async (sender, e) =>
+        {
+            await OnProtocolAdapterDataReceived(e, appCode);
+        };
+
+        adapter.DataReceived += handler;
+        _activeSubscriptions[configId] = handler;
+
+        _logger?.LogInformation(
+            "已订阅协议适配器数据事件: ConfigId={ConfigId}, ProtocolType={ProtocolType}",
+            configId, adapter.ProtocolType);
+    }
+
+    /// <summary>
+    /// 取消指定协议配置的事件订阅
+    /// </summary>
+    private void UnsubscribeAdapterDataReceived(int configId)
+    {
+        if (_activeSubscriptions.TryGetValue(configId, out var handler))
+        {
+            var adapter = _adapterFactory.GetAdapter(configId);
+            if (adapter != null)
+            {
+                adapter.DataReceived -= handler;
+            }
+            _activeSubscriptions.Remove(configId);
+
+            _logger?.LogInformation("已取消协议适配器数据事件订阅: ConfigId={ConfigId}", configId);
+        }
+    }
+
+    /// <summary>
+    /// 协议适配器 DataReceived 事件核心处理器
+    ///
+    /// 将来自 Modbus / OPC UA / MQTT(通过适配器) 的统一格式数据，
+    /// 转发给 IDataCollectionService.ProcessDeviceDataAsync() 进入标准采集管道。
+    /// </summary>
+    private async Task OnProtocolAdapterDataReceived(DeviceDataReceivedEventArgs e, string? fallbackAppCode)
+    {
+        try
+        {
+            // 使用 Scope 工厂创建作用域，以获取 Scoped 服务（DataCollectionService 是 Scoped）
+            using var scope = _scopeFactory.CreateScope();
+            var dataCollectionService = scope.ServiceProvider.GetRequiredService<IDataCollectionService>();
+
+            // 优先使用事件参数中的 AppCode，降级为配置的 AppCode
+            var appCode = !string.IsNullOrEmpty(e.AppCode) ? e.AppCode : fallbackAppCode;
+
+            _logger?.LogDebug(
+                "协议适配器数据桥接: DeviceId={DeviceId}, SerialNumber={Serial}, " +
+                "ProtocolType={ProtoType}, AppCode={AppCode}, DataLength={Len}",
+                e.DeviceId, e.SerialNumber, e.ProtocolType, appCode,
+                e.Data?.Length ?? 0);
+
+            // 调用标准数据采集处理流程（复用 P0/P1 已完善的 JSON 解析 + 规则引擎链路）
+            await dataCollectionService.ProcessDeviceDataAsync(
+                deviceId: e.DeviceId,
+                appCode: appCode,
+                sensorData: e.Data,
+                timestamp: e.ReceivedAt);
+        }
+        catch (Exception ex)
+        {
+            // 异常隔离：单条数据处理失败仅记录日志，不影响适配器运行
+            _logger?.LogError(ex,
+                "协议适配器数据桥接处理失败（已隔离）: DeviceId={DeviceId}, ProtocolType={ProtoType}",
+                e.DeviceId, e.ProtocolType);
+        }
+    }
+
+    #endregion
 }

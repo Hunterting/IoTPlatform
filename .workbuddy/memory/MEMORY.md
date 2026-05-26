@@ -12,24 +12,39 @@
 - **SuperAdmin 豁免**：`IsSuperAdmin=true` 跳过过滤
 - **MQTT 隔离**：主题格式 `{appCode}/{deviceId}/data`
 
-## 数据采集模块（2026-05-18 审查）
-- **链路**：设备(MQTT) → MqttClientService(Singleton) → OnDataReceived事件 → MqttHostedService(BgSvc) → DataCollectionService(Scoped) → MySQL
-- **MQTT topic格式**：`{appCode}/{deviceId}/data`，全局订阅 `+/+/data`
-- **DeviceDataRecord**：通用数据记录表，有 SensorData(JSON)+环境字段(温湿度/PM/CO2等)，**缺少水/电/气专用字段**
-- **DataCollectionService 不解析JSON**：SensorData 原样存库，DeviceSensor.LastValue 从不更新，物理量字段全为 null
-- **协议适配器层未接入主链路**：Modbus TCP/RTU、OPC UA 适配器存在但独立于 MQTT 主链路
-- **MQTT配置键不匹配**：appsettings.json 用 `MQTT.Server` 但代码读 `Mqtt:Broker`
-- **Device.EnergyTypes 仅元数据标记**：存 "electric,gas,water" 字符串，不驱动采集行为
+## 数据采集模块（2026-05-18 全面升级完成）
+### 主采集链路（双轨合一）
+- **链路 A (MQTT)**：设备 → MQTT Broker → MqttClientService(Singleton) → OnDataReceived → MqttHostedService(BgSvc) → DataCollectionService(Scoped) → MySQL
+- **链路 B (协议适配器)** ✅ **P2 已接入**：设备 → ModbusTCP/RTU/OPC UA/MQTT(适配器) → IProtocolAdapter.DataReceived ↑ → ProtocolConfigService 事件桥接 → IServiceScopeFactory → DataCollectionService.ProcessDeviceDataAsync() → MySQL
+- **桥接实现位置**：`ProtocolConfigService.SubscribeAdapterDataReceived()` / `OnProtocolAdapterDataReceived()`
+- **生命周期绑定**：Start 时订阅，Stop 时反注册，通过 `_activeSubscriptions` 字典追踪
+
+### DataCollectionService（核心处理引擎）
+- **JSON 解析** ✅：SensorFieldMappings 策略模式映射 35+ 物理量字段
+- **能耗差异化** ✅：EnergyTypeStrategy 按 water/electric/gas 做范围校验+关键字段聚焦
+- **DeviceDataRecord** ✅：含 6 个能耗字段（WaterFlow/Total, ElectricPower/KWh, GasFlow/Total）
+- **后处理链路**：保存记录 → 更新 DeviceSensor.LastValue → 执行 DataRule 规则引擎 → 触发告警
+
+### 时序数据存储层 ✅ **P2 新增**
+- **接口**：`ITimeSeriesStore`（Services/Interfaces/）— Write/QueryRange/GetLatest/Aggregate/DeleteOlderThan/Statistics
+- **实现**：`MySqlTimeSeriesStore` — 基于 DeviceDataRecord 表 + EF Core
+- **聚合**：支持 Avg/Max/Min/Sum/Count 按时间窗口降采样
+- **清理策略**：`DataRetentionHostedService`(BgSvc) 定时调用 DeleteOlderThanAsync 分批删除
+- **配置**：appsettings.json `DataRetention` 节（DetailRetentionDays=30, CleanupIntervalHours=24）
+- **扩展点**：切换到 InfluxDB/TimescaleDB 只需新增实现类，零业务代码改动
 
 ## 已知风险
-1. `Global Query Filter` 在 `DbContext` 构造时生成静态表达式，AppCode 变更后不会更新，需改为动态 Lambda
-2. `MqttClientService` 注册为 `Singleton`，与 `SignalR` 共进程，高流量时存在资源争抢
-3. 数据采集模块：SensorData JSON 不解析、缺水电气字段、配置键不匹配、协议层未集成
+1. ~~协议适配器层未接入主链路~~ ✅ **P2-A 已修复**
+2. ~~无时序数据库抽象~~ ✅ **P2-B/C 已补齐**
+3. `Global Query Filter` 在 `DbContext` 构造时生成静态表达式，AppCode 变更后不会更新，需改为动态 Lambda
+4. `MqttClientService` 注册为 `Singleton`，与 `SignalR` 共进程，高流量时存在资源争抢
+5. OPCUA 适配器为骨架代码（20%），所有 OPC Foundation 调用为 TODO
+6. **待办**：消息队列(RabbitMQ)、限流熔断、软删除+审计
 
 ## 演进规划
-- P1：时序数据库(InfluxDB/TimescaleDB)、消息队列(RabbitMQ)、限流熔断、软删除+审计
-- P2：多节点部署、读写分离、独立 Schema 隔离选项、K8s 容器化
-- P3：微服务拆分（设备、告警、数采、分析、网关）
+- **P0-P2** ✅ 全部完成（P0: JSON解析+配置键 | P1: 能耗字段+差异化 | P2: 协议集成+时序抽象）
+- **下一阶段**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 完善
+- **远期**：多节点部署、读写分离、K8s 容器化、微服务拆分
 
 ## 项目路径
-`G:\IoTPlatform`
+`H:\IoTPlatform`

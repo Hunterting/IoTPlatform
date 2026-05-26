@@ -30,16 +30,26 @@ public class MqttClientService : IMqttClientService, IDisposable
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        var mqttBroker = _configuration["Mqtt:Broker"] ?? "localhost";
-        var mqttPort = int.Parse(_configuration["Mqtt:Port"] ?? "1883");
-        var mqttClientId = _configuration["Mqtt:ClientId"] ?? "IoTPlatformServer";
+        // 读取 MQTT 配置（与 appsettings.json 的 "MQTT" 节对齐）
+        var mqttBroker = _configuration["MQTT:Server"] ?? _configuration["Mqtt:Broker"] ?? "localhost";
+        var mqttPort = int.Parse(_configuration["MQTT:Port"] ?? _configuration["Mqtt:Port"] ?? "1883");
+        var mqttClientId = _configuration["MQTT:ClientId"] ?? _configuration["Mqtt:ClientId"] ?? "IoTPlatformServer";
+        var mqttUsername = _configuration["MQTT:Username"];
+        var mqttPassword = _configuration["MQTT:Password"];
 
-        var options = new MqttClientOptionsBuilder()
+        var optionsBuilder = new MqttClientOptionsBuilder()
             .WithClientId(mqttClientId)
             .WithTcpServer(mqttBroker, mqttPort)
             .WithCleanSession()
-            .WithKeepAlivePeriod(TimeSpan.FromSeconds(30))
-            .Build();
+            .WithKeepAlivePeriod(TimeSpan.FromSeconds(30));
+
+        // 仅在配置了凭据时启用认证
+        if (!string.IsNullOrWhiteSpace(mqttUsername))
+        {
+            optionsBuilder.WithCredentials(mqttUsername, mqttPassword ?? "");
+        }
+
+        var options = optionsBuilder.Build();
 
         _mqttClient = new MqttFactory().CreateMqttClient();
 

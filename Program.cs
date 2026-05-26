@@ -124,8 +124,10 @@ builder.Services.AddScoped<IoTPlatform.Services.ITunnelService, IoTPlatform.Serv
 builder.Services.AddScoped<IoTPlatform.Services.IPluginService, IoTPlatform.Services.PluginService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDatabaseConfigService, IoTPlatform.Services.DatabaseConfigService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDataCollectionService, IoTPlatform.Services.DataCollectionService>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.ITimeSeriesStore, IoTPlatform.Services.MySqlTimeSeriesStore>();
 builder.Services.AddSingleton<IoTPlatform.Services.IMqttClientService, IoTPlatform.Services.MqttClientService>();
 builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();
+builder.Services.AddHostedService<IoTPlatform.Services.DataRetentionHostedService>();
 
 // 设备指令服务
 builder.Services.AddScoped<IoTPlatform.Services.IDeviceCommandService, IoTPlatform.Services.DeviceCommandService>();

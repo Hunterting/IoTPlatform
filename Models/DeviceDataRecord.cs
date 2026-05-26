@@ -28,6 +28,21 @@ public class DeviceDataRecord : IHasAppCode
     public double? SmokeConcentration { get; set; }
     public double? OilFume { get; set; }
     public double? Noise { get; set; }
+
+    // === 能耗/计量字段（水、电、气） ===
+    /// <summary>水流量 (m³/h 或 L/min)</summary>
+    public double? WaterFlow { get; set; }
+    /// <summary>累计用水量 (m³)</summary>
+    public double? WaterTotal { get; set; }
+    /// <summary>电功率 (kW)</summary>
+    public double? ElectricPower { get; set; }
+    /// <summary>累计用电量 (kWh)</summary>
+    public double? ElectricKWh { get; set; }
+    /// <summary>气流量 (m³/h)</summary>
+    public double? GasFlow { get; set; }
+    /// <summary>累计用气量 (m³)</summary>
+    public double? GasTotal { get; set; }
+
     public long? AreaId { get; set; }
     public string? AreaName { get; set; }
     public string? DeviceName { get; set; }
