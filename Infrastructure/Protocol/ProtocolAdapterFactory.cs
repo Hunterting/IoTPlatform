@@ -63,6 +63,7 @@ public class ProtocolAdapterFactory : IProtocolAdapterFactory
         var adapter = protocolType.ToUpperInvariant() switch
         {
             "MQTT" => CreateMqttAdapter(configId),
+            "ANSHENG_MQTT" => CreateAnShengMqttAdapter(configId),
             "MODBUSTCP" or "MODBUS_TCP" => CreateModbusTcpAdapter(configId),
             "MODBUSRTU" or "MODBUS_RTU" => CreateModbusRtuAdapter(configId),
             "OPCUA" or "OPC_UA" => CreateOpcUaAdapter(configId),
@@ -136,5 +137,11 @@ public class ProtocolAdapterFactory : IProtocolAdapterFactory
     {
         // HTTP 轮询适配器 - 暂未实现
         throw new NotImplementedException("HTTP 适配器暂未实现");
+    }
+
+    private IProtocolAdapter CreateAnShengMqttAdapter(int configId)
+    {
+        var logger = _loggerFactory?.CreateLogger<Adapters.AnShengMqttProtocolAdapter>();
+        return new Adapters.AnShengMqttProtocolAdapter(configId, logger);
     }
 }

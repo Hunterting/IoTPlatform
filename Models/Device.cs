@@ -15,6 +15,8 @@ public class Device : IHasAppCode
     [Required][MaxLength(200)] public string Name { get; set; } = string.Empty;
     [MaxLength(100)] public string? Model { get; set; }
     [MaxLength(100)] public string? SerialNumber { get; set; }
+    // IMEI for AnSheng MQTT devices, stored in SerialNumber (no separate field)
+    public long? ProtocolConfigId { get; set; }
     [MaxLength(100)] public string? Category { get; set; }
     [MaxLength(200)] public string? Location { get; set; }
     public long? AreaId { get; set; }
@@ -34,6 +36,7 @@ public class Device : IHasAppCode
 
     [ForeignKey("AreaId")] public virtual Area? Area { get; set; }
     [ForeignKey("ProjectId")] public virtual Project? Project { get; set; }
+    [ForeignKey("ProtocolConfigId")] public virtual ProtocolConfig? ProtocolConfig { get; set; }
     public virtual ICollection<DeviceSensor>? Sensors { get; set; }
     public virtual ICollection<DeviceDataRecord>? DataRecords { get; set; }
     public virtual ICollection<AreaDevice>? AreaDevices { get; set; }

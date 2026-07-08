@@ -19,3 +19,4 @@ export * from './roleApi';
 export * from './archivesApi';
 export * from './dictionaryApi';
 export * from './protocolApi';
+export * from './anshengApi';

@@ -25,6 +25,7 @@ import { DictionaryManagementPage } from '@/app/pages/DictionaryManagementPage';
 import { DataCollectionPage } from '@/app/pages/DataCollectionPage';
 import { ProtocolManagementPage } from '@/app/pages/ProtocolManagementPage';
 import { DeviceControlPage } from '@/app/pages/DeviceControlPage';
+import { AnShengManagementPage } from '@/app/pages/AnShengManagementPage';
 
 function AppContent() {
   const { user, currentCustomer } = useAuth();
@@ -80,6 +81,8 @@ function AppContent() {
         return <ProtocolManagementPage />;
       case 'device-control':
         return <DeviceControlPage />;
+      case 'ansheng-management':
+        return <AnShengManagementPage />;
       case 'alert-center':
         return <AlertCenterPage />;
       case 'data-collection':

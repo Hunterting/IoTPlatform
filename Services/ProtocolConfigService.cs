@@ -24,6 +24,7 @@ public class ProtocolConfigService : IProtocolConfigService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IProtocolAdapterFactory _adapterFactory;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IAnShengDiscoveryService? _discoveryService;
     private readonly ILogger<ProtocolConfigService>? _logger;
 
     /// <summary>
@@ -36,12 +37,14 @@ public class ProtocolConfigService : IProtocolConfigService
         IUnitOfWork unitOfWork,
         IProtocolAdapterFactory adapterFactory,
         IServiceScopeFactory scopeFactory,
+        IAnShengDiscoveryService? discoveryService = null,
         ILogger<ProtocolConfigService>? logger = null)
     {
         _protocolConfigRepository = protocolConfigRepository;
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
         _scopeFactory = scopeFactory;
+        _discoveryService = discoveryService;
         _logger = logger;
     }
 
@@ -440,6 +443,8 @@ public class ProtocolConfigService : IProtocolConfigService
     ///
     /// 将来自 Modbus / OPC UA / MQTT(通过适配器) 的统一格式数据，
     /// 转发给 IDataCollectionService.ProcessDeviceDataAsync() 进入标准采集管道。
+    ///
+    /// 特殊处理：ANSHENG_MQTT 适配器的 DeviceId=0 时，按 SerialNumber(IMEI) 查询设备
     /// </summary>
     private async Task OnProtocolAdapterDataReceived(DeviceDataReceivedEventArgs e, string? fallbackAppCode)
     {
@@ -449,18 +454,72 @@ public class ProtocolConfigService : IProtocolConfigService
             using var scope = _scopeFactory.CreateScope();
             var dataCollectionService = scope.ServiceProvider.GetRequiredService<IDataCollectionService>();
 
-            // 优先使用事件参数中的 AppCode，降级为配置的 AppCode
             var appCode = !string.IsNullOrEmpty(e.AppCode) ? e.AppCode : fallbackAppCode;
+            var deviceId = e.DeviceId;
+
+            // ── AnSheng MQTT 适配器特殊处理：DeviceId=0 时按 IMEI 查找设备 ──
+            if (deviceId == 0 && e.ProtocolType == "ANSHENG_MQTT" && !string.IsNullOrEmpty(e.SerialNumber))
+            {
+                var deviceRepo = scope.ServiceProvider.GetRequiredService<IRepository<Device>>();
+                var device = (await deviceRepo.GetAsync(
+                    d => d.SerialNumber == e.SerialNumber,
+                    appCode: appCode)).FirstOrDefault();
+
+                if (device != null)
+                {
+                    deviceId = device.Id;
+                    appCode = device.AppCode ?? appCode;
+                    _logger?.LogDebug(
+                        "安圣 IMEI 映射成功: IMEI={IMEI} -> DeviceId={DeviceId}, AppCode={AppCode}",
+                        e.SerialNumber, deviceId, appCode);
+                }
+                else
+                {
+                    // 设备未注册 — 进入待认领池
+                    if (_discoveryService != null && e.ProtocolType == "ANSHENG_MQTT")
+                    {
+                        // 尝试从标准化数据中提取 model / netType
+                        string? model = null, netType = null;
+                        if (!string.IsNullOrEmpty(e.Data))
+                        {
+                            try
+                            {
+                                using var doc = System.Text.Json.JsonDocument.Parse(e.Data);
+                                var root = doc.RootElement;
+                                if (root.TryGetProperty("model", out var m)) model = m.GetString();
+                                if (root.TryGetProperty("netType", out var n)) netType = n.GetString();
+                            }
+                            catch { /* ignore parse errors */ }
+                        }
+
+                        await _discoveryService.OnDeviceOnlineAsync(
+                            e.SerialNumber, model, netType, appCode);
+                    }
+
+                    _logger?.LogInformation(
+                        "安圣设备 IMEI 未匹配到已注册设备: IMEI={IMEI}，已进入待认领池",
+                        e.SerialNumber);
+                    return;
+                }
+            }
+
+            // ── 已注册设备：通知上线 ──
+            if (_discoveryService != null && e.ProtocolType == "ANSHENG_MQTT" &&
+                !string.IsNullOrEmpty(e.SerialNumber) && deviceId > 0)
+            {
+                // fire-and-forget 通知 DiscoveryService，不阻塞采集管道
+                _ = _discoveryService.OnDeviceOnlineAsync(e.SerialNumber, null, null, appCode);
+            }
 
             _logger?.LogDebug(
                 "协议适配器数据桥接: DeviceId={DeviceId}, SerialNumber={Serial}, " +
                 "ProtocolType={ProtoType}, AppCode={AppCode}, DataLength={Len}",
-                e.DeviceId, e.SerialNumber, e.ProtocolType, appCode,
+                deviceId, e.SerialNumber, e.ProtocolType, appCode,
                 e.Data?.Length ?? 0);
 
             // 调用标准数据采集处理流程（复用 P0/P1 已完善的 JSON 解析 + 规则引擎链路）
             await dataCollectionService.ProcessDeviceDataAsync(
-                deviceId: e.DeviceId,
+                deviceId: deviceId,
                 appCode: appCode,
                 sensorData: e.Data,
                 timestamp: e.ReceivedAt);

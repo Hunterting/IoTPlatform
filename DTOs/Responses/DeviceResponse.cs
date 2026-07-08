@@ -10,6 +10,7 @@ public class DeviceDto
     public string Name { get; set; } = string.Empty;
     public string? Model { get; set; }
     public string? SerialNumber { get; set; }
+    public long? ProtocolConfigId { get; set; }
     public string? Category { get; set; }
     public string? Location { get; set; }
     public long? AreaId { get; set; }

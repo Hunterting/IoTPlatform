@@ -32,6 +32,7 @@ import {
   Database,
   Terminal,
   Radio,
+  RadioTower,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, Permission } from '@/app/config/permissions';
@@ -72,7 +73,8 @@ export type PageType =
   | 'settings-security'
   | 'settings-devices'
   | 'settings-api'
-  | 'settings-dictionary';
+  | 'settings-dictionary'
+  | 'ansheng-management';
 
 interface SidebarProps {
   currentPage: PageType;
@@ -137,6 +139,12 @@ const menuItems: MenuItem[] = [
         label: '告警中心',
         icon: <AlertTriangle className="w-4 h-4" />,
         requiredPermission: PERMISSIONS.VIEW_ALERT_CENTER,
+      },
+      {
+        id: 'ansheng-management',
+        label: '安圣设备',
+        icon: <RadioTower className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DEVICES,
       },
     ],
   },

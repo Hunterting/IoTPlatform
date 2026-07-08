@@ -67,6 +67,8 @@ public class AppDbContext : DbContext
 
     // 数据采集
     public DbSet<ProtocolConfig> ProtocolConfigs { get; set; }
+    public DbSet<AnShengDeviceConfig> AnShengDeviceConfigs { get; set; }
+    public DbSet<DiscoveredAnShengDevice> DiscoveredAnShengDevices { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -117,6 +119,8 @@ public class AppDbContext : DbContext
         ConfigureArchiveDeviceMarkers(modelBuilder);
         ConfigureCameras(modelBuilder);
         ConfigureProtocolConfigs(modelBuilder);
+        ConfigureAnShengDeviceConfigs(modelBuilder);
+        ConfigureDiscoveredAnShengDevices(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -258,11 +262,14 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.ProjectId);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.SerialNumber);
+            entity.HasIndex(e => e.ProtocolConfigId);
 
             entity.Property(e => e.EnergyTypes).HasColumnType("json");
 
-            // Area 关系通过注解 [ForeignKey("AreaId")] 配置
-            // Project 关系通过注解 [ForeignKey("ProjectId")] 和 Project.Devices 导航属性配置
+            entity.HasOne(e => e.ProtocolConfig)
+                .WithMany()
+                .HasForeignKey(e => e.ProtocolConfigId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 
@@ -386,6 +393,33 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.AppCode);
             entity.HasIndex(e => e.ProtocolType);
             entity.HasIndex(e => e.IsActive);
+        });
+    }
+
+    private void ConfigureAnShengDeviceConfigs(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengDeviceConfig>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.DeviceId).IsUnique();
+            entity.HasIndex(e => e.Imei);
+            entity.HasIndex(e => e.AppCode);
+
+            entity.HasOne(e => e.Device)
+                .WithMany()
+                .HasForeignKey(e => e.DeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private void ConfigureDiscoveredAnShengDevices(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DiscoveredAnShengDevice>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.Imei);
+            entity.HasIndex(e => e.IsClaimed);
+            entity.HasIndex(e => e.AppCode);
         });
     }
 

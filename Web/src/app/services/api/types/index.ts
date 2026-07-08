@@ -49,6 +49,7 @@ export enum ApiStatus {
   DELETED = 'deleted'
 }
 
+export * from './ansheng.types';
 export * from './deviceCommand.types';
 export * from './controlledDevice.types';
 export * from './role.types';

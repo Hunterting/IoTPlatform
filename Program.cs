@@ -132,6 +132,13 @@ builder.Services.AddHostedService<IoTPlatform.Services.DataRetentionHostedServic
 // 设备指令服务
 builder.Services.AddScoped<IoTPlatform.Services.IDeviceCommandService, IoTPlatform.Services.DeviceCommandService>();
 
+// 安圣 MQTT 命令服务
+builder.Services.AddScoped<IoTPlatform.Services.IAnShengCommandService, IoTPlatform.Services.AnShengCommandService>();
+
+// 安圣设备发现服务（全局单例 BackgroundService）
+builder.Services.AddSingleton<IoTPlatform.Services.IAnShengDiscoveryService, IoTPlatform.Services.AnShengDiscoveryService>();
+builder.Services.AddHostedService(sp => (IoTPlatform.Services.AnShengDiscoveryService)sp.GetRequiredService<IoTPlatform.Services.IAnShengDiscoveryService>());
+
 // 受控设备服务
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IControlledDeviceService, IoTPlatform.Services.ControlledDeviceService>();
 

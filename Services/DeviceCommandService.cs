@@ -16,15 +16,18 @@ public class DeviceCommandService : IDeviceCommandService
 {
     private readonly AppDbContext _db;
     private readonly IMqttClientService _mqttClient;
+    private readonly IAnShengCommandService? _anShengCommandService;
     private readonly ILogger<DeviceCommandService> _logger;
 
     public DeviceCommandService(
         AppDbContext db,
         IMqttClientService mqttClient,
-        ILogger<DeviceCommandService> logger)
+        ILogger<DeviceCommandService> logger,
+        IAnShengCommandService? anShengCommandService = null)
     {
         _db = db;
         _mqttClient = mqttClient;
+        _anShengCommandService = anShengCommandService;
         _logger = logger;
 
         // 监听 MQTT 指令响应事件
@@ -55,6 +58,13 @@ public class DeviceCommandService : IDeviceCommandService
                 Success = false,
                 ErrorMessage = $"设备 {request.DeviceId} 不存在或无权限访问"
             };
+        }
+
+        // ★ 命令路由：如果设备配置了安圣协议（ProtocolConfigId 不为空），
+        //    则通过安圣适配器下发，而非通用 MQTT 客户端
+        if (device.ProtocolConfigId != null && _anShengCommandService != null)
+        {
+            return await SendViaAnShengAsync(device, request, appCode, userId, userName);
         }
 
         // 2. 序列化参数
@@ -486,6 +496,180 @@ public class DeviceCommandService : IDeviceCommandService
                 _logger.LogError(ex, "处理指令响应时发生错误: CommandId={CommandId}", e.CommandId);
             }
         });
+    }
+
+    // ─────────────────────────────────────────────
+    // 安圣协议命令路由
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 通过安圣适配器下发命令
+    /// 当设备配置了 ProtocolConfigId 时走此路径
+    /// </summary>
+    private async Task<DeviceCommandResponse> SendViaAnShengAsync(
+        Models.Device device,
+        SendDeviceCommandRequest request,
+        string? appCode,
+        long? userId,
+        string? userName)
+    {
+        // 创建指令记录（状态先 Pending）
+        var parametersJson = request.Parameters != null
+            ? System.Text.Json.JsonSerializer.Serialize(request.Parameters)
+            : null;
+
+        var command = new DeviceCommand
+        {
+            CommandId = Guid.NewGuid().ToString("N"),
+            AppCode = appCode,
+            DeviceId = request.DeviceId,
+            SerialNumber = device.SerialNumber,
+            CommandType = request.CommandType,
+            Parameters = parametersJson,
+            Status = CommandStatus.Pending,
+            TimeoutSeconds = request.TimeoutSeconds,
+            MaxRetries = request.MaxRetries,
+            CreatedBy = userId,
+            CreatedByName = userName,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        _db.DeviceCommands.Add(command);
+
+        _db.CommandHistories.Add(new CommandHistory
+        {
+            AppCode = appCode,
+            CommandId = command.Id,
+            Type = CommandHistoryType.Created,
+            ToStatus = CommandStatus.Pending,
+            Description = $"指令已创建（安圣协议），类型：{request.CommandType}",
+            OperatorId = userId,
+            OperatorName = userName,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync();
+
+        // 通过安圣服务下发
+        try
+        {
+            var result = await _anShengCommandService!.SendCommandAsync(
+                deviceId: request.DeviceId,
+                method: request.CommandType,
+                parameters: request.Parameters,
+                ct: CancellationToken.None);
+
+            if (result.Success)
+            {
+                // 注册 frameId ↔ commandId 映射
+                if (result.FrameId != null)
+                {
+                    AnShengCommandService.RegisterFrameIdMapping(result.FrameId, command.CommandId);
+                }
+
+                command.Status = CommandStatus.Sent;
+                command.SentAt = DateTime.UtcNow;
+                command.UpdatedAt = DateTime.UtcNow;
+
+                _db.CommandHistories.Add(new CommandHistory
+                {
+                    AppCode = appCode,
+                    CommandId = command.Id,
+                    Type = CommandHistoryType.Sent,
+                    FromStatus = CommandStatus.Pending,
+                    ToStatus = CommandStatus.Sent,
+                    Description = $"安圣命令已下发: FrameId={result.FrameId}",
+                    OperatorId = userId,
+                    OperatorName = userName,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _db.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "安圣命令下发成功: CommandId={CommandId}, DeviceId={DeviceId}, Method={Method}, FrameId={FrameId}",
+                    command.CommandId, command.DeviceId, command.CommandType, result.FrameId);
+            }
+            else
+            {
+                command.Status = CommandStatus.Failed;
+                command.ErrorMessage = result.ErrorMessage;
+                command.CompletedAt = DateTime.UtcNow;
+                command.UpdatedAt = DateTime.UtcNow;
+
+                _db.CommandHistories.Add(new CommandHistory
+                {
+                    AppCode = appCode,
+                    CommandId = command.Id,
+                    Type = CommandHistoryType.Failed,
+                    FromStatus = CommandStatus.Pending,
+                    ToStatus = CommandStatus.Failed,
+                    Description = $"安圣命令下发失败：{result.ErrorMessage}",
+                    OperatorId = userId,
+                    OperatorName = userName,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                await _db.SaveChangesAsync();
+
+                _logger.LogWarning(
+                    "安圣命令下发失败: CommandId={CommandId}, Error={Error}",
+                    command.CommandId, result.ErrorMessage);
+
+                return new DeviceCommandResponse
+                {
+                    Success = false,
+                    CommandId = command.CommandId,
+                    Status = command.Status.ToString(),
+                    ErrorMessage = command.ErrorMessage,
+                    CreatedAt = command.CreatedAt
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            command.Status = CommandStatus.Failed;
+            command.ErrorMessage = $"安圣命令下发异常：{ex.Message}";
+            command.CompletedAt = DateTime.UtcNow;
+            command.UpdatedAt = DateTime.UtcNow;
+
+            _db.CommandHistories.Add(new CommandHistory
+            {
+                AppCode = appCode,
+                CommandId = command.Id,
+                Type = CommandHistoryType.Failed,
+                FromStatus = CommandStatus.Pending,
+                ToStatus = CommandStatus.Failed,
+                Description = $"安圣命令下发异常：{ex.Message}",
+                OperatorId = userId,
+                OperatorName = userName,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _db.SaveChangesAsync();
+
+            _logger.LogError(ex,
+                "安圣命令下发异常: CommandId={CommandId}, DeviceId={DeviceId}",
+                command.CommandId, command.DeviceId);
+
+            return new DeviceCommandResponse
+            {
+                Success = false,
+                CommandId = command.CommandId,
+                Status = command.Status.ToString(),
+                ErrorMessage = command.ErrorMessage,
+                CreatedAt = command.CreatedAt
+            };
+        }
+
+        return new DeviceCommandResponse
+        {
+            Success = true,
+            CommandId = command.CommandId,
+            Status = command.Status.ToString(),
+            CreatedAt = command.CreatedAt
+        };
     }
 
     // ─────────────────────────────────────────────

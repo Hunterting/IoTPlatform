@@ -67,6 +67,13 @@ public class DataCollectionService : IDataCollectionService
         { "gas_flow",          (r, v) => r.GasFlow           = v },
         { "gastotal",          (r, v) => r.GasTotal          = v },
         { "gas_total",         (r, v) => r.GasTotal          = v },
+
+        // === 安圣 MQTT 标准化字段 ===
+        { "total_power",       (r, v) => r.ElectricPower     = v },
+        { "total_energy",      (r, v) => r.ElectricKWh       = v },
+        { "total_current",     (r, v) => { /* Current not in schema; stored in SensorData */ } },
+        { "avg_voltage",       (r, v) => { /* Voltage not on DeviceDataRecord; stored in SensorData */ } },
+        { "energy",            (r, v) => r.ElectricKWh       = v },
     };
 
     /// <summary>
