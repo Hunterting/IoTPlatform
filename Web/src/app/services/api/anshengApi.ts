@@ -9,6 +9,8 @@ import type {
   AnShengCommandResponse,
   AnShengAutoReportRequest,
   DiscoveredDeviceQueryParams,
+  SwitchControlRequest,
+  SwitchConfigRequest,
 } from './types/ansheng.types';
 
 /**
@@ -61,6 +63,48 @@ export const anshengApi = {
     return httpClient.post<ApiResponse<AnShengCommandResponse>>(
       `/ansheng/${request.deviceId}/auto-report`,
       request
+    );
+  },
+
+  // ── 二开设备开关命令 ──────────────────────────────────────
+
+  /** 控制开关通断 */
+  controlSwitch: async (
+    request: SwitchControlRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
+    return httpClient.post<ApiResponse<AnShengCommandResponse>>(
+      `/ansheng/${request.deviceId}/switch`,
+      { switchId: request.switchId, on: request.on }
+    );
+  },
+
+  /** 查询开关状态 */
+  getSwitchStatus: async (
+    deviceId: number,
+    switchId?: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
+    return httpClient.get<ApiResponse<AnShengCommandResponse>>(
+      `/ansheng/${deviceId}/switch-status`,
+      { params: { switchId } }
+    );
+  },
+
+  /** 配置开关参数 */
+  configureSwitch: async (
+    request: SwitchConfigRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
+    return httpClient.post<ApiResponse<AnShengCommandResponse>>(
+      `/ansheng/${request.deviceId}/switch-config`,
+      { switchId: request.switchId, config: request.config }
+    );
+  },
+
+  /** 远程重启设备 */
+  rebootDevice: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
+    return httpClient.post<ApiResponse<AnShengCommandResponse>>(
+      `/ansheng/${deviceId}/reboot`
     );
   },
 };

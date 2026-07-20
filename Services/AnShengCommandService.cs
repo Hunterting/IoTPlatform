@@ -225,6 +225,33 @@ public class AnShengCommandService : IAnShengCommandService
         }
     }
 
+    // ─── 二开设备开关命令实现 ───
+
+    /// <inheritdoc />
+    public async Task<AnShengCommandResponse> SendSwitchCommandAsync(
+        long deviceId, int switchId, bool on, CancellationToken ct = default)
+        => await SendCommandAsync(deviceId, "setSwitch",
+            new Dictionary<string, object?> { ["switch"] = switchId, ["on"] = on ? 1 : 0 }, ct);
+
+    /// <inheritdoc />
+    public async Task<AnShengCommandResponse> GetSwitchStatusAsync(
+        long deviceId, int? switchId = null, CancellationToken ct = default)
+        => await SendCommandAsync(deviceId, "getSwitchStatus",
+            switchId.HasValue ? new Dictionary<string, object?> { ["switch"] = switchId.Value } : null, ct);
+
+    /// <inheritdoc />
+    public async Task<AnShengCommandResponse> ConfigureSwitchAsync(
+        long deviceId, int switchId, Dictionary<string, object?> config, CancellationToken ct = default)
+    {
+        config["switch"] = switchId;
+        return await SendCommandAsync(deviceId, "setSwitchConfig", config, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<AnShengCommandResponse> RebootDeviceAsync(
+        long deviceId, CancellationToken ct = default)
+        => await SendCommandAsync(deviceId, "reboot", null, ct);
+
     /// <summary>
     /// 注册 frameId ↔ commandId 映射
     /// 由 DeviceCommandService 在发送安圣命令后调用，以便后续响应匹配

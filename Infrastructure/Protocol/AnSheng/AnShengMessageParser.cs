@@ -64,6 +64,9 @@ public class AnShengMessageParser
             "orderEnd" => AnShengMessageCategory.OrderEnd,
             "orderUp" => AnShengMessageCategory.OrderUp,
             "close" => AnShengMessageCategory.Close,
+            "setSwitch" or "getSwitchStatus" or "setSwitchConfig"
+                or "getSwitchConfig" or "reboot"
+                => AnShengMessageCategory.OpenDeviceCommand,
             _ => AnShengMessageCategory.CommandResponse
         };
     }

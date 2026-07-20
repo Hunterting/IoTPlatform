@@ -200,4 +200,59 @@ public class AnShengCommandBuilder
         _logger?.LogDebug("构建通用命令: Method={Method}, IMEI={IMEI}, FrameId={FrameId}", method, imei, frameId);
         return (frameId, payload);
     }
+
+    // ─── 二开设备开关命令模板 ───
+
+    /// <summary>构建 setSwitch 命令 — 控制开关通断</summary>
+    /// <param name="imei">设备 IMEI</param>
+    /// <param name="switchId">开关编号（1-based）</param>
+    /// <param name="on">true=开，false=关</param>
+    public (string FrameId, string Payload) BuildSetSwitch(string imei, int switchId, bool on)
+    {
+        return BuildCommand(imei, "setSwitch", new Dictionary<string, object?>
+        {
+            ["switch"] = switchId,
+            ["on"] = on ? 1 : 0
+        });
+    }
+
+    /// <summary>构建 getSwitchStatus 命令 — 查询开关状态</summary>
+    /// <param name="imei">设备 IMEI</param>
+    /// <param name="switchId">开关编号，null 表示查询全部开关</param>
+    public (string FrameId, string Payload) BuildGetSwitchStatus(string imei, int? switchId = null)
+    {
+        var param = switchId.HasValue
+            ? new Dictionary<string, object?> { ["switch"] = switchId.Value }
+            : null;
+        return BuildCommand(imei, "getSwitchStatus", param);
+    }
+
+    /// <summary>构建 setSwitchConfig 命令 — 配置开关参数</summary>
+    /// <param name="imei">设备 IMEI</param>
+    /// <param name="switchId">开关编号（1-based）</param>
+    /// <param name="config">配置键值对（如 name/timer/enableDelay 等）</param>
+    public (string FrameId, string Payload) BuildSetSwitchConfig(string imei, int switchId,
+        Dictionary<string, object?> config)
+    {
+        var param = new Dictionary<string, object?>(config) { ["switch"] = switchId };
+        return BuildCommand(imei, "setSwitchConfig", param);
+    }
+
+    /// <summary>构建 getSwitchConfig 命令 — 查询开关配置</summary>
+    /// <param name="imei">设备 IMEI</param>
+    /// <param name="switchId">开关编号（1-based）</param>
+    public (string FrameId, string Payload) BuildGetSwitchConfig(string imei, int switchId)
+    {
+        return BuildCommand(imei, "getSwitchConfig", new Dictionary<string, object?>
+        {
+            ["switch"] = switchId
+        });
+    }
+
+    /// <summary>构建 reboot 命令 — 远程重启二开设备</summary>
+    /// <param name="imei">设备 IMEI</param>
+    public (string FrameId, string Payload) BuildReboot(string imei)
+    {
+        return BuildCommand(imei, "reboot");
+    }
 }

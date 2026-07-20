@@ -321,4 +321,95 @@ public class AnShengController : ControllerBase
             return ApiResponse<AnShengCommandResponse>.Error($"命令下发失败：{ex.Message}");
         }
     }
+
+    // ─────────────────────────────────────────────
+    // 二开设备开关控制
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 控制二开设备开关通断
+    /// </summary>
+    [HttpPost("{deviceId:long}/switch")]
+    [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
+    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> ControlSwitch(
+        long deviceId, [FromBody] SwitchControlRequest request)
+    {
+        try
+        {
+            var result = await _commandService.SendSwitchCommandAsync(deviceId, request.SwitchId, request.On);
+            return result.Success
+                ? ApiResponse<AnShengCommandResponse>.Success(result,
+                    $"开关 {request.SwitchId} 已{(request.On ? "开启" : "关闭")}")
+                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "开关控制失败");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "开关控制失败: DeviceId={DeviceId}, SwitchId={Id}", deviceId, request.SwitchId);
+            return ApiResponse<AnShengCommandResponse>.Error($"控制失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 查询二开设备开关状态
+    /// </summary>
+    [HttpGet("{deviceId:long}/switch-status")]
+    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> GetSwitchStatus(
+        long deviceId, [FromQuery] int? switchId = null)
+    {
+        try
+        {
+            var result = await _commandService.GetSwitchStatusAsync(deviceId, switchId);
+            return result.Success
+                ? ApiResponse<AnShengCommandResponse>.Success(result)
+                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "查询失败");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "查询开关状态失败: DeviceId={DeviceId}", deviceId);
+            return ApiResponse<AnShengCommandResponse>.Error($"查询失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 配置二开设备开关参数
+    /// </summary>
+    [HttpPost("{deviceId:long}/switch-config")]
+    [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
+    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> ConfigureSwitch(
+        long deviceId, [FromBody] SwitchConfigRequest request)
+    {
+        try
+        {
+            var result = await _commandService.ConfigureSwitchAsync(deviceId, request.SwitchId, request.Config);
+            return result.Success
+                ? ApiResponse<AnShengCommandResponse>.Success(result, "开关配置已下发")
+                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "配置失败");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "配置开关失败: DeviceId={DeviceId}", deviceId);
+            return ApiResponse<AnShengCommandResponse>.Error($"配置失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 远程重启二开设备
+    /// </summary>
+    [HttpPost("{deviceId:long}/reboot")]
+    [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
+    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> RebootDevice(long deviceId)
+    {
+        try
+        {
+            var result = await _commandService.RebootDeviceAsync(deviceId);
+            return result.Success
+                ? ApiResponse<AnShengCommandResponse>.Success(result, "重启命令已下发")
+                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "重启失败");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "重启设备失败: DeviceId={DeviceId}", deviceId);
+            return ApiResponse<AnShengCommandResponse>.Error($"重启失败：{ex.Message}");
+        }
+    }
 }

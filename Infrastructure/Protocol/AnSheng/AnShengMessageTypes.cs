@@ -191,6 +191,9 @@ public enum AnShengMessageCategory
     /// <summary>设备离线（Will message）</summary>
     Close,
 
+    /// <summary>二开设备开关命令（setSwitch/getSwitchStatus/setSwitchConfig/getSwitchConfig/reboot）</summary>
+    OpenDeviceCommand,
+
     /// <summary>通用命令响应（除上述 method 外）</summary>
     CommandResponse
 }

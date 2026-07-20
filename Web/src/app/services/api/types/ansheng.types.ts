@@ -72,3 +72,21 @@ export interface DiscoveredDeviceQueryParams {
   keyword?: string;
   claimed?: boolean;
 }
+
+// ── 二开设备开关命令 ──────────────────────────────────────
+export interface SwitchControlRequest {
+  deviceId: number;
+  switchId: number;
+  on: boolean;
+}
+
+export interface SwitchConfigRequest {
+  deviceId: number;
+  switchId: number;
+  config: Record<string, unknown>;
+}
+
+export interface SwitchQueryParams {
+  deviceId: number;
+  switchId?: number;
+}

@@ -115,6 +115,76 @@ const ANSHENG_COMMAND_TEMPLATES: CommandTemplate[] = [
   },
 ];
 
+// ── 二开设备开关命令模板 ────────────────────────────────────────────
+const OPEN_DEVICE_COMMAND_TEMPLATES: CommandTemplate[] = [
+  {
+    method: 'setSwitch',
+    label: '控制开关',
+    icon: <Power className="w-4 h-4" />,
+    description: '控制指定开关通断',
+    color: 'green',
+    params: [
+      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
+      { key: 'on', label: '动作', type: 'select', options: ['开', '关'], defaultValue: '开' },
+    ],
+  },
+  {
+    method: 'getSwitchStatus',
+    label: '查询开关状态',
+    icon: <Activity className="w-4 h-4" />,
+    description: '查询开关当前通断状态',
+    color: 'blue',
+    params: [
+      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
+    ],
+  },
+  {
+    method: 'setSwitchConfig',
+    label: '配置开关',
+    icon: <Settings className="w-4 h-4" />,
+    description: '配置开关定时/参数',
+    color: 'amber',
+    params: [
+      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
+      { key: 'name', label: '开关名称', type: 'text', placeholder: '如：路灯1' },
+    ],
+  },
+  {
+    method: 'getSwitchConfig',
+    label: '查询开关配置',
+    icon: <Info className="w-4 h-4" />,
+    description: '查询开关详细配置',
+    color: 'cyan',
+    params: [
+      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
+    ],
+  },
+  {
+    method: 'reboot',
+    label: '重启设备',
+    icon: <RotateCcw className="w-4 h-4" />,
+    description: '远程重启二开设备',
+    color: 'orange',
+    params: [],
+  },
+  {
+    method: 'getDevInfo',
+    label: '查询设备信息',
+    icon: <Info className="w-4 h-4" />,
+    description: '获取设备型号、网络类型等',
+    color: 'slate',
+    params: [],
+  },
+  {
+    method: 'getDevStatus',
+    label: '查询设备状态',
+    icon: <Activity className="w-4 h-4" />,
+    description: '获取设备实时状态',
+    color: 'purple',
+    params: [],
+  },
+];
+
 // ── 状态徽章 ─────────────────────────────────────────────────────
 function getClaimStatusBadge(isClaimed: boolean) {
   if (isClaimed) {
@@ -165,7 +235,7 @@ export function AnShengManagementPage() {
   const canSend   = hasPermission(PERMISSIONS.SEND_DEVICE_COMMANDS);
 
   // Tab 状态
-  const [activeTab, setActiveTab] = useState<'discovered' | 'commands'>('discovered');
+  const [activeTab, setActiveTab] = useState<'discovered' | 'commands' | 'opendevice'>('discovered');
 
   // ── 待认领设备状态 ─────────────────────────────────────────────
   const [discoveredDevices, setDiscoveredDevices] = useState<DiscoveredAnShengDeviceDto[]>([]);
@@ -349,19 +419,40 @@ export function AnShengManagementPage() {
     setSendResult(null);
 
     try {
-      let params: Record<string, unknown> = {};
-      selectedTemplate.params.forEach(p => {
-        const val = paramValues[p.key];
-        if (val !== undefined && val !== '') {
-          params[p.key] = p.type === 'number' ? Number(val) : val;
-        }
-      });
+      // 二开设备命令 — 按 method 路由到专用 API
+      const isOpenDevice = activeTab === 'opendevice';
+      const method = selectedTemplate.method;
+      let response: { data: { success: boolean; message?: string; data?: AnShengCommandResponse } };
 
-      const response = await anshengApi.sendCommand({
-        deviceId: selectedDeviceId,
-        method: selectedTemplate.method,
-        params: Object.keys(params).length > 0 ? params : undefined,
-      });
+      if (isOpenDevice && method === 'setSwitch') {
+        const switchId = Number(paramValues['switch'] || '1');
+        const isOn = paramValues['on'] !== '关'; // 默认"开"=true
+        response = await anshengApi.controlSwitch({ deviceId: selectedDeviceId, switchId, on: isOn }) as any;
+      } else if (isOpenDevice && method === 'getSwitchStatus') {
+        const switchId = paramValues['switch'] ? Number(paramValues['switch']) : undefined;
+        response = await anshengApi.getSwitchStatus(selectedDeviceId, switchId) as any;
+      } else if (isOpenDevice && method === 'setSwitchConfig') {
+        const switchId = Number(paramValues['switch'] || '1');
+        const config: Record<string, unknown> = {};
+        if (paramValues['name']) config['name'] = paramValues['name'];
+        response = await anshengApi.configureSwitch({ deviceId: selectedDeviceId, switchId, config }) as any;
+      } else if (isOpenDevice && method === 'reboot') {
+        response = await anshengApi.rebootDevice(selectedDeviceId) as any;
+      } else {
+        // 通用命令（getDevInfo、getSwitchConfig、getDevStatus 等）
+        let params: Record<string, unknown> = {};
+        selectedTemplate.params.forEach(p => {
+          const val = paramValues[p.key];
+          if (val !== undefined && val !== '') {
+            params[p.key] = p.type === 'number' ? Number(val) : val;
+          }
+        });
+        response = await anshengApi.sendCommand({
+          deviceId: selectedDeviceId,
+          method: selectedTemplate.method,
+          params: Object.keys(params).length > 0 ? params : undefined,
+        }) as any;
+      }
 
       if (response.data.success) {
         setSendResult({ success: true, message: `指令 ${selectedTemplate.method} 已下发` });
@@ -464,6 +555,18 @@ export function AnShengManagementPage() {
         >
           <Terminal className="w-4 h-4 inline mr-1.5" />
           命令面板
+        </button>
+        <button
+          onClick={() => setActiveTab('opendevice')}
+          disabled={!canSend}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
+            activeTab === 'opendevice'
+              ? 'bg-emerald-600/30 text-emerald-400 border border-emerald-500/30'
+              : 'text-slate-400 hover:text-slate-200'
+          } ${!canSend ? 'opacity-40 cursor-not-allowed' : ''}`}
+        >
+          <Power className="w-4 h-4 inline mr-1.5" />
+          二开设备命令
         </button>
       </div>
 
@@ -852,6 +955,200 @@ export function AnShengManagementPage() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ────────────── 二开设备命令 Tab ────────────── */}
+      {activeTab === 'opendevice' && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* 左侧：设备选择 + 命令模板 */}
+          <div className="space-y-4">
+            {/* 设备选择 */}
+            <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Radio className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-slate-200">选择二开设备</h3>
+              </div>
+              {anshengDevicesLoading ? (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-64 overflow-y-auto">
+                  {anshengDevices
+                    .filter(d => d.model && (
+                      d.model.includes('喇叭') || d.model.includes('开关') ||
+                      d.model.includes('Speaker') || d.model.includes('Switch')
+                    ))
+                    .map(d => (
+                      <button
+                        key={d.id}
+                        onClick={() => { setSelectedDeviceId(d.id); setSendResult(null); }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${
+                          selectedDeviceId === d.id
+                            ? 'bg-emerald-600/20 border border-emerald-500/30 text-emerald-300'
+                            : 'hover:bg-slate-700/30 text-slate-400 border border-transparent'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">{d.name}</span>
+                          <span className="text-xs text-slate-500">{d.model}</span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          IMEI: {d.serialNumber} · {d.status}
+                        </div>
+                      </button>
+                    ))}
+                  {anshengDevices.filter(d => d.model && (
+                    d.model.includes('喇叭') || d.model.includes('开关') ||
+                    d.model.includes('Speaker') || d.model.includes('Switch')
+                  )).length === 0 && (
+                    <p className="text-xs text-slate-500 py-2 text-center">暂无可控二开设备</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 命令模板列表 */}
+            <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Wrench className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-slate-200">命令模板</h3>
+              </div>
+              <div className="space-y-1.5">
+                {OPEN_DEVICE_COMMAND_TEMPLATES.map(tpl => (
+                  <button
+                    key={tpl.method}
+                    onClick={() => { setSelectedTemplate(tpl); setParamValues({}); setSendResult(null); }}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
+                      selectedTemplate.method === tpl.method
+                        ? `bg-${tpl.color}-500/15 border border-${tpl.color}-500/30`
+                        : 'hover:bg-slate-700/20 border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-${tpl.color}-400`}>{tpl.icon}</span>
+                      <div>
+                        <div className="text-sm font-medium text-slate-200">{tpl.label}</div>
+                        <div className="text-xs text-slate-500">{tpl.description}</div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 右侧：参数表单 + 发送 + 日志 */}
+          <div className="xl:col-span-2 space-y-4">
+            {/* 参数表单 */}
+            <div className="p-5 rounded-xl bg-slate-800/40 border border-slate-700/30">
+              <div className="flex items-center gap-2 mb-4">
+                <div className={`p-1.5 rounded-lg bg-${selectedTemplate.color}-500/20 border border-${selectedTemplate.color}-500/30`}>
+                  <span className={`text-${selectedTemplate.color}-400`}>{selectedTemplate.icon}</span>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-200">{selectedTemplate.label}</h3>
+                  <p className="text-xs text-slate-500">{selectedTemplate.description}</p>
+                </div>
+              </div>
+
+              {selectedTemplate.params.length > 0 ? (
+                <div className="space-y-3">
+                  {selectedTemplate.params.map(field => (
+                    <div key={field.key}>
+                      <label className="block text-xs font-medium text-slate-400 mb-1">
+                        {field.label}
+                      </label>
+                      {field.type === 'select' ? (
+                        <select
+                          value={paramValues[field.key] || field.defaultValue || ''}
+                          onChange={e => setParamValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-slate-200
+                                     text-sm focus:outline-none focus:border-emerald-500/50 transition-colors"
+                        >
+                          {field.options?.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type}
+                          value={paramValues[field.key] || field.defaultValue || ''}
+                          onChange={e => setParamValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                          placeholder={field.placeholder}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-700 text-slate-200
+                                     text-sm focus:outline-none focus:border-emerald-500/50 transition-colors
+                                     placeholder:text-slate-600"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">该命令无需参数</p>
+              )}
+
+              {/* 发送按钮 */}
+              <button
+                onClick={handleSendCommand}
+                disabled={!selectedDeviceId || sending}
+                className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg
+                           bg-emerald-600/30 text-emerald-400 border border-emerald-500/30
+                           hover:bg-emerald-600/40 disabled:opacity-40 disabled:cursor-not-allowed
+                           text-sm font-medium transition-all"
+              >
+                {sending ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> 发送中...</>
+                ) : (
+                  <><Send className="w-4 h-4" /> 下发命令</>
+                )}
+              </button>
+
+              {/* 发送结果 */}
+              <AnimatePresence>
+                {sendResult && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    className={`mt-3 p-3 rounded-lg text-sm ${
+                      sendResult.success
+                        ? 'bg-green-500/10 border border-green-500/30 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/30 text-red-400'
+                    }`}
+                  >
+                    {sendResult.message}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* 命令日志 */}
+            <div className="p-5 rounded-xl bg-slate-800/40 border border-slate-700/30">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-4 h-4 text-slate-400" />
+                <h3 className="text-sm font-semibold text-slate-200">命令日志</h3>
+              </div>
+              {commandLog.length === 0 ? (
+                <p className="text-sm text-slate-500 py-2 text-center">暂无命令记录</p>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                  {commandLog.map((log, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs text-slate-400">
+                      <span className="text-slate-600 flex-shrink-0">
+                        {log.time.toLocaleTimeString()}
+                      </span>
+                      <span className={log.success ? 'text-green-400' : 'text-red-400'}>
+                        {log.method}
+                      </span>
+                      <span className="text-slate-500 truncate">{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

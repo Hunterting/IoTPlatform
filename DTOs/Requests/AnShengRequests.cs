@@ -57,3 +57,39 @@ public class AnShengAutoReportRequest
     /// <summary>RS485 轮询间隔（秒），0=关闭</summary>
     public int? Rs485Sec { get; set; } = 0;
 }
+
+/// <summary>
+/// 二开设备开关控制请求
+/// </summary>
+public class SwitchControlRequest
+{
+    /// <summary>开关编号（1-based）</summary>
+    [Required]
+    public int SwitchId { get; set; }
+
+    /// <summary>true=开，false=关</summary>
+    [Required]
+    public bool On { get; set; }
+}
+
+/// <summary>
+/// 二开设备开关状态查询请求
+/// </summary>
+public class SwitchStatusQueryRequest
+{
+    /// <summary>开关编号，null 表示查询全部开关</summary>
+    public int? SwitchId { get; set; }
+}
+
+/// <summary>
+/// 二开设备开关配置请求
+/// </summary>
+public class SwitchConfigRequest
+{
+    /// <summary>开关编号（1-based）</summary>
+    [Required]
+    public int SwitchId { get; set; }
+
+    /// <summary>配置键值对（如 name/timer/enableDelay 等）</summary>
+    public Dictionary<string, object?> Config { get; set; } = new();
+}
