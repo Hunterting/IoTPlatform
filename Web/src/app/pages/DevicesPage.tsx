@@ -615,7 +615,7 @@ function DeviceFormModal({
                 <input
                   type="text"
                   required
-                  value={formData.serialNumber}
+                  value={formData.serialNumber || ''}
                   onChange={(e) => setFormData({ ...formData, serialNumber: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="SN..."
@@ -627,7 +627,7 @@ function DeviceFormModal({
                   设备类别
                 </label>
                 <select
-                  value={formData.category}
+                  value={formData.category || ''}
                   onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                   className="w-full px-4 py-3 bg-gray-800 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                 >
@@ -683,7 +683,7 @@ function DeviceFormModal({
                 </label>
                 <input
                   type="date"
-                  value={formData.installDate}
+                  value={formData.installDate || ''}
                   onChange={(e) => setFormData({ ...formData, installDate: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [color-scheme:dark]"
                 />
@@ -723,7 +723,7 @@ function DeviceFormModal({
                 </label>
                 <input
                   type="number"
-                  value={formData.power}
+                  value={formData.power ?? ''}
                   onChange={(e) => setFormData({ ...formData, power: Number(e.target.value) })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="0"
@@ -736,7 +736,7 @@ function DeviceFormModal({
                 </label>
                 <input
                   type="text"
-                  value={formData.voltage}
+                  value={formData.voltage || ''}
                   onChange={(e) => setFormData({ ...formData, voltage: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="例如：220V"
@@ -766,7 +766,7 @@ function DeviceFormModal({
                 </label>
                 <input
                   type="text"
-                  value={formData.supplier}
+                  value={formData.supplier || ''}
                   onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
                   placeholder="例如：美的商用"
@@ -779,7 +779,7 @@ function DeviceFormModal({
                 </label>
                 <input
                   type="date"
-                  value={formData.warrantyDate}
+                  value={formData.warrantyDate || ''}
                   onChange={(e) => setFormData({ ...formData, warrantyDate: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [color-scheme:dark]"
                 />

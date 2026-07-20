@@ -287,10 +287,23 @@ export const getDeviceCategoryText = (category: DeviceCategory): string => {
  * 将设备DTO转换为DeviceContext的DeviceItem格式
  */
 export const adaptDeviceDtoToDeviceItem = (deviceDto: DeviceDto): any => {
-  // 解析energyTypes字符串为数组
-  const energyTypeArray = deviceDto.energyTypes
-    ? deviceDto.energyTypes.split(',').map(type => type.trim()).filter(type => type)
-    : ['electric'];
+  // 解析energyTypes — 后端存储为 JSON 数组字符串，如 ["electric","water"]
+  // 兼容旧数据可能为逗号分隔字符串
+  let energyTypeArray: string[] = ['electric'];
+  if (deviceDto.energyTypes) {
+    const raw = deviceDto.energyTypes.trim();
+    try {
+      // 优先尝试 JSON 解析（后端 NormalizeEnergyTypesJson 统一存为 JSON 数组）
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        energyTypeArray = parsed.filter((t: any) => typeof t === 'string' && t);
+      }
+    } catch {
+      // 非 JSON，按逗号分隔解析（兼容旧数据）
+      energyTypeArray = raw.split(',').map(t => t.trim()).filter(t => t);
+    }
+    if (energyTypeArray.length === 0) energyTypeArray = ['electric'];
+  }
 
   return {
     id: deviceDto.id,

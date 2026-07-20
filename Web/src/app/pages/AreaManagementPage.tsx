@@ -136,14 +136,20 @@ export function AreaManagementPage() {
     });
   };
 
-  // Determine the next type based on parent node type
+  // 无限级层级：动态解析 level{N} 并生成 level{N+1}
   const getNextType = (nodeType: string): string => {
-    switch (nodeType) {
-      case 'customer': return 'level1';
-      case 'level1': return 'level2';
-      case 'level2': return 'level3';
-      default: return 'level1';
-    }
+    if (nodeType === 'customer') return 'level1';
+    const match = nodeType.match(/^level(\d+)$/);
+    if (match) return `level${parseInt(match[1], 10) + 1}`;
+    return 'level1';
+  };
+
+  // 获取层级显示名称
+  const getLevelLabel = (nodeType: string): string => {
+    if (nodeType === 'customer') return '客户根节点';
+    const match = nodeType.match(/^level(\d+)$/);
+    if (match) return `${parseInt(match[1], 10)}级区域`;
+    return '区域';
   };
 
   // --- CRUD Operations (调用真实 API) ---
@@ -262,9 +268,9 @@ export function AreaManagementPage() {
         key={area.id}
         label={`${area.name}${area.deviceCount > 0 ? ` (${area.deviceCount})` : ''}`}
         icon={
-          area.type === 'level3' 
-            ? <File className="w-4 h-4 text-blue-400" /> 
-            : <Folder className="w-4 h-4 text-yellow-400" />
+          area.children && area.children.length > 0
+            ? <Folder className="w-4 h-4 text-yellow-400" />
+            : <Folder className="w-4 h-4 text-blue-400" />
         }
         level={level}
         isActive={selectedNodeId === area.id}
@@ -640,16 +646,12 @@ export function AreaManagementPage() {
                <div className="flex items-center gap-3">
                  <div className="p-2 bg-white/5 rounded-lg border border-white/10">
                     {selectedNode.type === 'customer' && <Building2 className="w-5 h-5 text-purple-400" />}
-                    {selectedNode.type === 'level1' && <Layout className="w-5 h-5 text-yellow-400" />}
-                    {selectedNode.type === 'level2' && <Folder className="w-5 h-5 text-yellow-400" />}
-                    {selectedNode.type === 'level3' && <File className="w-5 h-5 text-blue-400" />}
+                    {selectedNode.type !== 'customer' && <Folder className="w-5 h-5 text-yellow-400" />}
                  </div>
                  <div>
                    <h1 className="text-lg font-bold text-white">{selectedNode.data.name}</h1>
                    <p className="text-xs text-gray-400">
-                     {selectedNode.type === 'customer' ? '客户根节点' : 
-                      selectedNode.type === 'level1' ? '一级区域 (场景)' : 
-                      selectedNode.type === 'level2' ? '二级区域 (楼层)' : '三级区域 (功能间)'}
+                     {getLevelLabel(selectedNode.type)}
                      {selectedNode.type !== 'customer' && selectedNode.data.deviceCount > 0 && 
                        ` · ${selectedNode.data.deviceCount} 个设备`}
                    </p>
@@ -657,7 +659,7 @@ export function AreaManagementPage() {
                </div>
                <div className="flex gap-2">
                  {/* Actions */}
-                 {selectedNode.type !== 'level3' && hasPermission(PERMISSIONS.CREATE_AREAS) && (
+                 {hasPermission(PERMISSIONS.CREATE_AREAS) && (
                     <button 
                         onClick={() => {
                             setAddMode('child');
@@ -704,14 +706,7 @@ export function AreaManagementPage() {
 
              {/* Content Body */}
              <div className="flex-1 overflow-hidden relative">
-               {selectedNode.type === 'level3' ? (
-                 <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
-                    <File className="w-16 h-16 mb-4 opacity-20" />
-                    <p>末级区域</p>
-                    <p className="text-sm mt-2">此处可以添加区域详细信息、图片或绑定的设备列表</p>
-                 </div>
-               ) : (
-                 // List View (Table-like)
+                 {/* List View (Table-like) */}
                  <div className="p-6">
                    <div className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
                      <table className="w-full text-sm text-left">
@@ -773,7 +768,7 @@ export function AreaManagementPage() {
                                     >
                                         <td className="px-6 py-3 text-white flex items-center justify-between">
                                             <div className="flex items-center gap-2">
-                                                {child.type === 'level3' ? <File className="w-4 h-4 text-blue-400" /> : <Folder className="w-4 h-4 text-yellow-400" />}
+                                                <Folder className="w-4 h-4 text-yellow-400" />
                                                 <span>{child.name}</span>
                                             </div>
                                             <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors" />
@@ -790,7 +785,6 @@ export function AreaManagementPage() {
                      </table>
                    </div>
                  </div>
-               )}
              </div>
           </>
         )}

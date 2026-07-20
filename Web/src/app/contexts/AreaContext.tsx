@@ -17,7 +17,7 @@ export interface AreaDevice {
 export interface Area {
   id: string;
   name: string;
-  type: 'level1' | 'level2' | 'level3' | string;
+  type: string; // 无限级：level1, level2, ... levelN
   image?: string | null;
   parentId?: string | null;
   parentName?: string | null;

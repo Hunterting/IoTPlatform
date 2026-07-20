@@ -26,6 +26,9 @@ public static class Permissions
 
     // 区域管理
     public const string VIEW_AREAS = "view_areas";
+    public const string CREATE_AREAS = "create_areas";
+    public const string UPDATE_AREAS = "update_areas";
+    public const string DELETE_AREAS = "delete_areas";
 
     // 告警中心
     public const string VIEW_ALERT_CENTER = "view_alert_center";

@@ -22,6 +22,9 @@ export const PERMISSIONS = {
 
   // ── 区域管理 ──────────────────────────────────────────────
   VIEW_AREAS: 'view_areas',
+  CREATE_AREAS: 'create_areas',
+  UPDATE_AREAS: 'update_areas',
+  DELETE_AREAS: 'delete_areas',
 
   // ── 告警中心 ──────────────────────────────────────────────
   VIEW_ALERT_CENTER: 'view_alert_center',
@@ -167,6 +170,9 @@ export const PERMISSION_GROUPS = [
     name: '区域管理',
     permissions: [
       { code: PERMISSIONS.VIEW_AREAS, name: '查看区域' },
+      { code: PERMISSIONS.CREATE_AREAS, name: '新增区域' },
+      { code: PERMISSIONS.UPDATE_AREAS, name: '编辑区域' },
+      { code: PERMISSIONS.DELETE_AREAS, name: '删除区域' },
     ],
   },
   {
@@ -350,6 +356,9 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.DELETE_DEVICES,
       // 区域
       PERMISSIONS.VIEW_AREAS,
+      PERMISSIONS.CREATE_AREAS,
+      PERMISSIONS.UPDATE_AREAS,
+      PERMISSIONS.DELETE_AREAS,
       // 告警
       PERMISSIONS.VIEW_ALERT_CENTER,
       PERMISSIONS.CREATE_ALERTS,

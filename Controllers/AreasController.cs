@@ -121,6 +121,7 @@ public class AreasController : ControllerBase
     /// 创建区域
     /// </summary>
     [HttpPost]
+    [PermissionAuthorize(Permissions.CREATE_AREAS)]
     public async Task<ActionResult<ApiResponse<AreaDto>>> CreateArea([FromBody] CreateAreaRequest request)
     {
         try
@@ -144,6 +145,7 @@ public class AreasController : ControllerBase
     /// 更新区域
     /// </summary>
     [HttpPut("{id}")]
+    [PermissionAuthorize(Permissions.UPDATE_AREAS)]
     public async Task<ActionResult<ApiResponse<AreaDto>>> UpdateArea(long id, [FromBody] UpdateAreaRequest request)
     {
         try
@@ -175,6 +177,7 @@ public class AreasController : ControllerBase
     /// 删除区域
     /// </summary>
     [HttpDelete("{id}")]
+    [PermissionAuthorize(Permissions.DELETE_AREAS)]
     public async Task<ActionResult<ApiResponse>> DeleteArea(long id)
     {
         try
