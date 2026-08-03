@@ -70,6 +70,14 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
 
     private readonly ConcurrentQueue<SentCommand> _sent = new();
     private readonly ConcurrentQueue<string> _plannedFrameIds = new();
+
+    /// <summary>
+    /// 自动上行应答表：方法名 → 报文工厂（入参 IMEI，返回 JSON；返回 null 表示本次不应答）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, Func<string, string?>> _autoUplinkReplies =
+        new(StringComparer.Ordinal);
+
+    private readonly AnShengMessageParser _uplinkParser = new();
     private bool _disposed;
 
     public RecordingAnShengAdapter(int configId = SharedTestConstants.ProtocolConfigId)
@@ -181,13 +189,28 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
             ? planned
             : AnShengCommandBuilder.NewFrameId();
 
+        var imei = serialNumber ?? string.Empty;
+
         _sent.Enqueue(new SentCommand(
             deviceId,
-            serialNumber ?? string.Empty,
+            imei,
             method,
             parameters ?? string.Empty,
             frameId,
             DateTime.UtcNow));
+
+        // 自动上行应答：必须在本方法内<b>同步</b>发布。
+        // 生产 AnShengProbeService 遵守「先登记等待者、再下发」，所以此刻等待者一定已就位；
+        // 反过来说，若哪天生产代码把顺序改反了，这里的同步应答会立刻让认领用例超时爆红——
+        // 这正是我们想要的护栏，不要为了「保险」改成延迟发布。
+        if (_autoUplinkReplies.TryGetValue(method, out var factory))
+        {
+            var payload = factory?.Invoke(imei);
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                RaiseAnShengUplink(imei, method, payload!);
+            }
+        }
 
         return Task.FromResult(frameId);
     }
@@ -232,6 +255,75 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
         });
     }
 
+    /// <summary>
+    /// 手工投递一条安圣上行报文到静态总线 <see cref="AnShengUplinkHub"/>。
+    ///
+    /// 【为什么替身必须自己发布】
+    ///   生产链路里是 <c>AnShengMqttProtocolAdapter.OnMessageReceivedAsync</c> 收到 MQTT 报文后
+    ///   调 <c>AnShengUplinkHub.Publish</c>。但集成测试把整个 <c>IProtocolAdapter</c> 换成了本替身，
+    ///   那段生产代码<b>根本不会执行</b>。若替身不补上这一步，
+    ///   <c>AnShengProbeService</c> 永远等不到应答，所有认领用例都会以「探测超时」告终。
+    ///
+    /// 【为什么直接调 Publish 而不是走 DataReceived 事件】
+    ///   总线与 <c>DataReceived</c> 是两条独立通道：前者服务于探测的请求-应答关联，
+    ///   后者服务于数据落库。绕道 <c>DataReceived</c> 既到不了探测服务，也会污染数据链路断言。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="method">报文方法名，如 <c>getDevInfo</c>。</param>
+    /// <param name="payloadJson">报文 JSON 全文。</param>
+    public void RaiseAnShengUplink(string imei, string method, string payloadJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(imei);
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentException.ThrowIfNullOrWhiteSpace(payloadJson);
+
+        // 解析失败时 message 为 null，Publish 仍会投递（订阅方自行降级），
+        // 这样「设备回了一坨非法 JSON」的场景也能被用例覆盖。
+        var message = _uplinkParser.Parse(payloadJson);
+        AnShengUplinkHub.Publish(imei, method, message, payloadJson);
+    }
+
+    /// <summary>
+    /// 登记一条「收到该方法的下发就自动回上行」的规则，报文内容固定。
+    /// </summary>
+    /// <param name="method">触发的方法名。</param>
+    /// <param name="payloadJson">固定应答 JSON。</param>
+    /// <returns>适配器自身，便于链式调用。</returns>
+    public RecordingAnShengAdapter AutoReplyUplink(string method, string payloadJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentException.ThrowIfNullOrWhiteSpace(payloadJson);
+
+        _autoUplinkReplies[method] = _ => payloadJson;
+        return this;
+    }
+
+    /// <summary>
+    /// 登记一条「收到该方法的下发就自动回上行」的规则，报文由工厂按 IMEI 生成。
+    /// </summary>
+    /// <param name="method">触发的方法名。</param>
+    /// <param name="payloadFactory">报文工厂；返回 null 表示本次不应答（用于制造超时）。</param>
+    /// <returns>适配器自身，便于链式调用。</returns>
+    public RecordingAnShengAdapter AutoReplyUplink(string method, Func<string, string?> payloadFactory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(method);
+        ArgumentNullException.ThrowIfNull(payloadFactory);
+
+        _autoUplinkReplies[method] = payloadFactory;
+        return this;
+    }
+
+    /// <summary>
+    /// 撤销某个方法的自动上行应答规则，使其恢复「设备不吭声」。
+    /// </summary>
+    /// <param name="method">方法名。</param>
+    /// <returns>适配器自身，便于链式调用。</returns>
+    public RecordingAnShengAdapter ClearAutoReplyUplink(string method)
+    {
+        _autoUplinkReplies.TryRemove(method, out _);
+        return this;
+    }
+
     /// <summary>手工投递一条指令响应，驱动生产代码的 <c>CommandResponse</c> 订阅链路。</summary>
     public void RaiseCommandResponse(
         long deviceId,
@@ -252,8 +344,10 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
     /// <summary>
     /// 用例级复位：清录制、清预置 frameId、恢复连接状态。
     ///
-    /// 【重要】这里不清事件订阅者。TestServer 全程只有一个，
-    /// 生产代码若在启动时订阅过，清掉会让后续用例收不到上行。
+    /// 【重要】这里不清事件订阅者，也<b>绝不</b>调用 <c>AnShengUplinkHub.Reset()</c>。
+    /// TestServer 全程只有一个，<c>AnShengProbeService</c> 是 Singleton 且在构造时订阅静态总线；
+    /// 一旦清空订阅，Singleton 不会被重建，后续所有用例的探测都会永久超时。
+    /// 用例间的探测隔离由 <c>IAnShengProbeService.ClearPending()</c> 负责（见 StaticStateResetter）。
     /// </summary>
     public void Reset()
     {
@@ -265,6 +359,7 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
         {
         }
 
+        _autoUplinkReplies.Clear();
         ForceDisconnected = false;
         DataCollectionStarted = false;
         EnforceProtocolWhitelist = true;

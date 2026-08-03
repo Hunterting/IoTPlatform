@@ -58,7 +58,11 @@ public abstract class IntegrationTestBase : IAsyncLifetime
         await Fixture.ResetAsync();
 
         // ② 清进程级静态状态——不清会造成「单跑绿、连跑红」
-        StaticStateResetter.ResetAll();
+        //    传入根 Provider，才能顺带清掉 Singleton 探测服务的在途等待表。
+        //    ⚠ 这里清的是「在途等待」，绝不是「总线订阅」：
+        //    AnShengProbeService 是 Singleton 且构造时订阅静态总线，TestServer 全程唯一，
+        //    调 AnShengUplinkHub.Reset() 会让后续所有用例的探测永久超时。
+        StaticStateResetter.ResetAll(Fixture.Factory.Services);
 
         // ③ 清录制适配器。走工厂而非 Adapter.Reset()：
         //    Adapter 只是缺省分身，用例通过 GetOrCreateFor(configId) 登记的额外分身

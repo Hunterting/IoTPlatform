@@ -4,6 +4,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
+using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using IoTPlatform.Models;
 using IoTPlatform.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -24,17 +25,28 @@ public class AnShengController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IAnShengCommandService _commandService;
+    private readonly IAnShengDiscoveryService _discoveryService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AnShengController> _logger;
 
+    /// <summary>
+    /// 构造函数。
+    /// </summary>
+    /// <param name="db">数据库上下文。</param>
+    /// <param name="commandService">安圣指令服务。</param>
+    /// <param name="discoveryService">安圣设备发现与认领编排服务。</param>
+    /// <param name="scopeFactory">作用域工厂。</param>
+    /// <param name="logger">日志器。</param>
     public AnShengController(
         AppDbContext db,
         IAnShengCommandService commandService,
+        IAnShengDiscoveryService discoveryService,
         IServiceScopeFactory scopeFactory,
         ILogger<AnShengController> logger)
     {
         _db = db;
         _commandService = commandService;
+        _discoveryService = discoveryService;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -102,10 +114,23 @@ public class AnShengController : ControllerBase
             query = query.OrderByDescending(d => d.LastSeenAt ?? d.DiscoveredAt);
 
             var total = await query.CountAsync();
-            var items = await query
+
+            // 先取实体再在内存里投影：SuggestedKind 要调 InferKind 静态方法，
+            // 放在 Select 里 EF 无法翻译成 SQL，会直接抛 translation 异常。
+            var entities = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(d => new DiscoveredAnShengDeviceDto
+                .AsNoTracking()
+                .ToListAsync();
+
+            var items = entities.Select(d =>
+            {
+                // 已探明品类优先；尚未探测的记录给出推断值，供认领弹窗做默认选中。
+                var suggested = d.Kind != AnShengDeviceKind.Unknown
+                    ? d.Kind
+                    : AnShengDeviceKindResolver.InferKind(d.NetType, d.SlotAmount, d.Version, d.Model);
+
+                return new DiscoveredAnShengDeviceDto
                 {
                     Id = d.Id,
                     Imei = d.Imei,
@@ -114,9 +139,19 @@ public class AnShengController : ControllerBase
                     DiscoveredAt = d.DiscoveredAt,
                     LastSeenAt = d.LastSeenAt,
                     IsClaimed = d.IsClaimed,
-                    ClaimedDeviceId = d.ClaimedDeviceId
-                })
-                .ToListAsync();
+                    ClaimedDeviceId = d.ClaimedDeviceId,
+                    Kind = d.Kind,
+                    KindName = d.Kind.ToDisplayName(),
+                    SuggestedKind = suggested,
+                    SuggestedKindName = suggested.ToDisplayName(),
+                    SlotAmount = d.SlotAmount,
+                    Version = d.Version,
+                    Iccid = d.Iccid,
+                    ProbeStatus = d.ProbeStatus,
+                    ProbeError = d.ProbeError,
+                    LastProbedAt = d.LastProbedAt
+                };
+            }).ToList();
 
             var result = new DiscoveredDeviceListResponse
             {
@@ -140,128 +175,118 @@ public class AnShengController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>
-    /// 认领发现的安圣设备：将待认领设备转为正式 Device
+    /// 认领发现的安圣设备：探测设备能力 → 判定品类 → 建档 → 转为正式 Device。
+    ///
+    /// 【本方法只做三件事】DTO 校验 → 调 <see cref="IAnShengDiscoveryService.ClaimAsync"/> → 结果映射。
+    /// 编排逻辑全部下沉到服务层，Controller 不碰事务、不碰探测、不碰品类判定。
+    ///
+    /// 【HTTP 语义】状态码恒为 200；业务成败看响应体 <c>Code</c>，
+    /// 失败原因看 <c>Data.ErrorCode</c>（见 <see cref="AnShengClaimErrorCodes"/>）。
     /// </summary>
+    /// <param name="request">认领请求。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>认领结果。</returns>
     [HttpPost("claim")]
     [PermissionAuthorize(Permissions.CREATE_DEVICES)]
     public async Task<ActionResult<ApiResponse<ClaimAnShengDeviceResponse>>> ClaimDevice(
-        [FromBody] ClaimAnShengDeviceRequest request)
+        [FromBody] ClaimAnShengDeviceRequest request,
+        CancellationToken ct)
     {
+        // ── DTO 级校验：这两条不需要查库就能判定，先挡掉，省一次数据库往返 ──
+        if (request.DiscoveredDeviceId is null && string.IsNullOrWhiteSpace(request.Imei))
+        {
+            return ApiResponse<ClaimAnShengDeviceResponse>.BadRequest(
+                "DiscoveredDeviceId 与 Imei 必须提供其一",
+                new ClaimAnShengDeviceResponse
+                {
+                    Success = false,
+                    ErrorCode = AnShengClaimErrorCodes.DiscoveredNotFound,
+                    ErrorMessage = "DiscoveredDeviceId 与 Imei 必须提供其一"
+                });
+        }
+
+        if (request.Kind == AnShengDeviceKind.Unknown)
+        {
+            return ApiResponse<ClaimAnShengDeviceResponse>.BadRequest(
+                "必须显式指定设备品类 Kind",
+                new ClaimAnShengDeviceResponse
+                {
+                    Success = false,
+                    ErrorCode = AnShengClaimErrorCodes.KindRequired,
+                    ErrorMessage = "必须显式指定设备品类 Kind"
+                });
+        }
+
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-
-            // 1. 查询待认领设备
-            var discovered = await _db.Set<DiscoveredAnShengDevice>()
-                .FirstOrDefaultAsync(d => d.Id == request.DiscoveredDeviceId);
-
-            if (discovered == null)
+            var result = await _discoveryService.ClaimAsync(new AnShengClaimCommand
             {
-                return ApiResponse<ClaimAnShengDeviceResponse>.BadRequest("待认领设备不存在");
-            }
-
-            if (discovered.IsClaimed)
-            {
-                return ApiResponse<ClaimAnShengDeviceResponse>.BadRequest("该设备已被认领");
-            }
-
-            // 2. 检查 IMEI 冲突（同一 AppCode 下是否已有同名 SerialNumber）
-            var existingDevice = await _db.Devices
-                .FirstOrDefaultAsync(d => d.SerialNumber == discovered.Imei
-                    && (appCode == null || d.AppCode == appCode));
-
-            if (existingDevice != null)
-            {
-                return ApiResponse<ClaimAnShengDeviceResponse>.BadRequest(
-                    $"IMEI {discovered.Imei} 已存在对应设备（DeviceId={existingDevice.Id}）");
-            }
-
-            // 3. 创建正式设备
-            var device = new Device
-            {
+                DiscoveredDeviceId = request.DiscoveredDeviceId,
+                Imei = request.Imei,
                 Name = request.Name,
-                SerialNumber = discovered.Imei, // IMEI 存入 SerialNumber
-                AppCode = appCode ?? discovered.AppCode ?? "system",
-                Status = "online", // 认领时视作在线
-                Category = "安圣充电桩",
-                ProtocolConfigId = request.ProtocolConfigId,
+                Kind = request.Kind,
                 AreaId = request.AreaId,
                 ProjectId = request.ProjectId,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                ProtocolConfigId = request.ProtocolConfigId,
+                GetDevStatusSec = request.GetDevStatusSec,
+                GetDevStatusQ = request.GetDevStatusQ,
+                AppCode = User.FindFirst("AppCode")?.Value ?? string.Empty
+            }, ct);
+
+            var payload = new ClaimAnShengDeviceResponse
+            {
+                Success = result.Success,
+                DeviceId = result.DeviceId,
+                DeviceName = result.DeviceName,
+                ErrorCode = result.ErrorCode,
+                ErrorMessage = result.ErrorMessage,
+                Kind = result.Kind,
+                KindName = result.Kind.ToDisplayName(),
+                ProfileId = result.ProfileId,
+                ProbeStatus = result.ProbeStatus
             };
 
-            _db.Devices.Add(device);
-            await _db.SaveChangesAsync();
-
-            // 4. 更新待认领池状态
-            discovered.IsClaimed = true;
-            discovered.ClaimedDeviceId = device.Id;
-            _db.Set<DiscoveredAnShengDevice>().Update(discovered);
-            await _db.SaveChangesAsync();
-
-            // 5. 如果请求了自动上报（默认开启），创建 AnShengDeviceConfig 并下发 setAutoReport
-            if (request.GetDevStatusSec is > 0 or null)
+            if (result.Success)
             {
-                var sec = request.GetDevStatusSec ?? 30;
-                var config = new AnShengDeviceConfig
-                {
-                    DeviceId = device.Id,
-                    AppCode = device.AppCode,
-                    Imei = discovered.Imei,
-                    GetDevStatusSec = sec,
-                    GetDevStatusQ = request.GetDevStatusQ,
-                    OrderUpSec = 300,
-                    Rs485Sec = 0
-                };
-                _db.Set<AnShengDeviceConfig>().Add(config);
-                await _db.SaveChangesAsync();
-
-                // fire-and-forget 下发 setAutoReport，不阻塞认领响应
-                // 注意：必须自建 scope，因为 HTTP 响应返回后 Controller 的 Scoped 服务会被释放
-                var capturedDeviceId = device.Id;
-                var capturedSec = sec;
-                var capturedQ = request.GetDevStatusQ;
-                var scopeFactory = _scopeFactory;
-                _ = Task.Run(async () =>
-                {
-                    using var scope = scopeFactory.CreateScope();
-                    var cmdService = scope.ServiceProvider.GetRequiredService<IAnShengCommandService>();
-                    var taskLogger = scope.ServiceProvider.GetRequiredService<ILogger<AnShengController>>();
-                    try
-                    {
-                        await cmdService.ConfigureAutoReportAsync(capturedDeviceId, new AnShengAutoReportSettings
-                        {
-                            GetDevStatusSec = capturedSec,
-                            GetDevStatusQ = capturedQ,
-                            OrderUpSec = 300,
-                            Rs485Sec = 0
-                        });
-                        taskLogger.LogInformation("认领后 setAutoReport 下发成功 DeviceId={DeviceId} Sec={Sec}", capturedDeviceId, capturedSec);
-                    }
-                    catch (Exception ex)
-                    {
-                        taskLogger.LogWarning(ex, "认领后下发 setAutoReport 失败 DeviceId={DeviceId}", capturedDeviceId);
-                    }
-                });
+                return ApiResponse<ClaimAnShengDeviceResponse>.Success(payload, "设备认领成功");
             }
 
-            _logger.LogInformation(
-                "安圣设备已认领: IMEI={IMEI}, DiscoveredId={DisId}, DeviceId={DevId}, Name={Name}",
-                discovered.Imei, discovered.Id, device.Id, request.Name);
-
-            return ApiResponse<ClaimAnShengDeviceResponse>.Success(new ClaimAnShengDeviceResponse
-            {
-                Success = true,
-                DeviceId = device.Id,
-                DeviceName = device.Name
-            }, "设备认领成功");
+            // 错误码 → ApiResponse.Code 的映射见设计 §8.3。
+            return MapClaimFailure(payload);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "认领安圣设备失败: DiscoveredDeviceId={Id}", request.DiscoveredDeviceId);
+            _logger.LogError(ex, "认领安圣设备失败: DiscoveredDeviceId={Id}, Imei={Imei}",
+                request.DiscoveredDeviceId, request.Imei);
+
             return ApiResponse<ClaimAnShengDeviceResponse>.Error($"认领失败：{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 把认领失败结果映射为带正确 <c>Code</c> 的响应体。
+    /// </summary>
+    /// <param name="payload">已填好错误码的响应体。</param>
+    /// <returns>失败响应。</returns>
+    private static ActionResult<ApiResponse<ClaimAnShengDeviceResponse>> MapClaimFailure(
+        ClaimAnShengDeviceResponse payload)
+    {
+        var message = payload.ErrorMessage ?? "认领失败";
+
+        return payload.ErrorCode switch
+        {
+            AnShengClaimErrorCodes.DiscoveredNotFound =>
+                ApiResponse<ClaimAnShengDeviceResponse>.NotFound(message, payload),
+
+            AnShengClaimErrorCodes.PersistFailed =>
+                ApiResponse<ClaimAnShengDeviceResponse>.Error(message, payload),
+
+            // ApiResponse 没有 409 工厂，按设计 §8.3 直填 Code。
+            AnShengClaimErrorCodes.ProbeConflict =>
+                ApiResponse<ClaimAnShengDeviceResponse>.Fail(409, message, payload),
+
+            _ => ApiResponse<ClaimAnShengDeviceResponse>.BadRequest(message, payload)
+        };
     }
 
     // ─────────────────────────────────────────────

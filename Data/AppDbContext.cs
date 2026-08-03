@@ -69,6 +69,7 @@ public class AppDbContext : DbContext
     public DbSet<ProtocolConfig> ProtocolConfigs { get; set; }
     public DbSet<AnShengDeviceConfig> AnShengDeviceConfigs { get; set; }
     public DbSet<DiscoveredAnShengDevice> DiscoveredAnShengDevices { get; set; }
+    public DbSet<AnShengDeviceProfile> AnShengDeviceProfiles { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -121,6 +122,7 @@ public class AppDbContext : DbContext
         ConfigureProtocolConfigs(modelBuilder);
         ConfigureAnShengDeviceConfigs(modelBuilder);
         ConfigureDiscoveredAnShengDevices(modelBuilder);
+        ConfigureAnShengDeviceProfiles(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -420,6 +422,45 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.Imei);
             entity.HasIndex(e => e.IsClaimed);
             entity.HasIndex(e => e.AppCode);
+
+            // T5：枚举一律以 int 落库。
+            // MySQL 5.7.26 下不用原生 ENUM——增枚举值就得 ALTER TABLE 锁表，
+            // 且 Pomelo 对 ENUM 的映射在跨版本升级时并不稳定。
+            entity.Property(e => e.Kind).HasConversion<int>();
+            entity.Property(e => e.ProbeStatus).HasConversion<int>();
+
+            // 待认领池列表页高频按「探测失败」筛选排障，单列索引足够。
+            entity.HasIndex(e => e.ProbeStatus);
+        });
+    }
+
+    /// <summary>
+    /// 安圣设备能力档案表配置。
+    ///
+    /// 【索引设计理由】
+    ///   · <c>UNIQUE(Imei)</c>：一台设备只能有一份档案，靠数据库兜底并发重复插入
+    ///     （两个请求同时认领同一 IMEI 时，后者会撞唯一键而不是写出两份档案）。
+    ///   · <c>(AppCode, Imei)</c> 普通索引：全局租户过滤器会给每条查询加
+    ///     <c>WHERE AppCode = ?</c>，与 Imei 组成最常用的复合谓词。
+    ///     不设成唯一——IMEI 全局唯一的语义比「租户内唯一」更强，跨租户重复即为数据事故。
+    ///   · <c>DeviceId</c>：认领后按设备主键反查档案（能力校验主路径）。
+    ///
+    /// 【MySQL 5.7.26 约束】不使用 CHECK 约束（5.7 直接忽略，制造"以为有校验"的假象）、
+    ///   不使用降序索引与函数索引（5.7 不支持）。
+    /// </summary>
+    private void ConfigureAnShengDeviceProfiles(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengDeviceProfile>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => e.Imei).IsUnique();
+            entity.HasIndex(e => new { e.AppCode, e.Imei });
+            entity.HasIndex(e => e.DeviceId);
+
+            entity.Property(e => e.Kind).HasConversion<int>();
+            entity.Property(e => e.KindSource).HasConversion<int>();
+            entity.Property(e => e.ProbeStatus).HasConversion<int>();
         });
     }
 

@@ -529,6 +529,11 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
             // 学习设备品类，供后续下发决定是否注入 timestamp
             LearnDeviceKind(imei, message);
 
+            // 广播上行报文到进程内总线，供探测服务等订阅方按 (imei, method) 关联应答。
+            // 放在 Will 判定之前：Will 分支会提前 return，放后面会丢掉 close 报文。
+            // Publish 内部已做异常隔离，订阅者抛异常不会波及本 MQTT 接收线程。
+            AnSheng.AnShengUplinkHub.Publish(imei, message?.Method, message, rawPayload);
+
             // 离线判定：method == "close"（will 与数据同主题，不能用主题前缀判断）
             if (message != null && AnShengMessageParser.IsWillMessage(message))
             {

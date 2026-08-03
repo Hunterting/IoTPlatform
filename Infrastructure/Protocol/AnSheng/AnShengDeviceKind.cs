@@ -168,6 +168,80 @@ public static class AnShengDeviceKindResolver
     }
 
     /// <summary>
+    /// 根据联网类型 + <b>插槽数量</b> + 版本号/型号推断设备品类（T5 增强版）。
+    ///
+    /// 【与 <see cref="Resolve"/> 的关系 —— 为什么新增重载而不是改原方法】
+    ///   <see cref="Resolve"/> 已被 T1/T2 的 MQTT 上行热路径（<c>LearnDeviceKind</c>）调用，
+    ///   改它等于在没有回归网的地方动生产代码。这里<b>只加不改</b>：
+    ///   信息不足时本方法直接委托 <see cref="Resolve"/>，保证行为完全向后兼容。
+    ///
+    /// 【三级判据，从强到弱】
+    ///   1. <b>联网类型</b>（netType / model）：判不出 4G 也判不出 WiFi ⇒ 退回 <see cref="Resolve"/>，
+    ///      不做任何自作聪明的猜测。
+    ///   2. <b>插槽数量</b>（slotAmount）：设备<b>显式声明</b>的值，权威度最高。
+    ///      <c>&gt; 0</c> 判为开关款，<c>== 0</c> 判为喇叭款。
+    ///      喇叭款没有插槽概念，固件要么不报、要么报 0，两种都能被正确落到喇叭分支。
+    ///   3. <b>版本号/型号前缀</b>：slotAmount 缺失时的<b>弱提示</b>（<c>SWITCH-*</c> / <c>SPEAKER-*</c>）。
+    ///      按 D3 第 3 级，前缀只是「兜底提示，<b>不作为判定依据</b>」，因此
+    ///      <b>不像开关即按喇叭处理</b>，<b>不得</b>因「两边都不像」而返回 <see cref="AnShengDeviceKind.Unknown"/>：
+    ///      netType 已识别时产品线是二元的（§7-R2 已关闭：netType 值域仅 {4G, WiFi}），
+    ///      让弱证据拥有否决权会使本方法在 <c>("WiFi", null, null)</c> 上退化回 <see cref="Resolve"/>（见 N3）。
+    /// </summary>
+    /// <param name="netType">设备上报的 netType（<c>4G</c> / <c>WiFi</c>），可为空。</param>
+    /// <param name="slotAmount">设备上报的插槽数量；<c>null</c> 表示设备未上报该字段。</param>
+    /// <param name="version">设备上报的 version，可为空。</param>
+    /// <param name="model">设备上报的 model，可为空。</param>
+    /// <returns>
+    /// 推断出的品类。<b>仅当联网方式（netType/model）也判不出来时</b>才可能返回
+    /// <see cref="AnShengDeviceKind.Unknown"/>（此时已委托 <see cref="Resolve"/>）；
+    /// netType 一旦识别，必定返回四个具体品类之一。
+    /// </returns>
+    public static AnShengDeviceKind InferKind(
+        string? netType,
+        int? slotAmount,
+        string? version = null,
+        string? model = null)
+    {
+        var is4G = IsFourG(netType, model);
+        var isWiFi = IsWiFiNet(netType, model);
+
+        // 一级：联网方式都判不出来。slotAmount 再准也定不了「4G开关」还是「WiFi开关」，
+        // 直接委托原方法，行为与 T1/T2 完全一致。
+        if (!is4G && !isWiFi)
+        {
+            return Resolve(netType, version, model);
+        }
+
+        bool isSwitch;
+
+        if (slotAmount.HasValue)
+        {
+            // 二级：插槽数是设备自报的硬事实，直接采信，不再看版本号前缀。
+            isSwitch = slotAmount.Value > 0;
+        }
+        else
+        {
+            // 三级：slotAmount 缺失，只能参考命名前缀。
+            //
+            // 【为什么这里不能返回 Unknown】——曾经的缺陷点，勿回退：
+            //   netType 已经识别出来了，而安圣确认 netType 值域仅 {4G, WiFi}（§7-R2 已关闭），
+            //   对应的产品线判定是二元的：不像开关，就按喇叭处理。
+            //   D3 第 3 级白纸黑字写着版本前缀是「兜底提示，不作为判定依据」，
+            //   一旦让「前缀两边都不像」触发 Unknown，等于把最弱的证据升格成一票否决权，
+            //   并直接导致验收 #3 的 InferKind("WiFi", null, null) 判成 Unknown 而非 SpeakerWiFi
+            //   —— 那样 InferKind 就在它被创造出来要解决的唯一场景上退化回了 Resolve（见 N3）。
+            isSwitch = LooksLikeSwitch(version, model);
+        }
+
+        if (is4G)
+        {
+            return isSwitch ? AnShengDeviceKind.Switch4G : AnShengDeviceKind.Speaker4G;
+        }
+
+        return isSwitch ? AnShengDeviceKind.SwitchWiFi : AnShengDeviceKind.SpeakerWiFi;
+    }
+
+    /// <summary>
     /// 仅根据联网类型推断「是否 4G」，用于决定下发报文是否注入 timestamp。
     /// </summary>
     /// <param name="netType">设备上报的 netType。</param>
@@ -215,7 +289,21 @@ public static class AnShengDeviceKindResolver
         return false;
     }
 
-    private static bool IsSwitchProduct(string? version, string? model)
+    /// <summary>
+    /// 版本号/型号「看起来像开关款」。
+    ///
+    /// 【为什么从 private 提升为 public】
+    ///   T5 的 <see cref="InferKind"/> 与 Profile 服务都需要单独复用这条判据
+    ///   （例如 slotAmount 缺失时只想问「像不像开关」，而不想跑完整的品类推断）。
+    ///   提升可见性而非复制一份，避免两处判据随时间漂移。
+    ///
+    /// 【它只是"像"，不是"是"】命名前缀是弱证据，
+    ///   有 slotAmount 时务必优先采信 slotAmount（见 <see cref="InferKind"/> 二级判据）。
+    /// </summary>
+    /// <param name="version">设备上报的 version，可为空。</param>
+    /// <param name="model">设备上报的 model，可为空。</param>
+    /// <returns>命名特征指向开关款时返回 true。</returns>
+    public static bool LooksLikeSwitch(string? version, string? model)
     {
         if (!string.IsNullOrWhiteSpace(version)
             && version.StartsWith("SWITCH", StringComparison.OrdinalIgnoreCase))
@@ -227,7 +315,13 @@ public static class AnShengDeviceKindResolver
                && model.Contains("SWITCH", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsSpeakerProduct(string? version, string? model)
+    /// <summary>
+    /// 版本号/型号「看起来像喇叭款」。理由同 <see cref="LooksLikeSwitch"/>。
+    /// </summary>
+    /// <param name="version">设备上报的 version，可为空。</param>
+    /// <param name="model">设备上报的 model，可为空。</param>
+    /// <returns>命名特征指向喇叭款时返回 true。</returns>
+    public static bool LooksLikeSpeaker(string? version, string? model)
     {
         if (!string.IsNullOrWhiteSpace(version)
             && (version.StartsWith("SPEAKER", StringComparison.OrdinalIgnoreCase)
@@ -240,4 +334,11 @@ public static class AnShengDeviceKindResolver
                && (model.Contains("SPEAKER", StringComparison.OrdinalIgnoreCase)
                    || model.Contains("VOICE", StringComparison.OrdinalIgnoreCase));
     }
+
+    // 原有私有判据保留为薄转发，确保 Resolve 的实现文本不被改动。
+    private static bool IsSwitchProduct(string? version, string? model)
+        => LooksLikeSwitch(version, model);
+
+    private static bool IsSpeakerProduct(string? version, string? model)
+        => LooksLikeSpeaker(version, model);
 }

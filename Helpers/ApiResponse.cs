@@ -64,11 +64,45 @@ public class ApiResponse<T>
     }
 
     /// <summary>
+    /// 失败响应（带数据）。
+    ///
+    /// 【为什么失败也要带 Data】
+    ///   HTTP 状态码恒为 200、业务成败看 <see cref="Code"/> 是本站既定约定，
+    ///   但"具体是哪一类失败"光靠 <see cref="Message"/> 中文串无法被程序稳定判别。
+    ///   业务方需要在失败体里回传机器可读的错误码/上下文（如 <c>Data.ErrorCode</c>），
+    ///   故补齐带数据的失败工厂。与既有无数据重载并存，不影响任何现有调用。
+    /// </summary>
+    /// <param name="code">业务状态码。</param>
+    /// <param name="message">面向人的描述。</param>
+    /// <param name="data">失败上下文数据。</param>
+    /// <returns>失败响应。</returns>
+    public static ApiResponse<T> Fail(int code, string message, T data)
+    {
+        return new ApiResponse<T>
+        {
+            Code = code,
+            Message = message,
+            Data = data
+        };
+    }
+
+    /// <summary>
     /// 客户端错误（400）
     /// </summary>
     public static ApiResponse<T> BadRequest(string message = "请求参数错误")
     {
         return Fail(400, message);
+    }
+
+    /// <summary>
+    /// 客户端错误（400，带失败上下文数据）。
+    /// </summary>
+    /// <param name="message">面向人的描述。</param>
+    /// <param name="data">失败上下文数据。</param>
+    /// <returns>失败响应。</returns>
+    public static ApiResponse<T> BadRequest(string message, T data)
+    {
+        return Fail(400, message, data);
     }
 
     /// <summary>
@@ -96,11 +130,33 @@ public class ApiResponse<T>
     }
 
     /// <summary>
+    /// 未找到（404，带失败上下文数据）。
+    /// </summary>
+    /// <param name="message">面向人的描述。</param>
+    /// <param name="data">失败上下文数据。</param>
+    /// <returns>失败响应。</returns>
+    public static ApiResponse<T> NotFound(string message, T data)
+    {
+        return Fail(404, message, data);
+    }
+
+    /// <summary>
     /// 服务器错误（500）
     /// </summary>
     public static ApiResponse<T> Error(string message = "服务器内部错误")
     {
         return Fail(500, message);
+    }
+
+    /// <summary>
+    /// 服务器错误（500，带失败上下文数据）。
+    /// </summary>
+    /// <param name="message">面向人的描述。</param>
+    /// <param name="data">失败上下文数据。</param>
+    /// <returns>失败响应。</returns>
+    public static ApiResponse<T> Error(string message, T data)
+    {
+        return Fail(500, message, data);
     }
 }
 

@@ -1,19 +1,44 @@
+using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using System.ComponentModel.DataAnnotations;
 
 namespace IoTPlatform.DTOs.Requests;
 
 /// <summary>
-/// 安圣设备认领请求
+/// 安圣设备认领请求。
+///
+/// 【T5 契约变更说明】
+///   1. <see cref="DiscoveredDeviceId"/> 与 <see cref="ProtocolConfigId"/> 由必填改为可空。
+///      改动原因：新增了「按 IMEI 认领」这条路径——运维从设备铭牌上抄 IMEI 直接认领，
+///      不必先去待认领池里翻页找主键。二者<b>至少提供其一</b>，
+///      具体校验放在服务层（<c>AnShengDiscoveryService.ClaimAsync</c>）而不是 DataAnnotations，
+///      因为「A 或 B 至少填一个」这种跨字段规则用特性表达既啰嗦又不好给出准确错误码。
+///   2. 新增 <see cref="Kind"/>：允许运维在认领时<b>直接指定品类</b>。
+///      一旦指定，其权威高于任何自动推断（<c>KindSource = Manual</c>），
+///      后续上行自学习也不会把它改回去。
 /// </summary>
 public class ClaimAnShengDeviceRequest
 {
-    /// <summary>待认领设备 ID</summary>
-    [Required]
-    public long DiscoveredDeviceId { get; set; }
+    /// <summary>
+    /// 待认领设备 ID。与 <see cref="Imei"/> 至少提供其一，同时提供时以本字段为准。
+    /// </summary>
+    public long? DiscoveredDeviceId { get; set; }
+
+    /// <summary>
+    /// 待认领设备 IMEI。当 <see cref="DiscoveredDeviceId"/> 未提供时使用。
+    /// </summary>
+    [MaxLength(50)]
+    public string? Imei { get; set; }
 
     /// <summary>设备名称</summary>
     [Required, MaxLength(100)]
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 人工指定的设备品类。
+    /// <see cref="AnShengDeviceKind.Unknown"/>（默认值）表示「不指定，交给探测推断」。
+    /// 指定非 Unknown 值时，该品类将以 Manual 来源落档，自动推断不得覆盖。
+    /// </summary>
+    public AnShengDeviceKind Kind { get; set; } = AnShengDeviceKind.Unknown;
 
     /// <summary>所属区域 ID（可选）</summary>
     public long? AreaId { get; set; }
@@ -21,9 +46,10 @@ public class ClaimAnShengDeviceRequest
     /// <summary>所属项目 ID（可选）</summary>
     public long? ProjectId { get; set; }
 
-    /// <summary>协议配置 ID</summary>
-    [Required]
-    public long ProtocolConfigId { get; set; }
+    /// <summary>
+    /// 协议配置 ID。为空时由服务层按 IMEI 所属租户的安圣协议配置自动选取。
+    /// </summary>
+    public long? ProtocolConfigId { get; set; }
 
     /// <summary>自动上报间隔（秒），0=不开启。null/默认值=30</summary>
     public int? GetDevStatusSec { get; set; }

@@ -135,6 +135,16 @@ builder.Services.AddScoped<IoTPlatform.Services.IDeviceCommandService, IoTPlatfo
 // 安圣 MQTT 命令服务
 builder.Services.AddScoped<IoTPlatform.Services.IAnShengCommandService, IoTPlatform.Services.AnShengCommandService>();
 
+// 安圣设备能力档案服务（Scoped：内部持有 AppDbContext，不可被 Singleton 构造注入）
+builder.Services.AddScoped<IoTPlatform.Services.IAnShengDeviceProfileService, IoTPlatform.Services.AnShengDeviceProfileService>();
+
+// 安圣同步探测服务
+// Singleton 是硬要求：它在构造函数里订阅静态上行总线 AnShengUplinkHub。
+// 若注册为 Scoped，每个请求都会新订阅一次却从不退订，事件链会无限增长直至内存耗尽。
+builder.Services.Configure<IoTPlatform.Configuration.AnShengProbeOptions>(
+    builder.Configuration.GetSection(IoTPlatform.Configuration.AnShengProbeOptions.SectionName));
+builder.Services.AddSingleton<IoTPlatform.Services.IAnShengProbeService, IoTPlatform.Services.AnShengProbeService>();
+
 // 安圣设备发现服务（全局单例 BackgroundService）
 builder.Services.AddSingleton<IoTPlatform.Services.IAnShengDiscoveryService, IoTPlatform.Services.AnShengDiscoveryService>();
 builder.Services.AddHostedService(sp => (IoTPlatform.Services.AnShengDiscoveryService)sp.GetRequiredService<IoTPlatform.Services.IAnShengDiscoveryService>());

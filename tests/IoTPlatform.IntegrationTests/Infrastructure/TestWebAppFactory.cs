@@ -119,10 +119,15 @@ public sealed class TestWebAppFactory : WebApplicationFactory<Program>
 
     private static void RemoveBackgroundServices(IServiceCollection services)
     {
+        // 只摘除后台 IHostedService（Mqtt / DataRetention / AnShengDiscovery 的扫描循环），
+        // 但<b>保留</b> IAnShengDiscoveryService 单例注册——
+        // 认领链路（AnShengController.ClaimDevice → IAnShengDiscoveryService.ClaimAsync）
+        // 在 HTTP 请求作用域内直接消费该单例，若一并摘除，认领端点会 DI 解析失败（500）。
+        // AnShengDiscoveryService 的扫描循环由 line 150 的 IHostedService 包装注册承载，
+        // 摘掉 IHostedService 即关掉循环，单例本身仍可被控制器与 IAnShengProbeService 复用。
         var toRemove = services.Where(d =>
             d.ServiceType == typeof(IHostedService) ||
-            d.ServiceType == typeof(IMqttClientService) ||
-            d.ServiceType == typeof(IAnShengDiscoveryService)).ToList();
+            d.ServiceType == typeof(IMqttClientService)).ToList();
         foreach (var d in toRemove)
         {
             services.Remove(d);

@@ -118,6 +118,22 @@ public class AnShengDevStatus
     [JsonPropertyName("version")]
     public string? Version { get; set; }
 
+    /// <summary>
+    /// 插槽数量（部分固件在 <c>getDevStatus</c> 中也上报 <c>slotAmount</c>）。
+    ///
+    /// 【为什么状态报文里也要这个字段】
+    ///   协议文档把 <c>slotAmount</c> 归在 <c>getDevInfo</c>，但实测固件在
+    ///   <c>getDevStatus</c> 里同样会带。品类判定把「slotAmount &gt; 0」当作开关款的权威判据，
+    ///   只认 getDevInfo 一处会让「设备只回了状态」的场景永远判不出品类。
+    ///   这里补齐后，由 <c>AnShengDeviceProfileService.MergeSnapshot</c> 做双源合并。
+    ///
+    /// 【与 <see cref="SlotCount"/> 的区别】
+    ///   <see cref="SlotCount"/> 是<b>推算值</b>（数 slots/EMdata 数组长度），设备不上报数组时为 0；
+    ///   本字段是设备<b>显式声明</b>的数量，可信度更高，故不合并进 SlotCount 以免语义混淆。
+    /// </summary>
+    [JsonPropertyName("slotAmount")]
+    public int? SlotAmount { get; set; }
+
     /// <summary>插槽数量：优先取 <see cref="Slots"/> 长度，其次取 <see cref="EmData"/> 长度。</summary>
     [JsonIgnore]
     public int SlotCount => Slots?.Count ?? EmData?.Count ?? 0;
@@ -351,6 +367,17 @@ public class AnShengDevInfo
     /// <summary>联网类型（部分固件上报，非协议必备字段）。</summary>
     [JsonPropertyName("netType")]
     public string? NetType { get; set; }
+
+    /// <summary>
+    /// 物联卡 ICCID（部分 4G 固件在 <c>getDevInfo</c> 中一并上报）。
+    ///
+    /// 【为什么设备信息里也要这个字段】
+    ///   <c>AnShengDevStatus</c> 已有 <c>iccid</c>，但认领探测是「先 getDevInfo 再 getDevStatus」，
+    ///   若设备在 getDevStatus 阶段超时，只认状态报文就会丢掉 ICCID。
+    ///   补齐后由 <c>MergeSnapshot</c> 做双源合并，两条路任一有值即可落库。
+    /// </summary>
+    [JsonPropertyName("iccid")]
+    public string? Iccid { get; set; }
 }
 
 /// <summary>
