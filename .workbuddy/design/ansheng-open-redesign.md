@@ -121,8 +121,8 @@
 |---|---|---|:--:|:--:|:--:|:--:|---|---|---|
 | 23 | `getTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `frameId?` | `tasks[]`（每插槽 `{loopTimeTasks[],timeTasks[]}`） | **未实现** |
 | 24 | `setTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `tasks`(array，按插槽 1..n) | `result` | **未实现** |
-| 25 | `getSlotTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `frameId?`（**文档未明确 slotNum，见 §7-R3**） | `loopTimeTasks[]`, `timeTasks[]` | **未实现** |
-| 26 | `setSlotTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `loopTimeTasks?`, `timeTasks?`（**文档未明确 slotNum**） | `result` | **未实现** |
+| 25 | `getSlotTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `frameId?`, `slotNum?`（**2026-08-03 安圣确认含 slotNum 参数**） | `loopTimeTasks[]`, `timeTasks[]` | **未实现** |
+| 26 | `setSlotTimeTasks` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `slotNum`(必,int,1起), `loopTimeTasks?`, `timeTasks?`（**2026-08-03 安圣确认含 slotNum**） | `result` | **未实现** |
 | 27 | `timeEvent` | 🔔 | ✗ | ✓ | ✗ | ✗ | — | `taskIndex`, `slotNum`, `slots[]`, `task`(object), `imei`, `timestamp`（**无 result、无 frameId**） | **未实现** |
 | 28 | `getEMStatistics` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `q?`（`all`/`month`/`day`/`hour`/`hourSum`/`total`，可逗号组合） | `data[]`：`total`,`hourSumData[48]`,`hourData[]`,`dayData[]`,`monthData[]` | **未实现** |
 | 29 | `clearEMStatistics` | ⬇⬆ | ✗ | ✓ | ✗ | ✗ | `slotNum?`（不传或 0 = 全部） | `result` | **未实现** |
@@ -300,7 +300,7 @@ public enum AnShengDeviceKind
 |---|---|---|
 | 1 | 管理员认领时手工选择（`DiscoveredAnShengDevice.Kind` / `AnShengDeviceProfile.Kind`） | **权威**，一次确定，可后续修改 |
 | 2 | `getDevStatus.netType`（`4G`/`WiFi`）+ `getDevInfo.slotAmount` 是否存在 | 自动推断：`netType=4G` 且 `slotAmount>0` → `Switch4G`；`netType=WiFi` 且无 `slotAmount` → `SpeakerWiFi`。仅作为**认领页的默认选中项**，不覆盖人工选择 |
-| 3 | `getDevInfo.version` 前缀（如 `SWITCH-EC618X-...`） | 兜底提示，**不作为判定依据**（协议未定义型号命名规范，见 §7-R2） |
+| 3 | `getDevInfo.version` 前缀（如 `SWITCH-EC618X-...`） | 兜底提示，**不作为判定依据**（协议未定义型号命名规范，见 §7-R2 已关闭，改以 netType 推断为准） |
 
 #### 第二级：动态能力快照 `AnShengDeviceProfile`
 
@@ -1566,7 +1566,7 @@ sequenceDiagram
 | `AnShengStopDelayTaskRequest` | `SlotNum` | `int` | 是 | |
 | `AnShengSetTimeTasksRequest` | `Tasks` | `SlotTimeTasksDto[]` | 是 | 按插槽 1..n **全量覆盖** |
 | | `Confirm` | `bool` | 是 | 前端二次确认标志，防误覆盖 |
-| `AnShengSetSlotTimeTasksRequest` | `SlotNum` | `int?` | 否 | ⚠ 文档未明确，见 §7-R3 |
+| `AnShengSetSlotTimeTasksRequest` | `SlotNum` | `int` | 是 | 1 起；**2026-08-03 安圣确认必填**（§7-R3 已关闭） |
 | | `TimeTasks` | `NormalTimeTaskDto[]?` | 否 | |
 | | `LoopTimeTasks` | `LoopTimeTaskDto[]?` | 否 | |
 | `AnShengEmStatisticsQuery` | `Q` | `string?` | 否 | `all`/`month`/`day`/`hour`/`hourSum`/`total`，逗号组合 |
@@ -1870,6 +1870,7 @@ sequenceDiagram
   4. 注入 `timeEvent` → 对应 `taskIndex` 的镜像用报文内 `task` 对象更新，**不额外发命令**。
   5. 并发两次编辑同一插槽 → 第二次因 `RowVersion` 冲突返回 409。
   6. 镜像超 24h → 前端显示"数据可能过期"提示。
+  7. `setSlotTimeTasks` 传入 `slotNum > Profile.SlotAmount` 或 `< 1` → 返回 400，**不下发**（依赖 R7 能力持久化；§7-R3 已于 2026-08-03 关闭，`slotNum` 必填）。
 
 ---
 
@@ -2043,18 +2044,22 @@ graph TD
 
 ### 7.1 需用户/厂商确认的协议歧义（阻塞实现，标记为「文档未明确」）
 
+> **⚠ 编号说明**：本 §7 的 R 编号（协议歧义项）与 **§2.3 / §6 的 R 编号（命令可靠性 / 健壮性风险，如"无超时重试""无 100ms 间隔""frameId 毫秒碰撞"）相互独立、互不对应**，引用时请注明章节（如「§7-R3」），勿混淆。
+>
+> **关闭进度（截至 2026-08-03）**：**R2 / R3 / R8 已由安圣确认关闭**，**R9 于同日按「同构推定」关闭**（依据已确认的 R8，非厂商单独确认；详见各行「已关闭」标注）；**R4 / R11 仍未确认，待 T12 处理**；其余 R 项维持原状态。
+
 | ID | 事项 | 文档现状 | 影响任务 | 建议处理 |
 |---|---|---|---|---|
-| **R2** | **设备型号与品类的对应关系无规范** | 文档给出 `version` 示例 `SWITCH-EC618X-R24-O-V4.0.8`、`getDevStatus` 应答示例中出现 `"model":"Air780E"`，但**未定义型号命名规则**，也未说明如何从型号判定"喇叭/开关" | T5 | 现阶段**以人工认领时选择品类为准**（已在 D3 中如此设计）。需向安圣索取「型号 ↔ 品类」对照表，或确认 `slotAmount` 存在与否是否可作为可靠判据 |
-| **R3** | **`getSlotTimeTasks` / `setSlotTimeTasks` 缺少 `slotNum` 参数** | 命令名为"获取/设置**单个**插槽/开关定时任务"，但参数表**只列了 `method` 和 `frameId`**（`setSlotTimeTasks` 多了 `timeTasks`/`loopTimeTasks`），**没有任何字段指明是哪个插槽** | T10 | **阻塞**。三种可能：① 文档漏写 `slotNum`；② 该命令仅用于单插槽设备；③ 通过其他方式隐式指定。需厂商确认。在确认前 T10 只实现 `getTimeTasks`/`setTimeTasks`（整表版），单插槽版留空 |
-| **R4** | **`simCheck` 事件字段过简** | 应答参数表仅有 `method`、`result`、`imei`，**不含 `leftDays`/`dataBalance` 等预警内容** | T12 | 需确认预警事件是否携带具体余量数据；若不携带，平台收到后需主动补发 `getSimCheck` 才能展示有效信息（会增加流量） |
+| **R2** | ~~**设备型号与品类的对应关系无规范**~~ | 文档给出 `version` 示例 `SWITCH-EC618X-R24-O-V4.0.8`、`getDevStatus` 应答示例中出现 `"model":"Air780E"`，但**未定义型号命名规则**，也未说明如何从型号判定"喇叭/开关" | T5 | **[已关闭 2026-08-03]** 采用 `getDevStatus.netType` 推断方案（即 §3 D3 品类判定策略第 2 级，见 L302，无需改动）：`netType=4G` 且 `slotAmount>0` → `Switch4G`；`netType=WiFi` 且无 `slotAmount` → `SpeakerWiFi`。安圣确认 `netType` 值域仅 **{`4G`, `WiFi`}** 两种，**不再等待「型号 ↔ 品类」对照表**。人工认领选择仍为第 1 级权威来源，netType 推断仅作认领页默认选中项 |
+| **R3** | ~~**`getSlotTimeTasks` / `setSlotTimeTasks` 缺少 `slotNum` 参数**~~ | 命令名为"获取/设置**单个**插槽/开关定时任务"，但参数表**只列了 `method` 和 `frameId`**（`setSlotTimeTasks` 多了 `timeTasks`/`loopTimeTasks`），**没有任何字段指明是哪个插槽** | T10 | **[已关闭 2026-08-03]** 安圣确认：该组命令**含 `slotNum` 参数**（原属文档漏写）。`setSlotTimeTasks.slotNum` 按**必填、int、1 起**实现，`getSlotTimeTasks.slotNum` 可选。**原「T10 只实现整表版、单插槽版留空」的 fallback 限制已取消**——T10 的单插槽版（`getSlotTimeTasks`/`setSlotTimeTasks`）与整表版（`getTimeTasks`/`setTimeTasks`）**均需完整实现**。下发前用 `Profile.SlotAmount` 做 `1 <= slotNum <= slotAmount` 越界校验 |
+| **R4** | **`simCheck` 事件字段过简** | 应答参数表仅有 `method`、`result`、`imei`，**不含 `leftDays`/`dataBalance` 等预警内容** | T12 | 需确认预警事件是否携带具体余量数据；若不携带，平台收到后需主动补发 `getSimCheck` 才能展示有效信息（会增加流量）。**[待关闭：2026-08-03 用户未提供 `simCheck` 字段确认，仍待 T12 处理]** |
 | **R5** | **`getDevStatus` 应答含未列出的 `model` 字段** | 参数表无 `model`，但应答示例中有 `"model":"Air780E"`；现有代码已在用该字段做在线设备型号识别 | T2, T5 | 按"宽松接收"处理：解析但不依赖。需确认该字段是否所有品类/固件都有 |
 | **R6** | **`willQos` 类型标注为 string，其余 qos 为 int** | `setMqtt.mqttParams` 参数表中 `willQos` 类型列写的是 `string`，而 `subscribeQos`/`publishQos` 是 `int`；MQTT 配置示例里 `"willQos":1` 是数字 | T13 | 判断为**文档笔误**，实现按 int 处理，但序列化时保留兼容开关。需确认 |
 | **R7** | **`chageFullStopSec` 字段名疑似拼写错误** | 文档字段为 `chageFullStopSec`（缺 `r`），同组其他字段为 `chargeFullStop*` | T2 | 实现**严格照抄文档拼写**（已在 §5.2 标注）。需确认设备侧实际字段名，若设备已修正会导致解析失败 |
-| **R8** | **`getEMStatistics` 的 `data[]` 与插槽的对应关系** | 说明为"插槽电量计统计信息对象数组，按顺序从插槽1~插槽n"，但数组项内无 `slotNum` | T11 | 按下标推导 `SlotNum = index + 1`。风险：若设备只返回部分插槽会全部错位。建议实现时用 `Profile.SlotAmount` 校验数组长度，不匹配则拒绝入库并告警 |
-| **R9** | **`getTimeTasks.tasks[]` 同样按插槽顺序、无 slotNum** | 同 R8 | T10 | 同 R8 处理 |
+| **R8** | ~~**`getEMStatistics` 的 `data[]` 与插槽的对应关系**~~ | 说明为"插槽电量计统计信息对象数组，按顺序从插槽1~插槽n"，但数组项内无 `slotNum` | T11 | **[已关闭 2026-08-03]** 安圣确认：`data[]` **按顺序从插槽 1 ~ 插槽 n**，即 `SlotNum = index + 1`。实现按下标推导；**仍保留 `Profile.SlotAmount` 校验数组长度**，长度不匹配（设备只返回部分插槽）则拒绝入库并告警 |
+| **R9** | ~~**`getTimeTasks.tasks[]` 同样按插槽顺序、无 slotNum**~~ | 同 R8 | T10 | **[已关闭 2026-08-03]** 按同构推定关闭：`getTimeTasks.tasks[]` 按插槽 1~n 顺序，`SlotNum = index + 1`，处理方式同已关闭的 R8。推定依据：`tasks[]` 与 `getEMStatistics.data[]` 结构同构（均为「按插槽排列、项内无 `slotNum`」的数组），R8 已由安圣确认按插槽 1~n，故 `tasks[]` 同理。**同样继承 R8 的护栏**：用 `Profile.SlotAmount` 校验数组长度，长度不匹配则拒绝入库并告警。⚠ 本项为**推定**而非厂商逐条确认，若 T10 联调发现实际顺序不符，需回退本行并重新开启 |
 | **R10** | **`q` 参数的固件门槛处理策略** | `getDevStatus.q` 标注"v4.0.20 及以上版本支持"；`uploadEnable` 标注"v5.0.1 版本及以上才支持"，但**未说明低版本设备收到该字段的行为**（忽略？报错？） | T7 | 需确认。保守策略：低版本设备**不下发**该字段（已在 T7 验收标准 3 中留作实现决策点） |
-| **R11** | **`getAutoReport`/`setAutoReport`/`send485`/`recv485` 标注「测试中」** | 文档明确标注 | T12 | 已在 Catalog 中标记 `IsBeta=true`，UI 显示警告。需确认这些命令的稳定性与可用固件范围 |
+| **R11** | **`getAutoReport`/`setAutoReport`/`send485`/`recv485` 标注「测试中」** | 文档明确标注 | T12 | 已在 Catalog 中标记 `IsBeta=true`，UI 显示警告。需确认这些命令的稳定性与可用固件范围。**[待关闭：2026-08-03 用户未提供稳定性确认，仍待 T12 处理]** |
 | **R12** | **`connected` 事件与 MQTT 连接的关系** | 文档说"设备连接 MQTT 成功触发事件" | T6 | 需确认：设备每次重连都会发吗？会不会因为网络抖动导致高频 `connected`？这决定 `ConnectedEventHandler` 是否需要限流 |
 
 ### 7.2 需用户决策的产品/工程问题

@@ -1,0 +1,80 @@
+sequenceDiagram
+    autonumber
+    participant XU as xUnit Runner
+    participant DF as DatabaseFixture
+    participant PR as MySqlDbProvisioner
+    participant MY as MySQL(真实实例)
+    participant TB as IntegrationTestBase
+    participant WF as TestWebAppFactory
+    participant HOST as ASP.NET Host(Program.cs)
+    participant DI as ServiceCollection
+    participant SD as SeedData
+    participant HC as HttpClient
+    participant CT as AnShengController
+    participant SV as AnShengCommandService
+    participant DB as AppDbContext
+    participant AD as RecordingAnShengAdapter
+
+    Note over XU,DF: ① 集合级：整个测试运行只做一次
+    XU->>DF: InitializeAsync()
+    DF->>PR: ProvisionAsync()
+    PR->>MY: CREATE SCHEMA iot_platform_test_xxx
+    MY-->>PR: ok
+    PR-->>DF: connectionString
+
+    Note over TB,HOST: ② 类级：构造 TestServer
+    XU->>TB: ctor(DatabaseFixture)
+    TB->>WF: new TestWebAppFactory(connectionString)
+    WF->>HOST: ConfigureWebHost + UseEnvironment("Testing")
+    HOST->>DI: Program.cs 原有注册(DbContext/MQTT/HostedService/JwtBearer...)
+    WF->>DI: ConfigureTestServices 覆盖
+    WF->>DI: 移除 DbContextOptions<AppDbContext> → UseMySql(测试连接串)
+    WF->>DI: 移除全部 IHostedService(3 个) 与 IMqttClientService
+    WF->>DI: 替换 IProtocolAdapterFactory → FakeProtocolAdapterFactory
+    WF->>DI: 认证默认 Scheme → "Test"(TestAuthHandler)
+    HOST->>DB: Database.Migrate()  (Program.cs:289，真实 MySQL 建表)
+    DB->>MY: 执行 6 个迁移
+    MY-->>DB: schema ready
+    HOST-->>WF: TestServer 就绪
+    DF->>MY: Respawner.Create(快照建表后基线)
+
+    Note over TB,SD: ③ 用例级：InitializeAsync
+    XU->>TB: InitializeAsync()
+    TB->>DF: ResetAsync()  (Respawn 清数据、保表结构)
+    TB->>AD: Reset()  (清下发记录与预置应答)
+    TB->>TB: StaticStateResetter.ResetAll()
+    TB->>SD: SeedBaselineAsync(db) + SeedAnShengDeviceAsync(imei)
+    SD->>DB: Customer/User/ProtocolConfig/Device/Discovered
+    DB->>MY: INSERT
+
+    Note over HC,AD: ④ 用例主体：一次真实 HTTP 往返
+    XU->>TB: [Fact] 执行
+    TB->>HC: Client.AsAdmin() → 带 X-Test-Role/AppCode 头
+    HC->>CT: POST /api/v1/ansheng/{deviceId}/command
+    CT->>CT: TestAuthHandler 认证 + PermissionAuthorize(UPDATE_DEVICES)
+    CT->>SV: SendCommandAsync(deviceId, method, params)
+    SV->>DB: Devices.FirstOrDefault(id)  → IMEI / ProtocolConfigId
+    DB-->>SV: device
+    SV->>AD: 工厂 GetAdapter(ProtocolConfigId) → IsConnected=true
+    SV->>SV: Catalog 校验(品类/参数/事件)
+    SV->>AD: SendCommandAsync(deviceId, imei, method, json)
+    AD->>AD: 记录 SentCommand + 生成 frameId
+    AD-->>SV: frameId
+    SV-->>CT: AnShengCommandResponse{Success, FrameId, Payload}
+    CT-->>HC: 200 ApiResponse{code,message,data}
+
+    Note over TB,AD: ⑤ 断言（三处）
+    TB->>HC: 断言 HTTP 200 + ApiResponse.Code
+    TB->>DB: 新 scope 查库断言（命令记录/镜像/事件行）
+    TB->>AD: 断言 Sent.Count==1、Method、参数、frameId 一致
+
+    Note over TB,AD: ⑥ 上行注入（T6/T8/T10 用）
+    TB->>AD: RaiseDataReceived(imei, "{\"method\":\"keyEvent\",...}")
+    AD->>SV: DataReceived 事件 → 生产侧 Handler 落库
+    TB->>DB: 断言 AnShengDeviceEvent 新增 1 行
+
+    Note over XU,MY: ⑦ 收尾
+    XU->>TB: DisposeAsync() → Factory.Dispose()
+    XU->>DF: DisposeAsync()
+    DF->>PR: DisposeSchemaAsync()
+    PR->>MY: DROP SCHEMA iot_platform_test_xxx

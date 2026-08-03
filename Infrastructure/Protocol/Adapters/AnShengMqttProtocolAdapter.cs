@@ -49,6 +49,26 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     private static readonly TimeSpan HealthCheckInterval = TimeSpan.FromSeconds(15);
 
     /// <summary>
+    /// Legacy 充电桩协议族下行方法白名单（<b>默认拒绝、显式放行</b>）。
+    ///
+    /// 背景：历史实现在 method 未命中 <see cref="AnShengCommandCatalog"/> 时无条件走 Legacy 兜底，
+    /// 导致任意「协议外」方法（含前端臆造的伪命令）都会被真实构造并下发到现网设备，
+    /// 且调用方还会收到「成功」响应。此白名单用于阻断该路径。
+    ///
+    /// 收录标准：确属旧版充电桩协议、且当前仍有真实链路在用的下行方法。
+    /// <b>不得</b>收录任何伪命令（如 setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig），
+    /// 它们本就不属于任何协议，已在前后端一并删除。
+    /// 注：<c>getDevStatus</c> 等方法已登记在 <see cref="AnShengCommandCatalog"/> 中，
+    /// 走目录分支，无需重复登记于此。
+    /// </summary>
+    private static readonly HashSet<string> LegacyMethodWhitelist = new(StringComparer.Ordinal)
+    {
+        "orderStart",
+        "orderEnd",
+        "orderUp"
+    };
+
+    /// <summary>
     /// IMEI → 设备品类缓存。
     /// 由上行 <c>getDevInfo</c>/<c>getDevStatus</c>/<c>connected</c> 报文自动学习，
     /// 也可由业务层通过 <see cref="RegisterDeviceKind"/> 主动登记（例如从数据库读取 model/netType）。
@@ -324,6 +344,11 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     /// 向安圣设备下发命令，<paramref name="serialNumber"/> 即设备 IMEI。
     /// 报文由 <see cref="AnShengCommandBuilder"/> 统一构建，保证与 asopen.md 一致；
     /// 下发前经 <see cref="AnShengCommandThrottle"/> 按 IMEI 限流（≥100ms）。
+    ///
+    /// 报文结构选择遵循「默认拒绝、显式放行」：
+    ///   1. 命中 <see cref="AnShengCommandCatalog"/> → 二开协议报文（参数平铺）；
+    ///   2. 命中 <see cref="LegacyMethodWhitelist"/> → Legacy 充电桩报文（param 包裹）；
+    ///   3. 其余一律抛出 <see cref="NotSupportedException"/>，不得下发协议外报文。
     /// </summary>
     /// <param name="deviceId">设备主键（仅用于日志）。</param>
     /// <param name="serialNumber">设备 IMEI。</param>
@@ -332,6 +357,9 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>本次下发的 frameId（16 位）。</returns>
     /// <exception cref="InvalidOperationException">MQTT 未连接。</exception>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="commandType"/> 既不在二开协议目录中，也不在 Legacy 白名单内。
+    /// </exception>
     public async Task<string> SendCommandAsync(long deviceId, string serialNumber, string commandType,
         string parameters, CancellationToken cancellationToken = default)
     {
@@ -352,11 +380,22 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
             // 二开协议：参数平铺、16 位 frameId、仅 4G 注入秒级 timestamp、压缩 JSON
             (frameId, payloadJson) = _commandBuilder.BuildCommand(serialNumber, commandType, flatParams, kind);
         }
+        else if (LegacyMethodWhitelist.Contains(commandType))
+        {
+            // Legacy 充电桩协议族（orderStart / orderEnd / orderUp）：保留 param 包裹，行为不变
+            _logger?.LogDebug("方法 {Method} 命中 Legacy 充电桩白名单，按 Legacy 报文结构下发", commandType);
+            (frameId, payloadJson) = _commandBuilder.BuildLegacyCommand(serialNumber, commandType, flatParams);
+        }
         else
         {
-            // Legacy 充电桩协议族（orderStart / orderEnd 等）：保留 param 包裹，行为不变
-            _logger?.LogDebug("方法 {Method} 不在二开协议目录中，按 Legacy 报文结构下发", commandType);
-            (frameId, payloadJson) = _commandBuilder.BuildLegacyCommand(serialNumber, commandType, flatParams);
+            // 默认拒绝：既不在二开协议目录、也不在 Legacy 白名单 → 快速失败，禁止外发协议外报文
+            _logger?.LogWarning(
+                "拒绝下发协议外命令: DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, Kind={Kind}。"
+                + "该方法既未登记于 AnShengCommandCatalog，也不在 Legacy 充电桩白名单 [{Whitelist}] 内，已阻止外发。",
+                deviceId, serialNumber, commandType, kind, string.Join(", ", LegacyMethodWhitelist));
+
+            throw new NotSupportedException(
+                $"方法 {commandType} 不属于安圣二开协议目录，也不在 Legacy 充电桩白名单内，禁止下发。");
         }
 
         // 协议要求：同一设备多条命令之间间隔 ≥100ms，防止命令粘连

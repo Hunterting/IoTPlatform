@@ -1,0 +1,14 @@
+graph TD
+    S1["S1 工程骨架 + 入口可见性<br/>csproj/sln/常量/配置 · P0"]
+    S2["S2 数据库夹具<br/>IDbProvisioner/DatabaseFixture · P0"]
+    S3["S3 TestServer 与依赖替换<br/>TestWebAppFactory/认证 · P0"]
+    S4["S4 替身+种子+基类<br/>RecordingAdapter/SeedData · P0"]
+    S5["S5 示例测试跑通 + README<br/>脚手架自证 · P0"]
+
+    S1 --> S2
+    S1 --> S3
+    S3 --> S4
+    S2 --> S5
+    S4 --> S5
+
+    S5 -.交付给.-> T5["T5 Profile 与品类判定<br/>(第 3 步起点)"]

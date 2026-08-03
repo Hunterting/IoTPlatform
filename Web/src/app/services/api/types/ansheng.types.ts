@@ -73,20 +73,9 @@ export interface DiscoveredDeviceQueryParams {
   claimed?: boolean;
 }
 
-// ── 二开设备开关命令 ──────────────────────────────────────
-export interface SwitchControlRequest {
-  deviceId: number;
-  switchId: number;
-  on: boolean;
-}
-
-export interface SwitchConfigRequest {
-  deviceId: number;
-  switchId: number;
-  config: Record<string, unknown>;
-}
-
-export interface SwitchQueryParams {
-  deviceId: number;
-  switchId?: number;
-}
+// ── 已删除：二开设备「开关」伪命令类型 ──────────────────────
+// SwitchControlRequest / SwitchConfigRequest / SwitchQueryParams 三个类型
+// 服务于 setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig 四个
+// 官方协议（asopen.md）中并不存在的伪命令，后端端点已物理删除，故一并移除。
+// 开关相关操作请改用官方 action / actions / getDevStatus 方法，
+// 统一通过 AnShengCommandRequest 走 /ansheng/{deviceId}/command。

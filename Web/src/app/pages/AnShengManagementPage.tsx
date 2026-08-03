@@ -115,50 +115,12 @@ const ANSHENG_COMMAND_TEMPLATES: CommandTemplate[] = [
   },
 ];
 
-// ── 二开设备开关命令模板 ────────────────────────────────────────────
+// ── 二开设备命令模板 ────────────────────────────────────────────────
+// 注意：setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig 四个方法
+//      在安圣官方协议（asopen.md）中并不存在，属历史臆造的「伪命令」，
+//      后端对应端点已于 T3 物理删除，此处同步移除，避免向现网设备下发协议外报文。
+//      开关通断请改用官方 action / actions 方法，状态查询请用 getDevStatus(q=slots)。
 const OPEN_DEVICE_COMMAND_TEMPLATES: CommandTemplate[] = [
-  {
-    method: 'setSwitch',
-    label: '控制开关',
-    icon: <Power className="w-4 h-4" />,
-    description: '控制指定开关通断',
-    color: 'green',
-    params: [
-      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
-      { key: 'on', label: '动作', type: 'select', options: ['开', '关'], defaultValue: '开' },
-    ],
-  },
-  {
-    method: 'getSwitchStatus',
-    label: '查询开关状态',
-    icon: <Activity className="w-4 h-4" />,
-    description: '查询开关当前通断状态',
-    color: 'blue',
-    params: [
-      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
-    ],
-  },
-  {
-    method: 'setSwitchConfig',
-    label: '配置开关',
-    icon: <Settings className="w-4 h-4" />,
-    description: '配置开关定时/参数',
-    color: 'amber',
-    params: [
-      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
-      { key: 'name', label: '开关名称', type: 'text', placeholder: '如：路灯1' },
-    ],
-  },
-  {
-    method: 'getSwitchConfig',
-    label: '查询开关配置',
-    icon: <Info className="w-4 h-4" />,
-    description: '查询开关详细配置',
-    color: 'cyan',
-    params: [
-      { key: 'switch', label: '开关编号', type: 'number', defaultValue: '1', placeholder: '1' },
-    ],
-  },
   {
     method: 'reboot',
     label: '重启设备',
@@ -424,23 +386,11 @@ export function AnShengManagementPage() {
       const method = selectedTemplate.method;
       let response: { data: { success: boolean; message?: string; data?: AnShengCommandResponse } };
 
-      if (isOpenDevice && method === 'setSwitch') {
-        const switchId = Number(paramValues['switch'] || '1');
-        const isOn = paramValues['on'] !== '关'; // 默认"开"=true
-        response = await anshengApi.controlSwitch({ deviceId: selectedDeviceId, switchId, on: isOn }) as any;
-      } else if (isOpenDevice && method === 'getSwitchStatus') {
-        const switchId = paramValues['switch'] ? Number(paramValues['switch']) : undefined;
-        response = await anshengApi.getSwitchStatus(selectedDeviceId, switchId) as any;
-      } else if (isOpenDevice && method === 'setSwitchConfig') {
-        const switchId = Number(paramValues['switch'] || '1');
-        const config: Record<string, unknown> = {};
-        if (paramValues['name']) config['name'] = paramValues['name'];
-        response = await anshengApi.configureSwitch({ deviceId: selectedDeviceId, switchId, config }) as any;
-      } else if (isOpenDevice && method === 'reboot') {
+      if (isOpenDevice && method === 'reboot') {
         response = await anshengApi.rebootDevice(selectedDeviceId) as any;
       } else {
-        // 通用命令（getDevInfo、getSwitchConfig、getDevStatus 等）
-        let params: Record<string, unknown> = {};
+        // 通用命令（getDevInfo、getDevStatus 等），统一走 /ansheng/{id}/command
+        const params: Record<string, unknown> = {};
         selectedTemplate.params.forEach(p => {
           const val = paramValues[p.key];
           if (val !== undefined && val !== '') {

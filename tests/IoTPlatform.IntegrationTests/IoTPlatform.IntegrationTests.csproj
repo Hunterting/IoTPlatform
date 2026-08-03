@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RootNamespace>IoTPlatform.IntegrationTests</RootNamespace>
+    <AssemblyName>IoTPlatform.IntegrationTests</AssemblyName>
+    <!-- CS0618: 主工程存在少量已过时 API 调用；1591: 不强制 XML 注释 -->
+    <NoWarn>$(NoWarn);1591;CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 测试宿主与框架：版本与既有 tests/IoTPlatform.AnSheng.Tests 保持一致 -->
+    <!--
+      WebApplicationFactory<Program> 与 ASP.NET Core 类型（AuthenticationSchemeOptions / IWebHostBuilder 等）
+      来自 Microsoft.AspNetCore.App 共享框架。本工程是类库 SDK（非 Sdk.Web），必须显式引用该 FrameworkReference。
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+
+    <!-- TestServer / WebApplicationFactory：必须锁 8.x，与主工程 net8.0 及 JwtBearer 8.0.11 对齐 -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.11" />
+
+    <!-- EF / MySQL：与主工程完全同版本，避免版本漂移 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.11" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="8.0.2" />
+    <PackageReference Include="MySqlConnector" Version="2.3.7" />
+
+    <!-- 用例间快速清数据（保留表结构） -->
+    <PackageReference Include="Respawn" Version="6.2.1" />
+
+    <!-- 断言库：锁 6.x —— FluentAssertions 7.0 起改为商业许可，禁止升级 -->
+    <PackageReference Include="FluentAssertions" Version="6.12.2" />
+
+    <!--
+      Testcontainers 预留：本机当前无 Docker（架构方案 §1.3 实测结论）。
+      Docker 就位后：解开下面这行注释，并在本 PropertyGroup 加 <DefineConstants>$(DefineConstants);TESTCONTAINERS</DefineConstants>，
+      然后设置环境变量 IOT_TEST_DB_PROVIDER=testcontainers 即可切换，其余文件零改动。
+      <PackageReference Include="Testcontainers.MySql" Version="3.10.0" />
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\IoTPlatform.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.Testing.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="xunit.runner.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

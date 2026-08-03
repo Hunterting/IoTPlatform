@@ -367,3 +367,10 @@ app.MapControllers();
 app.MapHub<DeviceHub>("/hubs/device");
 
 app.Run();
+
+/// <summary>
+/// 顶级语句生成的 Program 类默认为 internal，集成测试工程需要 public 才能使用
+/// WebApplicationFactory&lt;Program&gt;。此处按微软官方文档做法追加一个 public partial 声明，
+/// 不含任何成员，对运行时行为零影响。
+/// </summary>
+public partial class Program { }

@@ -9,8 +9,6 @@ import type {
   AnShengCommandResponse,
   AnShengAutoReportRequest,
   DiscoveredDeviceQueryParams,
-  SwitchControlRequest,
-  SwitchConfigRequest,
 } from './types/ansheng.types';
 
 /**
@@ -66,38 +64,13 @@ export const anshengApi = {
     );
   },
 
-  // ── 二开设备开关命令 ──────────────────────────────────────
-
-  /** 控制开关通断 */
-  controlSwitch: async (
-    request: SwitchControlRequest
-  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
-    return httpClient.post<ApiResponse<AnShengCommandResponse>>(
-      `/ansheng/${request.deviceId}/switch`,
-      { switchId: request.switchId, on: request.on }
-    );
-  },
-
-  /** 查询开关状态 */
-  getSwitchStatus: async (
-    deviceId: number,
-    switchId?: number
-  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
-    return httpClient.get<ApiResponse<AnShengCommandResponse>>(
-      `/ansheng/${deviceId}/switch-status`,
-      { params: { switchId } }
-    );
-  },
-
-  /** 配置开关参数 */
-  configureSwitch: async (
-    request: SwitchConfigRequest
-  ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
-    return httpClient.post<ApiResponse<AnShengCommandResponse>>(
-      `/ansheng/${request.deviceId}/switch-config`,
-      { switchId: request.switchId, config: request.config }
-    );
-  },
+  // ── 二开设备命令 ──────────────────────────────────────────
+  //
+  // 说明：原 controlSwitch / getSwitchStatus / configureSwitch 三个方法分别指向
+  //       /ansheng/{id}/switch、/switch-status、/switch-config，这些端点依赖官方协议
+  //       asopen.md 中并不存在的伪命令，后端已于 T3 物理删除（调用必然 404），
+  //       故一并移除。开关通断请改用 sendCommand({ method: 'action' | 'actions' })，
+  //       状态查询请用 sendCommand({ method: 'getDevStatus', params: { q: 'slots' } })。
 
   /** 远程重启设备 */
   rebootDevice: async (

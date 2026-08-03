@@ -1,0 +1,123 @@
+classDiagram
+    class IDbProvisioner {
+        <<interface>>
+        +Task~string~ ProvisionAsync()
+        +Task DisposeSchemaAsync()
+        +string ConnectionString
+    }
+    class MySqlDbProvisioner {
+        -string _serverConnection
+        -string _schemaName
+        +Task~string~ ProvisionAsync()
+        +Task DisposeSchemaAsync()
+    }
+    class TestcontainersDbProvisioner {
+        -MySqlContainer _container
+        +Task~string~ ProvisionAsync()
+        +Task DisposeSchemaAsync()
+    }
+    class DatabaseFixture {
+        <<IAsyncLifetime>>
+        +string ConnectionString
+        -IDbProvisioner _provisioner
+        -Respawner _respawner
+        +Task InitializeAsync()
+        +Task ResetAsync()
+        +Task DisposeAsync()
+    }
+    class TestWebAppFactory {
+        <<WebApplicationFactory~Program~>>
+        +string ConnectionString
+        +RecordingAnShengAdapter Adapter
+        #ConfigureWebHost(IWebHostBuilder)
+        -ReplaceDbContext(IServiceCollection)
+        -RemoveHostedServices(IServiceCollection)
+        -ReplaceAdapterFactory(IServiceCollection)
+        -ReplaceAuthentication(IServiceCollection)
+    }
+    class IntegrationTestBase {
+        <<abstract, IAsyncLifetime>>
+        #HttpClient Client
+        #TestWebAppFactory Factory
+        #AppDbContext Db
+        #RecordingAnShengAdapter Adapter
+        +Task InitializeAsync()
+        +Task DisposeAsync()
+        #IServiceScope CreateScope()
+        #Task~T~ QueryDbAsync~T~(Func)
+    }
+    class FakeProtocolAdapterFactory {
+        <<IProtocolAdapterFactory>>
+        -ConcurrentDictionary~int,IProtocolAdapter~ _adapters
+        +IProtocolAdapter CreateAdapter(string, int)
+        +IProtocolAdapter GetAdapter(int)
+        +void ReleaseAdapter(int)
+        +void ReleaseAll()
+    }
+    class RecordingAnShengAdapter {
+        <<IProtocolAdapter>>
+        +bool IsConnected
+        +IReadOnlyList~SentCommand~ Sent
+        +int PublishCount
+        +Task~string~ SendCommandAsync(long, string, string, string, CancellationToken)
+        +void EnqueueResponse(string method, string json)
+        +void RaiseDataReceived(string imei, string json)
+        +void RaiseCommandResponse(string frameId, string json)
+        +void Reset()
+    }
+    class SentCommand {
+        +long DeviceId
+        +string Imei
+        +string Method
+        +string ParametersJson
+        +string FrameId
+        +DateTime SentAt
+    }
+    class TestAuthHandler {
+        <<AuthenticationHandler>>
+        +const string SchemeName
+        #Task~AuthenticateResult~ HandleAuthenticateAsync()
+    }
+    class AuthTestHelper {
+        <<static>>
+        +HttpClient AsAdmin(HttpClient)
+        +HttpClient AsSuperAdmin(HttpClient)
+        +HttpClient AsRole(HttpClient, string role, string appCode)
+        +Task~string~ CreateRealJwtAsync(IServiceProvider)
+    }
+    class SeedData {
+        <<static>>
+        +Task SeedBaselineAsync(AppDbContext)
+        +Task~Device~ SeedAnShengDeviceAsync(AppDbContext, string imei, int slotAmount)
+        +Task SeedDiscoveredAsync(AppDbContext, string imei, string netType)
+    }
+    class StaticStateResetter {
+        <<static>>
+        +void ResetAll()
+        +void ResetDeviceKinds()
+        +void ResetFrameIdMap()
+    }
+    class SharedTestConstants {
+        <<static>>
+        +const string AppCode
+        +const string Imei
+        +const long DeviceId
+        +const int ProtocolConfigId
+        +const string DownlinkTopicPrefix
+    }
+
+    IDbProvisioner <|.. MySqlDbProvisioner
+    IDbProvisioner <|.. TestcontainersDbProvisioner
+    DatabaseFixture o-- IDbProvisioner : 选择实现
+    TestWebAppFactory ..> DatabaseFixture : 取 ConnectionString
+    TestWebAppFactory *-- FakeProtocolAdapterFactory : DI 替换
+    TestWebAppFactory ..> TestAuthHandler : 注册 Test Scheme
+    FakeProtocolAdapterFactory o-- RecordingAnShengAdapter
+    RecordingAnShengAdapter *-- SentCommand
+    IntegrationTestBase o-- TestWebAppFactory
+    IntegrationTestBase o-- DatabaseFixture
+    IntegrationTestBase ..> SeedData : 每例播种
+    IntegrationTestBase ..> StaticStateResetter : 每例清零
+    IntegrationTestBase ..> AuthTestHelper
+    SeedData ..> SharedTestConstants
+    AuthTestHelper ..> SharedTestConstants
