@@ -1,0 +1,65 @@
+graph TD
+    subgraph P1["Phase 1 · 协议正确性基线 (P0)"]
+        T1["T1 命令目录与品类模型<br/>5 files · P0"]
+        T2["T2 报文结构修正<br/>去param/秒级ts/遗嘱判定<br/>6 files · P0"]
+        T3["T3 删除伪命令-后端<br/>5 files · P0"]
+        T4["T4 删除伪命令-前端<br/>+Catalog驱动控制台<br/>6 files · P0"]
+    end
+
+    subgraph P2["Phase 2 · 能力模型与事件管道 (P0)"]
+        T5["T5 设备能力档案 Profile<br/>6 files · P0"]
+        T6["T6 事件识别与处理管道<br/>12 files · P0"]
+        T7["T7 命令服务重构<br/>校验/在途表/记录/Catalog API<br/>7 files · P0"]
+    end
+
+    subgraph P3["Phase 3 · 开关与延时 (P1)"]
+        T8["T8 开关动作与延时任务-后端<br/>5 files · P1"]
+        T9["T9 开关控制面板-前端<br/>4 files · P1"]
+    end
+
+    subgraph P4["Phase 4 · 定时与电量 (P1)"]
+        T10["T10 定时任务 前后端<br/>7 files · P1"]
+        T11["T11 电量实时/统计/校准<br/>7 files · P1"]
+    end
+
+    subgraph P5["Phase 5 · 配置与运维 (P2)"]
+        T12["T12 运维与配置命令<br/>8 files · P2"]
+        T13["T13 MQTT参数远程配置 高危<br/>4 files · P2"]
+        T14["T14 协议族隔离 Legacy<br/>4 files · P2"]
+    end
+
+    T1 --> T2
+    T1 --> T3
+    T2 --> T3
+    T3 --> T4
+    T7 -.Catalog API.-> T4
+
+    T1 --> T5
+    T2 --> T5
+    T2 --> T6
+    T5 --> T6
+    T1 --> T7
+    T2 --> T7
+    T5 --> T7
+
+    T7 --> T8
+    T6 -.delayEvent Handler.-> T8
+    T4 --> T9
+    T8 --> T9
+
+    T8 --> T10
+    T6 -.timeEvent Handler.-> T10
+    T7 --> T11
+
+    T7 --> T12
+    T12 --> T13
+    T2 --> T14
+    T4 --> T14
+
+    classDef p0 fill:#ffe0e0,stroke:#c00,stroke-width:2px,color:#000
+    classDef p1 fill:#fff4d6,stroke:#d90,stroke-width:2px,color:#000
+    classDef p2 fill:#e6f0ff,stroke:#06c,stroke-width:2px,color:#000
+
+    class T1,T2,T3,T4,T5,T6,T7 p0
+    class T8,T9,T10,T11 p1
+    class T12,T13,T14 p2

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>IoTPlatform.Tools.AnShengFieldTest</RootNamespace>
+    <AssemblyName>AnShengFieldTest</AssemblyName>
+    <!-- Keep the captured uplink samples out of the compile set. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);captures\**</DefaultItemExcludes>
+    <!-- This tool starts fast; no need to prefetch the full framework. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MQTTnet is pinned to the same version the platform uses. -->
+    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the production protocol classes (builder / parser / catalog / throttle). -->
+    <ProjectReference Include="..\..\IoTPlatform.csproj" />
+  </ItemGroup>
+
+</Project>

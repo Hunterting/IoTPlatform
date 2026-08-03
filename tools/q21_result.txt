@@ -1,0 +1,21 @@
+[15:04:08] connect rc=0
+[15:04:08] 监听 /iot/server/iot-board/863434084755211，等遗嘱 ...
+*** 现在请拔掉设备电源，等 30 秒以上再重新上电 ***
+[15:04:09] 已发探活 getDevStatus
+[15:04:09] getDevStatus :: {"iccid":"898608271025D1379707","frameId":"prewill25ac6eee","result":"ok","timestamp":1785481449,"imei":"863434084755211","signal":22,"slots":[0],"tasks":[{"voltage":"227.708","status":"idle","power":
+  ... 30s/180s  报文 1 条  will=0
+  ... 60s/180s  报文 1 条  will=0
+[15:05:21] connected :: {"imei":"863434084755211","timestamp":1785481521,"firstBoot":true,"method":"connected"}
+  ... 90s/180s  报文 2 条  will=0
+  ... 120s/180s  报文 2 条  will=0
+  ... 150s/180s  报文 2 条  will=0
+  ... 180s/180s  报文 2 条  will=0
+
+===== 结果 =====
+遗嘱(close): 0 条
+
+★★★ 仍未抓到遗嘱 —— 请确认:
+  1. 断电 >30s（keepAlive 阈值）
+  2. 断电发生在监听窗口内（180s）
+  3. 如果都在窗口内但仍无遗嘱，那遗嘱 topic 可能不是 /iot/server/iot-board/{imei}
+     —— 这本身也是 Q21 要回答的一半问题

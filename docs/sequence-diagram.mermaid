@@ -1,0 +1,62 @@
+sequenceDiagram
+    actor Admin as 管理员
+    participant API as AnShengController
+    participant PCS as ProtocolConfigService
+    participant AF as ProtocolAdapterFactory
+    participant AD as AnShengMqttProtocolAdapter
+    participant DS as AnShengDiscoveryService
+    participant CS as AnShengCommandService
+    participant DCS as DataCollectionService
+    participant DB as MySQL
+    participant MQTT as EMQX Broker
+
+    Note over Admin,MQTT: ═══ Step 1: 创建并启动协议配置 ═══
+    Admin->>API: POST /api/v1/protocol-configs<br/>{Type:"ANSHENG_MQTT", Config:{Host,Port,...}}
+    API->>DB: INSERT protocol_configs<br/>(Type=ANSHENG_MQTT, ProtocolType=ANSHENG_MQTT)
+    Admin->>API: POST /api/v1/protocol-configs/{id}/start
+    API->>PCS: StartProtocolAsync(id)
+    PCS->>AF: CreateAdapter("ANSHENG_MQTT", configId)
+    AF-->>PCS: AnShengMqttProtocolAdapter
+    PCS->>AD: ConnectAsync(connectionString)
+    AD->>MQTT: CONNECT (clientId=iot_platform_ansheng_xxx)
+    MQTT-->>AD: CONNACK
+    PCS->>AD: StartDataCollectionAsync()
+    AD->>MQTT: SUBSCRIBE /iot/server/iot-board/+
+    PCS->>PCS: 订阅 DataReceived → 桥接 DataCollectionService
+    PCS->>DB: UPDATE protocol_configs SET Status="active"
+
+    Note over Admin,MQTT: ═══ Step 2: 设备首次上行 → 自动发现入池 ═══
+    MQTT->>AD: PUBLISH /iot/server/iot-board/863434084755211<br/>{"method":"connected","imei":"863434084755211",...}
+    AD->>AD: Parse → DataReceived event
+    AD->>PCS: DataReceived(DeviceId=0, SerialNumber=863434084755211)
+    PCS->>DB: 查询 Device WHERE SerialNumber=863434084755211
+    DB-->>PCS: null (未认领)
+    PCS->>DS: OnDeviceOnlineAsync(imei, model, netType, appCode)
+    DS->>DS: RegisterDeviceKind(imei, Switch4G)
+    DS->>DB: INSERT discovered_ansheng_devices (IsClaimed=false)
+    DS->>DB: 更新内存缓存 onlineStatus[imei]=now
+
+    Note over Admin,MQTT: ═══ Step 3: 管理员认领设备 + 下发 setAutoReport ═══
+    Admin->>API: POST /api/v1/ansheng/claim<br/>{DiscoveredDeviceId, Name, GetDevStatusSec:30}
+    API->>DB: 查询 discovered_ansheng_devices
+    API->>DB: INSERT devices (SerialNumber=IMEI, Status=online)
+    API->>DB: UPDATE discovered SET IsClaimed=true, ClaimedDeviceId=新ID
+    API->>DB: INSERT ansheng_device_configs (DeviceId, GetDevStatusSec=30)
+    API->>CS: ConfigureAutoReportAsync(deviceId, {GetDevStatusSec:30})
+    CS->>DB: 查询 Device → 获取 IMEI, ProtocolConfigId
+    CS->>AF: GetAdapter(protocolConfigId)
+    CS->>AD: SendCommandAsync(deviceId, IMEI, "setAutoReport",<br/>{"getDevStatusSec":30,"orderUpSec":300,"rs485Sec":0})
+    AD->>AD: AnShengCommandBuilder.BuildCommand(IMEI, "setAutoReport", params, Switch4G)
+    AD->>AD: AnShengCommandThrottle.WaitTurnAsync(IMEI)
+    AD->>MQTT: PUBLISH /iot/client/iot-board/863434084755211<br/>{"method":"setAutoReport","frameId":"A1B2",<br/>"getDevStatusSec":30,...}
+
+    Note over Admin,MQTT: ═══ Step 4: 设备自动上报 → 数据采集入库 ═══
+    MQTT->>AD: PUBLISH /iot/server/iot-board/863434084755211<br/>{"method":"getDevStatus","imei":"...","slots":[0,1],...}
+    AD->>AD: Parse → NormalizeForSensorData → DataReceived
+    AD->>PCS: DataReceived(DeviceId=0, SerialNumber=863434084755211)
+    PCS->>DB: 查询 Device WHERE SerialNumber=863434084755211
+    DB-->>PCS: Device(Id=5, Name="1号充电桩")
+    PCS->>DS: OnDeviceOnlineAsync(imei) [fire-and-forget]
+    PCS->>DCS: ProcessDeviceDataAsync(deviceId=5, sensorData=标准化JSON)
+    DCS->>DCS: 解析 JSON → 映射 total_power→ElectricPower, total_energy→ElectricKWh
+    DCS->>DB: INSERT device_data_records (DeviceId=5, SensorData=..., ElectricPower=..., ElectricKWh=...)

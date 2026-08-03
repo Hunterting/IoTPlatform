@@ -32,14 +32,25 @@ public class AnShengMqttProtocolOptions
     /// <summary>MQTT QoS 级别（0/1/2），安圣 WiFi 设备仅支持 0/1</summary>
     public int QosLevel { get; set; } = 1;
 
-    /// <summary>数据发布主题模式（通配符），设备 publish 到 /devtoser/pub/{imei}</summary>
-    public string PublishTopicPattern { get; set; } = "/devtoser/pub/+";
+    /// <summary>
+    /// 设备上行主题模式（通配符）。
+    /// 安圣二开设备统一 publish 到 <c>/iot/server/iot-board/{imei}</c>，
+    /// 业务数据与 will 遗愿<b>共用同一主题</b>，靠报文内 <c>method</c> 区分。
+    /// </summary>
+    public string PublishTopicPattern { get; set; } = "/iot/server/iot-board/+";
 
-    /// <summary>Will 遗愿主题模式，设备掉线时 Broker 发布到 /devtoser/will/{imei}</summary>
-    public string WillTopicPattern { get; set; } = "/devtoser/will/+";
+    /// <summary>
+    /// Will 遗愿主题模式。安圣二开协议与 <see cref="PublishTopicPattern"/> 相同，
+    /// 掉线判定<b>不依赖主题前缀</b>，而是判断 <c>method == "close"</c>。
+    /// 两者相同时适配器只订阅一次，避免重复投递。
+    /// </summary>
+    public string WillTopicPattern { get; set; } = "/iot/server/iot-board/+";
 
-    /// <summary>命令下发主题模板，平台 publish 到 /sertodev/{imei}</summary>
-    public string SubscribeTopicTemplate { get; set; } = "/sertodev/{imei}";
+    /// <summary>命令下发主题模板，平台 publish 到 <c>/iot/client/iot-board/{imei}</c></summary>
+    public string SubscribeTopicTemplate { get; set; } = "/iot/client/iot-board/{imei}";
+
+    /// <summary>同一 IMEI 两次命令下发的最小间隔（毫秒），协议要求 ≥100ms 防止命令粘连</summary>
+    public int CommandMinIntervalMs { get; set; } = 100;
 
     /// <summary>是否在设备上线时自动配置自动上报</summary>
     public bool AutoConfigureAutoReport { get; set; } = true;

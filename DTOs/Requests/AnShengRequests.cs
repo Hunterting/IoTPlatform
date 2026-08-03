@@ -24,6 +24,12 @@ public class ClaimAnShengDeviceRequest
     /// <summary>协议配置 ID</summary>
     [Required]
     public long ProtocolConfigId { get; set; }
+
+    /// <summary>自动上报间隔（秒），0=不开启。null/默认值=30</summary>
+    public int? GetDevStatusSec { get; set; }
+
+    /// <summary>自动上报查询参数（v4.0.20+），可选</summary>
+    public string? GetDevStatusQ { get; set; }
 }
 
 /// <summary>
@@ -58,38 +64,8 @@ public class AnShengAutoReportRequest
     public int? Rs485Sec { get; set; } = 0;
 }
 
-/// <summary>
-/// 二开设备开关控制请求
-/// </summary>
-public class SwitchControlRequest
-{
-    /// <summary>开关编号（1-based）</summary>
-    [Required]
-    public int SwitchId { get; set; }
-
-    /// <summary>true=开，false=关</summary>
-    [Required]
-    public bool On { get; set; }
-}
-
-/// <summary>
-/// 二开设备开关状态查询请求
-/// </summary>
-public class SwitchStatusQueryRequest
-{
-    /// <summary>开关编号，null 表示查询全部开关</summary>
-    public int? SwitchId { get; set; }
-}
-
-/// <summary>
-/// 二开设备开关配置请求
-/// </summary>
-public class SwitchConfigRequest
-{
-    /// <summary>开关编号（1-based）</summary>
-    [Required]
-    public int SwitchId { get; set; }
-
-    /// <summary>配置键值对（如 name/timer/enableDelay 等）</summary>
-    public Dictionary<string, object?> Config { get; set; } = new();
-}
+// 注：SwitchControlRequest / SwitchStatusQueryRequest / SwitchConfigRequest 已删除。
+// 它们服务于官方协议 asopen.md 中不存在的 setSwitch / getSwitchStatus / setSwitchConfig /
+// getSwitchConfig 四个臆造方法。开关通断请改用 AnShengCommandRequest：
+//   { "method": "action",  "parameters": { "slotNum": 1, "action": "on" } }
+//   { "method": "actions", "parameters": { "slotNums": [1,2], "action": "off" } }

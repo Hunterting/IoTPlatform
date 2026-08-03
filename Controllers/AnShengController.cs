@@ -24,15 +24,18 @@ public class AnShengController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IAnShengCommandService _commandService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AnShengController> _logger;
 
     public AnShengController(
         AppDbContext db,
         IAnShengCommandService commandService,
+        IServiceScopeFactory scopeFactory,
         ILogger<AnShengController> logger)
     {
         _db = db;
         _commandService = commandService;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -178,7 +181,7 @@ public class AnShengController : ControllerBase
             {
                 Name = request.Name,
                 SerialNumber = discovered.Imei, // IMEI 存入 SerialNumber
-                AppCode = appCode ?? discovered.AppCode,
+                AppCode = appCode ?? discovered.AppCode ?? "system",
                 Status = "online", // 认领时视作在线
                 Category = "安圣充电桩",
                 ProtocolConfigId = request.ProtocolConfigId,
@@ -196,6 +199,52 @@ public class AnShengController : ControllerBase
             discovered.ClaimedDeviceId = device.Id;
             _db.Set<DiscoveredAnShengDevice>().Update(discovered);
             await _db.SaveChangesAsync();
+
+            // 5. 如果请求了自动上报（默认开启），创建 AnShengDeviceConfig 并下发 setAutoReport
+            if (request.GetDevStatusSec is > 0 or null)
+            {
+                var sec = request.GetDevStatusSec ?? 30;
+                var config = new AnShengDeviceConfig
+                {
+                    DeviceId = device.Id,
+                    AppCode = device.AppCode,
+                    Imei = discovered.Imei,
+                    GetDevStatusSec = sec,
+                    GetDevStatusQ = request.GetDevStatusQ,
+                    OrderUpSec = 300,
+                    Rs485Sec = 0
+                };
+                _db.Set<AnShengDeviceConfig>().Add(config);
+                await _db.SaveChangesAsync();
+
+                // fire-and-forget 下发 setAutoReport，不阻塞认领响应
+                // 注意：必须自建 scope，因为 HTTP 响应返回后 Controller 的 Scoped 服务会被释放
+                var capturedDeviceId = device.Id;
+                var capturedSec = sec;
+                var capturedQ = request.GetDevStatusQ;
+                var scopeFactory = _scopeFactory;
+                _ = Task.Run(async () =>
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var cmdService = scope.ServiceProvider.GetRequiredService<IAnShengCommandService>();
+                    var taskLogger = scope.ServiceProvider.GetRequiredService<ILogger<AnShengController>>();
+                    try
+                    {
+                        await cmdService.ConfigureAutoReportAsync(capturedDeviceId, new AnShengAutoReportSettings
+                        {
+                            GetDevStatusSec = capturedSec,
+                            GetDevStatusQ = capturedQ,
+                            OrderUpSec = 300,
+                            Rs485Sec = 0
+                        });
+                        taskLogger.LogInformation("认领后 setAutoReport 下发成功 DeviceId={DeviceId} Sec={Sec}", capturedDeviceId, capturedSec);
+                    }
+                    catch (Exception ex)
+                    {
+                        taskLogger.LogWarning(ex, "认领后下发 setAutoReport 失败 DeviceId={DeviceId}", capturedDeviceId);
+                    }
+                });
+            }
 
             _logger.LogInformation(
                 "安圣设备已认领: IMEI={IMEI}, DiscoveredId={DisId}, DeviceId={DevId}, Name={Name}",
@@ -323,74 +372,15 @@ public class AnShengController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
-    // 二开设备开关控制
+    // 二开设备通用控制
+    //
+    // 说明：原 /switch、/switch-status、/switch-config 三个端点依赖官方协议
+    //      asopen.md 中并不存在的 setSwitch / getSwitchStatus / setSwitchConfig 方法，
+    //      属历史臆造实现，已物理删除。开关通断请改用：
+    //        POST /command  { "method": "action",  "parameters": { "slotNum": 1, "action": "on" } }
+    //        POST /command  { "method": "actions", "parameters": { "slotNums": [1,2], "action": "off" } }
+    //      状态查询请用 { "method": "getDevStatus", "parameters": { "q": "slots" } }。
     // ─────────────────────────────────────────────
-
-    /// <summary>
-    /// 控制二开设备开关通断
-    /// </summary>
-    [HttpPost("{deviceId:long}/switch")]
-    [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
-    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> ControlSwitch(
-        long deviceId, [FromBody] SwitchControlRequest request)
-    {
-        try
-        {
-            var result = await _commandService.SendSwitchCommandAsync(deviceId, request.SwitchId, request.On);
-            return result.Success
-                ? ApiResponse<AnShengCommandResponse>.Success(result,
-                    $"开关 {request.SwitchId} 已{(request.On ? "开启" : "关闭")}")
-                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "开关控制失败");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "开关控制失败: DeviceId={DeviceId}, SwitchId={Id}", deviceId, request.SwitchId);
-            return ApiResponse<AnShengCommandResponse>.Error($"控制失败：{ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// 查询二开设备开关状态
-    /// </summary>
-    [HttpGet("{deviceId:long}/switch-status")]
-    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> GetSwitchStatus(
-        long deviceId, [FromQuery] int? switchId = null)
-    {
-        try
-        {
-            var result = await _commandService.GetSwitchStatusAsync(deviceId, switchId);
-            return result.Success
-                ? ApiResponse<AnShengCommandResponse>.Success(result)
-                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "查询失败");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "查询开关状态失败: DeviceId={DeviceId}", deviceId);
-            return ApiResponse<AnShengCommandResponse>.Error($"查询失败：{ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// 配置二开设备开关参数
-    /// </summary>
-    [HttpPost("{deviceId:long}/switch-config")]
-    [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
-    public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> ConfigureSwitch(
-        long deviceId, [FromBody] SwitchConfigRequest request)
-    {
-        try
-        {
-            var result = await _commandService.ConfigureSwitchAsync(deviceId, request.SwitchId, request.Config);
-            return result.Success
-                ? ApiResponse<AnShengCommandResponse>.Success(result, "开关配置已下发")
-                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "配置失败");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "配置开关失败: DeviceId={DeviceId}", deviceId);
-            return ApiResponse<AnShengCommandResponse>.Error($"配置失败：{ex.Message}");
-        }
-    }
 
     /// <summary>
     /// 远程重启二开设备

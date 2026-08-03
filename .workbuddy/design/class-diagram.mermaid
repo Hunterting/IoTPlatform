@@ -1,0 +1,383 @@
+classDiagram
+    direction LR
+
+    %% ───────── 协议规格层 ─────────
+    class AnShengDeviceKind {
+        <<enumeration>>
+        None
+        Speaker4G
+        Switch4G
+        SpeakerWiFi
+        SwitchWiFi
+        AllSpeaker
+        AllSwitch
+        All4G
+        AllWiFi
+        All
+    }
+
+    class AnShengMessageKind {
+        <<enumeration>>
+        Command
+        Event
+    }
+
+    class AnShengParamSpec {
+        +string Name
+        +AnShengParamType Type
+        +bool Required
+        +string[] AllowedValues
+        +double? Min
+        +double? Max
+        +Validate(object value) ValidationResult
+    }
+
+    class AnShengCommandSpec {
+        +string Method
+        +AnShengDeviceKind SupportedKinds
+        +IReadOnlyList~AnShengParamSpec~ Params
+        +AnShengMessageKind Kind
+        +string MinFirmware
+        +bool RequiresSlotNum
+        +Supports(AnShengDeviceKind kind) bool
+    }
+
+    class AnShengCommandCatalog {
+        <<static>>
+        +IReadOnlyDictionary~string, AnShengCommandSpec~ All
+        +TryGet(string method) AnShengCommandSpec
+        +IsSupported(string method, AnShengDeviceKind kind) bool
+        +IsEvent(string method) bool
+        +ListFor(AnShengDeviceKind kind) IReadOnlyList~AnShengCommandSpec~
+    }
+
+    %% ───────── 报文层 ─────────
+    class AnShengMessage {
+        +string Method
+        +string Result
+        +string Imei
+        +string FrameId
+        +DateTime? TimestampUtc
+        +long? RawTimestamp
+        +JsonElement RawJson
+        +DateTime ReceivedAt
+        +bool IsOk()
+        +Deserialize(Type target) object
+    }
+
+    class AnShengDevStatus {
+        +string NetType
+        +string Iccid
+        +int Signal
+        +double Temperature
+        +string Gps
+        +int[] Slots
+        +AnShengSlotTask[] Tasks
+        +AnShengEmData[] EmData
+        +int? SlotAmount
+        +int? PhaseAmount
+    }
+
+    class AnShengEmData {
+        +double V
+        +double C
+        +double P
+        +double E
+    }
+
+    class AnShengSlotTask {
+        +int SlotNum
+        +string Type
+        +string Status
+        +int TimeSec
+        +double PowerKwh
+        +double TotalKwh
+        +int TotalSec
+        +string CloseReason
+        +double Voltage
+        +double Current
+        +double Power
+    }
+
+    class AnShengTimestampConverter {
+        <<static>>
+        +Parse(JsonElement el) DateTime?
+        +ToDeviceSeconds(DateTime utc) long
+    }
+
+    %% ───────── 构造与解析 ─────────
+    class AnShengCommandBuilder {
+        -AnShengCommandCatalog _catalog
+        +Build(string method, IDictionary args, BuildContext ctx) AnShengOutboundCommand
+        -Flatten(IDictionary args) JsonObject
+        -InjectTimestamp(JsonObject obj, AnShengDeviceKind kind) void
+        -NewFrameId() string
+    }
+
+    class AnShengOutboundCommand {
+        +string Method
+        +string FrameId
+        +string Imei
+        +string PayloadJson
+        +TimeSpan Ttl
+    }
+
+    class AnShengMessageParser {
+        +Parse(string payload) AnShengMessage
+    }
+
+    class AnShengMessageRouter {
+        -IAnShengPendingCommandStore _pending
+        -AnShengEventDispatcher _events
+        -AnShengDataNormalizer _normalizer
+        +RouteAsync(AnShengMessage msg) Task
+        -Classify(AnShengMessage msg) AnShengRouteKind
+    }
+
+    class AnShengDataNormalizer {
+        +Normalize(AnShengMessage msg) IDictionary~string, object~
+    }
+
+    %% ───────── 适配器 ─────────
+    class IProtocolAdapter {
+        <<interface>>
+        +StartAsync() Task
+        +StopAsync() Task
+        +SendCommandAsync(string sn, string payload) Task
+        +DataReceived EventHandler
+        +CommandResponse EventHandler
+    }
+
+    class AnShengMqttProtocolAdapter {
+        -AnShengMqttProtocolOptions _options
+        -AnShengMessageParser _parser
+        -AnShengMessageRouter _router
+        -AnShengCommandThrottle _throttle
+        +OnMessageReceivedAsync(topic, payload) Task
+        +SendCommandAsync(string imei, string payload) Task
+        -IsWillMessage(AnShengMessage msg) bool
+    }
+
+    class AnShengCommandThrottle {
+        -ConcurrentDictionary~string, SemaphoreSlim~ _gates
+        -int MinIntervalMs
+        +ExecuteAsync(string imei, Delegate send) Task
+    }
+
+    %% ───────── 在途命令 ─────────
+    class IAnShengPendingCommandStore {
+        <<interface>>
+        +RegisterAsync(string imei, string frameId, PendingCommand cmd, TimeSpan ttl) Task
+        +CompleteAsync(string imei, string frameId, AnShengMessage resp) Task~PendingCommand~
+        +SweepExpiredAsync() Task~int~
+    }
+
+    class AnShengPendingCommandStore {
+        -IMemoryCache _cache
+        -ILogger _logger
+    }
+
+    class PendingCommand {
+        +long CommandId
+        +string Imei
+        +string FrameId
+        +string Method
+        +DateTime SentAt
+        +DateTime ExpiresAt
+    }
+
+    %% ───────── 服务层 ─────────
+    class IAnShengCommandService {
+        <<interface>>
+        +SendAsync(long deviceId, string method, IDictionary args) Task~AnShengCommandResult~
+        +ActionAsync(long deviceId, int slotNum, string action, bool? stopDelay) Task~AnShengCommandResult~
+        +ActionsAsync(long deviceId, int[] slotNums, string action, bool? stopDelay) Task~AnShengCommandResult~
+        +StartDelayTaskAsync(long deviceId, DelayTaskArgs args) Task~AnShengCommandResult~
+        +StopDelayTaskAsync(long deviceId, int slotNum) Task~AnShengCommandResult~
+        +RebootAsync(long deviceId) Task~AnShengCommandResult~
+    }
+
+    class AnShengCommandService {
+        -IAnShengPendingCommandStore _pending
+        -AnShengCommandBuilder _builder
+        -IAnShengDeviceProfileService _profiles
+        -IProtocolAdapterFactory _adapters
+        -AppDbContext _db
+        -Validate(AnShengDeviceProfile p, AnShengCommandSpec s) void
+    }
+
+    class IAnShengDeviceProfileService {
+        <<interface>>
+        +GetAsync(long deviceId) Task~AnShengDeviceProfile~
+        +RefreshAsync(long deviceId) Task
+        +InferKind(string netType, int? slotAmount, string version) AnShengDeviceKind
+    }
+
+    class AnShengDeviceProfileService
+
+    class AnShengEventDispatcher {
+        -IEnumerable~IAnShengEventHandler~ _handlers
+        +DispatchAsync(AnShengMessage msg) Task
+    }
+
+    class IAnShengEventHandler {
+        <<interface>>
+        +string Method
+        +HandleAsync(AnShengMessage msg, AnShengDeviceProfile profile) Task
+    }
+
+    class ConnectedEventHandler
+    class CloseEventHandler
+    class KeyEventHandler
+    class DelayEventHandler
+    class TimeEventHandler
+    class Recv485EventHandler
+    class SimCheckEventHandler
+
+    class AnShengScheduleService {
+        +GetDelayTasksAsync(long deviceId) Task
+        +SyncDelayTasksAsync(long deviceId) Task
+        +GetTimeTasksAsync(long deviceId) Task
+        +SetTimeTasksAsync(long deviceId, SlotTimeTasksDto[] tasks) Task
+        -ReadBackAsync(long deviceId, string getMethod) Task
+    }
+
+    class AnShengEnergyService {
+        +GetRealtimeAsync(long deviceId) Task
+        +FetchStatisticsAsync(long deviceId, string q) Task
+        +UpsertStatistics(long deviceId, AnShengEmStatisticsItem[] data) Task
+    }
+
+    %% ───────── 持久化模型 ─────────
+    class AnShengDeviceProfile {
+        +long DeviceId
+        +AnShengDeviceKind Kind
+        +int? SlotAmount
+        +int? PhaseAmount
+        +string Version
+        +string NetType
+        +string Iccid
+        +string Gps
+        +bool SupportsTimestamp
+        +DateTime? LastSyncedAt
+    }
+
+    class AnShengCommandRecord {
+        +long Id
+        +long DeviceId
+        +string FrameId
+        +string Method
+        +string RequestJson
+        +string ResponseJson
+        +AnShengCommandStatus Status
+        +DateTime SentAt
+        +DateTime? CompletedAt
+    }
+
+    class AnShengDeviceEvent {
+        +long Id
+        +long DeviceId
+        +string Method
+        +string PayloadJson
+        +DateTime OccurredAt
+        +DateTime ReceivedAt
+    }
+
+    class AnShengDelayTask {
+        +long DeviceId
+        +int SlotNum
+        +bool Enable
+        +string SAction
+        +string EAction
+        +int Secs
+        +int Cnt
+        +DateTime SyncedAt
+    }
+
+    class AnShengTimeTask {
+        +long DeviceId
+        +int SlotNum
+        +AnShengTimeTaskKind TaskKind
+        +string TaskId
+        +bool Enable
+        +string WeekDaysCsv
+        +int? Hour
+        +int? Minute
+        +int? SHour
+        +int? SMinute
+        +int? EHour
+        +int? EMinute
+        +int? OnMins
+        +int? OffMins
+        +string Action
+        +bool UploadEnable
+        +DateTime SyncedAt
+    }
+
+    class AnShengEmStatistic {
+        +long DeviceId
+        +int SlotNum
+        +AnShengEmGranularity Granularity
+        +string PeriodKey
+        +double Kwh
+        +DateTime UpdatedAt
+    }
+
+    %% ───────── 关系 ─────────
+    AnShengCommandCatalog "1" o-- "36" AnShengCommandSpec : 注册
+    AnShengCommandSpec "1" *-- "0..*" AnShengParamSpec : 包含
+    AnShengCommandSpec ..> AnShengDeviceKind : 位掩码引用
+    AnShengCommandSpec ..> AnShengMessageKind : 标记
+
+    AnShengCommandBuilder ..> AnShengCommandCatalog : 查表校验
+    AnShengCommandBuilder ..> AnShengTimestampConverter : 生成秒级戳
+    AnShengCommandBuilder --> AnShengOutboundCommand : 产出
+
+    AnShengMessageParser --> AnShengMessage : 产出
+    AnShengMessageParser ..> AnShengTimestampConverter : 宽松解析
+    AnShengMessage ..> AnShengDevStatus : 反序列化为
+    AnShengDevStatus "1" *-- "0..*" AnShengEmData : EMdata
+    AnShengDevStatus "1" *-- "0..*" AnShengSlotTask : tasks
+
+    AnShengMqttProtocolAdapter ..|> IProtocolAdapter : 实现
+    AnShengMqttProtocolAdapter --> AnShengMessageParser : 使用
+    AnShengMqttProtocolAdapter --> AnShengMessageRouter : 分发
+    AnShengMqttProtocolAdapter --> AnShengCommandThrottle : 节流
+
+    AnShengMessageRouter --> IAnShengPendingCommandStore : 应答关联
+    AnShengMessageRouter --> AnShengEventDispatcher : 事件分支
+    AnShengMessageRouter --> AnShengDataNormalizer : 自动上报分支
+    AnShengMessageRouter ..> AnShengCommandCatalog : IsEvent 判定
+
+    AnShengPendingCommandStore ..|> IAnShengPendingCommandStore : 实现
+    IAnShengPendingCommandStore ..> PendingCommand : 存取
+
+    AnShengCommandService ..|> IAnShengCommandService : 实现
+    AnShengCommandService --> AnShengCommandBuilder : 构造
+    AnShengCommandService --> IAnShengPendingCommandStore : 登记在途
+    AnShengCommandService --> IAnShengDeviceProfileService : 取品类与能力
+    AnShengCommandService --> IProtocolAdapter : 下发
+    AnShengCommandService --> AnShengCommandRecord : 落库
+
+    AnShengDeviceProfileService ..|> IAnShengDeviceProfileService : 实现
+    AnShengDeviceProfileService --> AnShengDeviceProfile : 读写
+
+    AnShengEventDispatcher "1" o-- "7" IAnShengEventHandler : 责任链
+    ConnectedEventHandler ..|> IAnShengEventHandler
+    CloseEventHandler ..|> IAnShengEventHandler
+    KeyEventHandler ..|> IAnShengEventHandler
+    DelayEventHandler ..|> IAnShengEventHandler
+    TimeEventHandler ..|> IAnShengEventHandler
+    Recv485EventHandler ..|> IAnShengEventHandler
+    SimCheckEventHandler ..|> IAnShengEventHandler
+    IAnShengEventHandler ..> AnShengDeviceEvent : 写事件表
+
+    DelayEventHandler --> AnShengDelayTask : 更新镜像
+    TimeEventHandler --> AnShengTimeTask : 更新镜像
+
+    AnShengScheduleService --> IAnShengCommandService : 下发 get/set
+    AnShengScheduleService --> AnShengDelayTask : 镜像读写
+    AnShengScheduleService --> AnShengTimeTask : 镜像读写
+
+    AnShengEnergyService --> IAnShengCommandService : 下发查询
+    AnShengEnergyService --> AnShengEmStatistic : UPSERT

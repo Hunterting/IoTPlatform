@@ -1,0 +1,81 @@
+sequenceDiagram
+    autonumber
+    actor U as 运维用户
+    participant FE as CommandConsole.tsx
+    participant API as AnShengSwitchController
+    participant SVC as AnShengCommandService
+    participant PROF as AnShengDeviceProfileService
+    participant CAT as AnShengCommandCatalog
+    participant BLD as AnShengCommandBuilder
+    participant PEND as IAnShengPendingCommandStore
+    participant DB as AppDbContext
+    participant THR as AnShengCommandThrottle
+    participant AD as AnShengMqttProtocolAdapter
+    participant MQ as MQTT Broker
+    participant DEV as 安圣4G开关设备
+    participant PRS as AnShengMessageParser
+    participant RT as AnShengMessageRouter
+
+    U->>FE: 点击「插槽2 打开」
+    FE->>FE: useAnShengCatalog.isSupported("action", Switch4G) → true
+    FE->>API: POST /api/ansheng/{deviceId}/action<br/>{slotNum:2, action:"on", hasStopDelayTask:false}
+    API->>SVC: ActionAsync(deviceId, 2, "on", false)
+
+    SVC->>PROF: GetAsync(deviceId)
+    PROF->>DB: 查询 AnShengDeviceProfile
+    DB-->>PROF: {Kind:Switch4G, SlotAmount:4, Version:"...V4.0.8", SupportsTimestamp:true}
+    PROF-->>SVC: profile
+
+    SVC->>CAT: TryGet("action")
+    CAT-->>SVC: spec{SupportedKinds: AllSwitch, Params:[slotNum,action,hasStopDelayTask]}
+    SVC->>CAT: IsSupported("action", Switch4G)
+    CAT-->>SVC: true
+
+    Note over SVC: 参数校验：<br/>slotNum=2 ∈ [0, SlotAmount=4] ✓<br/>action="on" ∈ {on,off,toggle} ✓
+
+    SVC->>BLD: Build("action", args, ctx{Kind:Switch4G, Imei})
+    Note over BLD: 参数平铺（无 param 包装）<br/>frameId = 唯一串<br/>Kind 为 4G → 注入秒级 timestamp
+    BLD-->>SVC: OutboundCommand{FrameId:"a1b2...", PayloadJson:<br/>{"method":"action","slotNum":2,"action":"on",<br/>"hasStopDelayTask":false,"frameId":"a1b2...","timestamp":1745396759}}
+
+    SVC->>DB: 插入 AnShengCommandRecord(Status=Pending)
+    DB-->>SVC: commandId=8801
+    SVC->>PEND: RegisterAsync(imei, "a1b2...", {CommandId:8801}, TTL=30s)
+
+    SVC->>AD: SendCommandAsync(imei, payloadJson)
+    AD->>THR: ExecuteAsync(imei, send)
+    Note over THR: 同 IMEI 串行 + 距上次发送 ≥100ms
+    THR->>MQ: Publish(subscribeTopic 替换 %imei%, 压缩JSON, QoS1)
+    MQ->>DEV: 投递命令
+    AD-->>SVC: 已发出
+    SVC-->>API: AnShengCommandResult{Accepted, frameId, commandId:8801}
+    API-->>FE: 202 Accepted {frameId, commandId}
+    FE-->>U: 显示「命令已下发，等待设备应答…」
+
+    DEV->>DEV: 执行插槽2 打开
+    DEV->>MQ: Publish(publishTopic)<br/>{"method":"action","result":"ok","slots":[0,1,0,0],<br/>"imei":"...","frameId":"a1b2...","timestamp":1745396760}
+    MQ->>AD: 订阅收到
+    AD->>PRS: Parse(payload)
+    PRS-->>AD: AnShengMessage{Method:"action", Result:"ok", FrameId:"a1b2...", TimestampUtc}
+    AD->>RT: RouteAsync(msg)
+
+    RT->>CAT: IsEvent("action")
+    CAT-->>RT: false
+    RT->>PEND: CompleteAsync(imei, "a1b2...", msg)
+    PEND-->>RT: PendingCommand{CommandId:8801}
+
+    RT->>DB: 更新 AnShengCommandRecord(8801)<br/>Status=Ok, ResponseJson, CompletedAt
+    RT->>DB: 更新设备 slots 快照 [0,1,0,0]
+    RT->>RT: 归一化 slots → 投递规则引擎
+
+    FE->>API: GET /api/ansheng/commands/8801 (轮询 或 SignalR 推送)
+    API->>DB: 查询命令记录
+    DB-->>API: {Status:Ok, slots:[0,1,0,0]}
+    API-->>FE: 200 {Status:"Ok", slots:[0,1,0,0]}
+    FE-->>U: 插槽2 变为「已打开」
+
+    rect rgb(255, 240, 240)
+        Note over PEND,DB: 超时旁路：若 30s 内无应答
+        PEND->>PEND: SweepExpiredAsync() 定时触发
+        PEND->>DB: 更新 AnShengCommandRecord(8801) Status=Timeout
+        PEND->>PEND: 移除在途条目（防止内存泄漏）
+    end

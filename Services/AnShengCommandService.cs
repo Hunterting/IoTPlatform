@@ -16,8 +16,8 @@ namespace IoTPlatform.Services;
 ///
 /// 职责：
 ///   1. 通过 IProtocolAdapterFactory 获取安圣适配器
-///   2. 使用 AnShengCommandBuilder 生成标准命令 JSON
-///   3. 调用适配器 SendCommandAsync 下发到 /sertodev/{imei}
+///   2. 依据 AnShengCommandCatalog 校验方法名、品类能力与参数
+///   3. 调用适配器 SendCommandAsync 下发到 /iot/client/iot-board/{imei}
 ///   4. 维护 frameId ↔ commandId 映射关系，用于后续命令响应关联
 /// </summary>
 public class AnShengCommandService : IAnShengCommandService
@@ -95,11 +95,38 @@ public class AnShengCommandService : IAnShengCommandService
                     ErrorMessage = "安圣 MQTT 适配器未连接"
                 };
 
-            // 3. 生成标准安圣命令 JSON
-            var builder = new AnShengCommandBuilder();
-            var (frameId, payload) = builder.BuildCommand(device.SerialNumber, method, parameters);
+            // 3. 解析设备品类（决定是否注入 timestamp、以及命令能力校验）
+            // 注：此处使用完全限定名，避免与本命名空间下同名的 AnShengAutoReportSettings 产生 using 冲突
+            var kind = Infrastructure.Protocol.Adapters.AnShengMqttProtocolAdapter
+                .GetDeviceKind(device.SerialNumber);
 
-            // 4. 下发命令
+            // 4. 目录校验：方法是否存在、该品类是否支持、参数是否合法
+            if (AnShengCommandCatalog.TryGet(method, out var spec) && spec != null)
+            {
+                if (spec.IsEvent)
+                    return new AnShengCommandResponse
+                    {
+                        Success = false,
+                        ErrorMessage = $"{method} 是设备上报事件，平台不可下发"
+                    };
+
+                if (!spec.IsSupportedBy(kind))
+                    return new AnShengCommandResponse
+                    {
+                        Success = false,
+                        ErrorMessage = $"{kind.ToDisplayName()} 不支持命令 {method}"
+                    };
+
+                var validation = spec.ValidateParams(parameters);
+                if (!validation.IsValid)
+                    return new AnShengCommandResponse
+                    {
+                        Success = false,
+                        ErrorMessage = $"参数校验失败：{string.Join("；", validation.Errors)}"
+                    };
+            }
+
+            // 5. 下发命令（报文由适配器用 AnShengCommandBuilder 统一构建并限流）
             var parametersJson = parameters != null
                 ? JsonSerializer.Serialize(parameters)
                 : string.Empty;
@@ -107,9 +134,15 @@ public class AnShengCommandService : IAnShengCommandService
             var resultFrameId = await adapter.SendCommandAsync(
                 deviceId, device.SerialNumber, method, parametersJson, ct);
 
+            // 6. 用实际下发的 frameId 重建报文回显，保证 Payload 与 FrameId 一致
+            var builder = new AnShengCommandBuilder();
+            var payload = AnShengCommandCatalog.Contains(method)
+                ? builder.BuildRaw(device.SerialNumber, method, parameters, kind, resultFrameId).Payload
+                : builder.BuildLegacyCommand(device.SerialNumber, method, parameters).Payload;
+
             _logger.LogInformation(
-                "安圣命令已下发: DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, FrameId={FrameId}",
-                deviceId, device.SerialNumber, method, resultFrameId);
+                "安圣命令已下发: DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, Kind={Kind}, FrameId={FrameId}",
+                deviceId, device.SerialNumber, method, kind, resultFrameId);
 
             return new AnShengCommandResponse
             {
@@ -149,7 +182,9 @@ public class AnShengCommandService : IAnShengCommandService
         {
             ["getDevStatusSec"] = settings.GetDevStatusSec,
             ["orderUpSec"] = settings.OrderUpSec,
-            ["rs485Sec"] = settings.Rs485Sec
+            ["rs485Sec"] = settings.Rs485Sec,
+            ["rs485BaudRate"] = 115200,   // 设备默认波特率
+            ["rs485SendWaitMs"] = 300      // 设备默认发送等待
         };
 
         if (!string.IsNullOrEmpty(settings.GetDevStatusQ))
@@ -225,27 +260,10 @@ public class AnShengCommandService : IAnShengCommandService
         }
     }
 
-    // ─── 二开设备开关命令实现 ───
-
-    /// <inheritdoc />
-    public async Task<AnShengCommandResponse> SendSwitchCommandAsync(
-        long deviceId, int switchId, bool on, CancellationToken ct = default)
-        => await SendCommandAsync(deviceId, "setSwitch",
-            new Dictionary<string, object?> { ["switch"] = switchId, ["on"] = on ? 1 : 0 }, ct);
-
-    /// <inheritdoc />
-    public async Task<AnShengCommandResponse> GetSwitchStatusAsync(
-        long deviceId, int? switchId = null, CancellationToken ct = default)
-        => await SendCommandAsync(deviceId, "getSwitchStatus",
-            switchId.HasValue ? new Dictionary<string, object?> { ["switch"] = switchId.Value } : null, ct);
-
-    /// <inheritdoc />
-    public async Task<AnShengCommandResponse> ConfigureSwitchAsync(
-        long deviceId, int switchId, Dictionary<string, object?> config, CancellationToken ct = default)
-    {
-        config["switch"] = switchId;
-        return await SendCommandAsync(deviceId, "setSwitchConfig", config, ct);
-    }
+    // ─── 二开设备通用命令实现 ───
+    // 注：setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig 四个方法
+    //     在官方协议 asopen.md 中并不存在（历史臆造实现），已物理删除。
+    //     开关通断请改用 SendCommandAsync(deviceId, "action", { slotNum, action })。
 
     /// <inheritdoc />
     public async Task<AnShengCommandResponse> RebootDeviceAsync(

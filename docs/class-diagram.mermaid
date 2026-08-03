@@ -1,0 +1,80 @@
+classDiagram
+    direction TB
+
+    class ProtocolConfig {
+        +long Id
+        +string Name
+        +string Type
+        +string ProtocolType
+        +string Status
+        +bool IsActive
+        +string Config
+        +string AppCode
+    }
+
+    class DiscoveredAnShengDevice {
+        +long Id
+        +string Imei
+        +string Model
+        +string NetType
+        +DateTime DiscoveredAt
+        +DateTime LastSeenAt
+        +bool IsClaimed
+        +long ClaimedDeviceId
+        +string AppCode
+    }
+
+    class Device {
+        +long Id
+        +string Name
+        +string SerialNumber
+        +string AppCode
+        +string Status
+        +long ProtocolConfigId
+        +long AreaId
+        +long ProjectId
+    }
+
+    class AnShengDeviceConfig {
+        +long Id
+        +long DeviceId
+        +string Imei
+        +int GetDevStatusSec
+        +string GetDevStatusQ
+        +int OrderUpSec
+        +int Rs485Sec
+        +string AppCode
+    }
+
+    class DeviceDataRecord {
+        +long Id
+        +long DeviceId
+        +string SensorData
+        +DateTime Timestamp
+        +string AppCode
+        +double ElectricPower
+        +double ElectricKWh
+    }
+
+    class ClaimAnShengDeviceRequest {
+        +long DiscoveredDeviceId
+        +string Name
+        +long ProtocolConfigId
+        +long AreaId
+        +long ProjectId
+        +int GetDevStatusSec
+        +string GetDevStatusQ
+    }
+
+    class AnShengDeviceKindResolver {
+        <<static>>
+        +Resolve(netType, version, model) AnShengDeviceKind
+        +IsFourG(netType, model) bool
+        +IsWiFiNet(netType, model) bool
+        -IsSwitchProduct(version, model) bool
+    }
+
+    DiscoveredAnShengDevice "1" --> "0..1" Device : ClaimedDeviceId
+    Device "1" --> "0..1" AnShengDeviceConfig : DeviceId
+    Device "1" --> "0..1" ProtocolConfig : ProtocolConfigId
+    Device "1" --> "*" DeviceDataRecord : DeviceId

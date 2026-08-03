@@ -35,16 +35,10 @@ public interface IAnShengCommandService
     /// <param name="ct">取消令牌</param>
     Task TriggerDiscoveryAsync(CancellationToken ct = default);
 
-    // ─── 二开设备开关命令 ───
-
-    /// <summary>控制二开设备开关通断</summary>
-    Task<AnShengCommandResponse> SendSwitchCommandAsync(long deviceId, int switchId, bool on, CancellationToken ct = default);
-
-    /// <summary>查询二开设备开关状态</summary>
-    Task<AnShengCommandResponse> GetSwitchStatusAsync(long deviceId, int? switchId = null, CancellationToken ct = default);
-
-    /// <summary>配置二开设备开关参数（如 name/timer/enableDelay 等）</summary>
-    Task<AnShengCommandResponse> ConfigureSwitchAsync(long deviceId, int switchId, Dictionary<string, object?> config, CancellationToken ct = default);
+    // ─── 二开设备通用命令 ───
+    // 开关通断请使用 SendCommandAsync(deviceId, "action", new() { ["slotNum"] = 1, ["action"] = "on" })，
+    // 批量通断使用 "actions"。官方协议 asopen.md 中不存在 setSwitch / getSwitchStatus /
+    // setSwitchConfig / getSwitchConfig，对应历史臆造接口已删除。
 
     /// <summary>远程重启二开设备</summary>
     Task<AnShengCommandResponse> RebootDeviceAsync(long deviceId, CancellationToken ct = default);

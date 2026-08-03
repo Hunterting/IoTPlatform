@@ -1,0 +1,79 @@
+sequenceDiagram
+    autonumber
+    actor P as 现场人员
+    participant DEV as 安圣设备
+    participant MQ as MQTT Broker
+    participant AD as AnShengMqttProtocolAdapter
+    participant PRS as AnShengMessageParser
+    participant RT as AnShengMessageRouter
+    participant CAT as AnShengCommandCatalog
+    participant PROF as AnShengDeviceProfileService
+    participant DISP as AnShengEventDispatcher
+    participant H as KeyEventHandler
+    participant DB as AppDbContext
+    participant DC as IDataCollectionService
+    participant RULE as DataRule 规则引擎
+    participant FE as DeviceEventTimeline.tsx
+
+    P->>DEV: 单击设备物理按键
+    Note over DEV: 按键模式 mode=1（切换开关）<br/>且 uploadEnable=true
+    DEV->>DEV: 本地翻转开关
+
+    DEV->>MQ: Publish(publishTopic)<br/>{"method":"keyEvent","imei":"8645...","timestamp":1745396759}
+    Note right of DEV: 注意：无 result、无 frameId、无 slotNum
+
+    MQ->>AD: 订阅收到（topic 可能与 willTopic 相同）
+    AD->>PRS: Parse(payload)
+    PRS->>PRS: TimestampConverter：1745396759 小于 1e11 → 判定为秒级
+    PRS-->>AD: AnShengMessage{Method:"keyEvent", Imei, TimestampUtc, FrameId:null, RawJson}
+
+    AD->>AD: IsWillMessage(msg) → msg.Method=="close"? 否
+    Note over AD: 不再依赖 topic 前缀判定遗嘱
+    AD->>RT: RouteAsync(msg)
+
+    RT->>CAT: IsEvent("keyEvent")
+    CAT-->>RT: true（method 白名单优先，忽略 frameId 为空）
+    RT->>PROF: GetAsync(byImei)
+    PROF-->>RT: profile{DeviceId:512, Kind:Switch4G, SlotAmount:4}
+
+    RT->>DISP: DispatchAsync(msg, profile)
+    DISP->>DISP: 按 Method 匹配 Handler
+    DISP->>H: HandleAsync(msg, profile)
+
+    H->>DB: 插入 AnShengDeviceEvent<br/>{DeviceId:512, Method:"keyEvent",<br/>PayloadJson, OccurredAt=TimestampUtc,<br/>ReceivedAt=now}
+
+    Note over H: keyEvent 不含开关状态，<br/>本地翻转后平台快照已失效
+    H->>H: 触发 slots 补偿查询（异步、低优先级）
+    H-->>DISP: 完成
+
+    par 补偿查询开关状态
+        H->>AD: SendCommandAsync getDevStatus{q:"slots"}
+        Note over AD: 走 Throttle，与事件处理解耦
+        AD->>MQ: Publish
+        MQ->>DEV: getDevStatus
+        DEV->>MQ: {"method":"getDevStatus","slots":[0,1,0,0],...}
+        MQ->>AD: 应答
+        AD->>RT: RouteAsync → Response 分支 → 更新 slots 快照
+    and 投递规则引擎
+        DISP->>DC: ProcessDeviceDataAsync(deviceId:512,<br/>{"key_event":1, "event_time":...})
+        DC->>DB: 写入 DeviceDataRecord
+        DC->>RULE: 评估告警规则
+        RULE-->>RULE: 若用户配置了「按键触发通知」→ 推送
+    end
+
+    FE->>DB: GET /api/ansheng/512/events?limit=50
+    DB-->>FE: 事件时间线（含本次 keyEvent）
+    FE-->>P: 时间线展示「14:25:59 物理按键触发」
+
+    rect rgb(240, 248, 255)
+        Note over RT,DISP: 对照：若收到的是遗嘱 close
+        DEV--xMQ: 设备异常断连
+        MQ->>AD: 投递 will：{"imei":"8645...","method":"close"}
+        AD->>PRS: Parse
+        PRS-->>AD: msg{Method:"close"}
+        AD->>AD: IsWillMessage → true（凭 method，非 topic）
+        AD->>RT: RouteAsync
+        RT->>DISP: → CloseEventHandler
+        DISP->>DISP: 去抖窗口 30s 内无 connected → 判定真离线
+        DISP->>DB: 更新设备状态为 Offline + 写事件
+    end

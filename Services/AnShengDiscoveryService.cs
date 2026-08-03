@@ -260,6 +260,11 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
             // 内存缓存更新（轻量级，避免频繁查库）
             _onlineStatus[imei] = now;
 
+            // 登记设备品类：决定后续下发是否注入秒级 timestamp（仅 4G 款注入）
+            Infrastructure.Protocol.Adapters.AnShengMqttProtocolAdapter.RegisterDeviceKind(
+                imei,
+                Infrastructure.Protocol.AnSheng.AnShengDeviceKindResolver.Resolve(netType, null, model));
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 

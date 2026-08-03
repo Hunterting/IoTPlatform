@@ -108,7 +108,7 @@ public class OperationLoggingMiddleware
                     var status = statusCode >= 400 ? "failed" : "success";
 
                     // derive appCode and allowed friendly action/module names
-                    var appCode = context.User.FindFirst("AppCode")?.Value;
+                    var appCode = context.User.FindFirst("AppCode")?.Value ?? "system";
 
                     // Prefer controller/action from route values when available
                     string? controller = null;
