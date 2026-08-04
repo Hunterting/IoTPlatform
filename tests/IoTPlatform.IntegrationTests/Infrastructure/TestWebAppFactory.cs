@@ -125,8 +125,17 @@ public sealed class TestWebAppFactory : WebApplicationFactory<Program>
         // 在 HTTP 请求作用域内直接消费该单例，若一并摘除，认领端点会 DI 解析失败（500）。
         // AnShengDiscoveryService 的扫描循环由 line 150 的 IHostedService 包装注册承载，
         // 摘掉 IHostedService 即关掉循环，单例本身仍可被控制器与 IAnShengProbeService 复用。
+        //
+        // 【T7 例外：AnShengCommandSweepHostedService 必须保留注册】
+        //   一刀切摘掉全部 IHostedService，会让「清扫宿主到底有没有在 Program.cs 注册」
+        //   在集成层<b>永远无法被观测</b>——而这恰恰是 T7 已经真实发生过的缺陷类别
+        //   （漏 AddHostedService ⇒ 超时兜底静默失效，命令永远停在 Sent，不报错不抛异常）。
+        //   保留它是安全的：集成配置 AnSheng:Command:SweepEnabled=false 会让
+        //   ExecuteAsync 立刻 return，不起任何后台循环、不与断言抢行；
+        //   用例改为手工调 SweepOnceAsync 精确触发一轮。
         var toRemove = services.Where(d =>
-            d.ServiceType == typeof(IHostedService) ||
+            (d.ServiceType == typeof(IHostedService)
+                && d.ImplementationType != typeof(AnShengCommandSweepHostedService)) ||
             d.ServiceType == typeof(IMqttClientService)).ToList();
         foreach (var d in toRemove)
         {

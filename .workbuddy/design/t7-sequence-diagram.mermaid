@@ -1,0 +1,143 @@
+%% T7 命令服务重构 - 程序调用流程时序图
+%% 来源: t7-command-refactor-design.md §4
+
+%% 时序 ① 命令下发成功全链路（先登记后下发）
+sequenceDiagram
+    autonumber
+    participant U as 前端/调用方
+    participant CT as AnShengController
+    participant SV as AnShengCommandService
+    participant PF as IAnShengDeviceProfileService
+    participant GD as AnShengCommandGuard
+    participant CA as AnShengCommandCatalog
+    participant DB as AppDbContext
+    participant ST as IAnShengPendingCommandStore
+    participant PT as IAnShengDownlinkPort<br/>(AnShengMqttProtocolAdapter)
+    participant MQ as EMQX
+    participant DEV as 安圣设备
+    participant HUB as AnShengUplinkHub / Pipeline
+    participant RT as AnShengMessageRouter
+
+    U->>CT: POST /api/v1/ansheng/{deviceId}/command<br/>{method:"action", params:{slotNum:2,action:"on"}}
+    CT->>SV: SendCommandAsync(deviceId, method, params, commandId, ct)
+
+    Note over SV,PF: ① 组装上下文（品类来自 Profile，不再来自静态字典）
+    SV->>DB: Devices.FirstOrDefault(id) → Imei / ProtocolConfigId
+    DB-->>SV: device
+    SV->>PF: GetByDeviceIdAsync(deviceId)
+    PF-->>SV: Profile{Kind=Switch4G, SlotAmount=4, Version="…V4.0.20"}
+    SV->>SV: 构造 AnShengCommandContext
+
+    Note over SV,CA: ② 单点校验（五环节，任一失败即短路）
+    SV->>GD: Evaluate(ctx)
+    GD->>CA: TryGet(method) → spec
+    CA-->>GD: spec(action)
+    GD->>GD: CheckMethodKnown / CheckKind(spec.IsSupportedBy)
+    GD->>GD: CheckParams(spec.ValidateParams → violations)
+    GD->>GD: CheckSlotRange(slotNum ≤ Profile.SlotAmount)
+    GD->>GD: CheckFirmware(violation.Kind==Firmware?)
+    GD-->>SV: Decision{Allowed=true, Spec}
+
+    Note over SV,DB: ③ 先落 Pending 记录（掩码后的 RequestJson）
+    SV->>SV: frameId = AnShengCommandBuilder.NewFrameId()
+    SV->>SV: requestJson = AnShengSecretMasker.MaskRequest(method, params)
+    SV->>DB: INSERT AnShengCommandRecord{Status=Pending, IssuedAt, AppCode 显式}
+    DB-->>SV: recordId
+
+    Note over SV,ST: ④ 先登记在途（建 TCS），再下发 —— 消除竞态 N1
+    SV->>ST: RegisterAsync(imei, frameId,<br/>PendingCommand.Create(recordId, imei, frameId, method, ttl))
+    ST-->>SV: Registration{Registered=true, Completion=TCS.Task}
+
+    SV->>PT: PublishAsync(deviceId, imei, method, params, frameId, ct)
+    PT->>PT: BuildRaw(平铺参数 + 16 位 frameId + 4G 才注 timestamp)
+    PT->>MQ: PUBLISH /iot/client/iot-board/{imei}
+    MQ->>DEV: 下行报文
+    PT-->>SV: frameId
+    SV->>DB: UPDATE Record{Status=Sent, SentAt, TimeoutAt=SentAt+TTL, FrameId}
+    SV-->>CT: AnShengCommandResponse{Success=true, CommandId, FrameId}
+    CT-->>U: 200 ApiResponse{code:200, data}
+
+    Note over DEV,RT: ⑤ 设备应答（异步，与 HTTP 响应解耦）
+    DEV->>MQ: /iot/server/iot-board/{imei} {method:"action", frameId:"…", result:"ok", slots:[…]}
+    MQ->>HUB: OnMessageReceivedAsync → AnShengUplinkHub.Publish
+    HUB->>RT: Pipeline 消费 → RouteAsync
+    RT->>RT: Classify → Response（第 3 级：IsInFlight 命中）
+    RT->>ST: CompleteAsync(imei, frameId, message)
+    ST->>ST: 摘除条目 + TCS.TrySetResult(message)
+    ST-->>RT: PendingCommand{RecordId}
+    RT->>DB: UPDATE Record{Status=Succeeded, CompletedAt,<br/>DurationMs, ResponseJson=掩码后}
+    RT->>RT: RefreshProfileAsync(slots 快照)
+
+%% 时序 ② 三类拒绝（验收 #1/#2/#3）
+sequenceDiagram
+    autonumber
+    participant U as 调用方
+    participant CT as AnShengController
+    participant SV as AnShengCommandService
+    participant PF as IAnShengDeviceProfileService
+    participant GD as AnShengCommandGuard
+    participant DB as AppDbContext
+    participant ST as 在途表
+    participant PT as 下行端口 / MQTT
+
+    U->>CT: POST /{deviceId}/command
+    CT->>SV: SendCommandAsync(...)
+    SV->>PF: 取 Profile
+    PF-->>SV: Profile
+    SV->>GD: Evaluate(ctx)
+
+    alt 验收#1 SpeakerWiFi 发 action
+        GD->>GD: spec.IsSupportedBy(SpeakerWiFi) == false
+        GD-->>SV: Decision{Reason=RejectedByKind, Errors:["喇叭(WiFi) 不支持命令 action"]}
+    else 验收#2 slotAmount=4 发 slotNum:9
+        GD->>GD: CheckParams 通过（Catalog 只有 min:0，无上界）
+        GD->>GD: CheckSlotRange: 9 > Profile.SlotAmount(4)
+        GD-->>SV: Decision{Reason=RejectedByValidation, Errors:["slotNum 9 超出设备插槽数 4"]}
+    else 验收#3 固件 4.0.8 发 getDevStatus{q:"slots"}
+        GD->>GD: ValidateParams(firmware="…V4.0.8") →<br/>violation{ParamName:"q", Kind:Firmware, MinFirmware:"4.0.20"}
+        GD-->>SV: Decision{Reason=RejectedByFirmware, RequiredFirmware:"4.0.20"}
+    end
+
+    Note over SV,PT: 关键：拒绝路径上「三个都不发生」
+    SV--xST: ✗ 不登记在途（Count 不变）
+    SV--xPT: ✗ 不调用 PublishAsync（Adapter.Sent.Count == 0）
+    SV->>DB: INSERT Record{Status=Rejected, RejectReason,<br/>SentAt=null, FrameId=null, ErrorMessage}
+    SV-->>CT: AnShengCommandResponse{Success=false, RejectReason, Errors}
+    CT-->>U: 200 ApiResponse{code:400, message, data.rejectReason}
+
+%% 时序 ③ 超时旁路清扫（验收 #5）与两设备同 frameId 不串扰（验收 #4）
+sequenceDiagram
+    autonumber
+    participant HS as AnShengCommandSweepHostedService
+    participant ST as IAnShengPendingCommandStore
+    participant SC as IServiceScopeFactory
+    participant DB as AppDbContext(新 scope)
+    participant A as 设备A imei=…900
+    participant B as 设备B imei=…901
+    participant RT as AnShengMessageRouter
+
+    Note over A,B: 【验收#4】两台设备各自登记同一个 frameId="00001"
+    A->>ST: RegisterAsync("…900","00001", cmdA) → key "…900:00001"
+    B->>ST: RegisterAsync("…901","00001", cmdB) → key "…901:00001"
+    Note over ST: 两条独立条目，两个独立 TCS —— IMEI 前缀天然隔离
+
+    B->>RT: 设备B 应答 {frameId:"00001", result:"ok"}
+    RT->>ST: CompleteAsync("…901","00001", msg)
+    ST->>ST: 摘除 "…901:00001" + TCS_B.TrySetResult
+    ST-->>RT: cmdB
+    RT->>DB: UPDATE RecordB{Status=Succeeded}
+    Note over ST: "…900:00001" 仍在途，TCS_A 未被触碰 ⇒ 零串扰
+
+    Note over HS,DB: 【验收#5】30s 后 A 仍无应答 → 旁路清扫
+    loop 每 SweepIntervalSeconds(默认 5s)
+        HS->>ST: SweepExpiredAsync(nowUtc, ct)
+        ST->>ST: 快照遍历 → IsExpired → RemoveIfSame(CAS) → TCS.TrySetResult(null)
+        ST-->>HS: [cmdA]   (被清出的条目列表)
+        alt 有过期条目
+            HS->>SC: CreateScope()
+            SC-->>HS: scope
+            HS->>DB: UPDATE Record WHERE Id=cmdA.RecordId<br/>SET Status=Timeout, CompletedAt=now,<br/>ErrorCode='TIMEOUT', DurationMs
+            Note over HS,DB: ⚠ 后台线程 TenantContext 为 null ⇒<br/>用 IgnoreQueryFilters() 按主键定位，写入不依赖 AppCode 过滤器
+        end
+    end
+    Note over ST: Count 归零；跑 1000 条后字典无残留 ⇒ 内存无增长

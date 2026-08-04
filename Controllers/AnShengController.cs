@@ -26,6 +26,7 @@ public class AnShengController : ControllerBase
     private readonly AppDbContext _db;
     private readonly IAnShengCommandService _commandService;
     private readonly IAnShengDiscoveryService _discoveryService;
+    private readonly IAnShengDeviceProfileService _profileService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AnShengController> _logger;
 
@@ -35,18 +36,21 @@ public class AnShengController : ControllerBase
     /// <param name="db">数据库上下文。</param>
     /// <param name="commandService">安圣指令服务。</param>
     /// <param name="discoveryService">安圣设备发现与认领编排服务。</param>
+    /// <param name="profileService">安圣设备能力档案服务。</param>
     /// <param name="scopeFactory">作用域工厂。</param>
     /// <param name="logger">日志器。</param>
     public AnShengController(
         AppDbContext db,
         IAnShengCommandService commandService,
         IAnShengDiscoveryService discoveryService,
+        IAnShengDeviceProfileService profileService,
         IServiceScopeFactory scopeFactory,
         ILogger<AnShengController> logger)
     {
         _db = db;
         _commandService = commandService;
         _discoveryService = discoveryService;
+        _profileService = profileService;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -384,7 +388,7 @@ public class AnShengController : ControllerBase
 
             if (!result.Success)
             {
-                return ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "命令下发失败");
+                return ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "命令下发失败", result);
             }
 
             return ApiResponse<AnShengCommandResponse>.Success(result, $"命令 {request.Method} 已下发");
@@ -419,12 +423,248 @@ public class AnShengController : ControllerBase
             var result = await _commandService.RebootDeviceAsync(deviceId);
             return result.Success
                 ? ApiResponse<AnShengCommandResponse>.Success(result, "重启命令已下发")
-                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "重启失败");
+                : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "重启失败", result);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "重启设备失败: DeviceId={DeviceId}", deviceId);
             return ApiResponse<AnShengCommandResponse>.Error($"重启失败：{ex.Message}");
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // 只读查询 API（T7-5）
+    //
+    // 设计约定（设计文档 §7 T7-5）：
+    //   · GET /catalog                      —— 默认返回全部 36 条静态规格；?deviceId= 是按品类计算的过滤视图。
+    //   · GET /{deviceId}/profile           —— 设备能力档案（存量无档案时返回 404）。
+    //   · GET /commands/{commandId}          —— 命令全生命周期记录，RequestJson/ResponseJson 二次掩码，永不明文口令。
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 获取安圣二开协议命令目录。
+    ///
+    /// 【默认视图】不传 <paramref name="deviceId"/> 时返回<b>全部 36 条静态规格</b>，不依赖任何设备档案
+    /// （设计 §8-B：目录必须是纯静态数据，否则无设备查询就无法序列化）。
+    ///
+    /// 【过滤视图】传 <paramref name="deviceId"/> 时按该设备品类计算<b>过滤视图</b>：
+    /// 返回条数 ≤ 36，且每条的 <c>supportedKinds</c> 都包含该设备品类。
+    /// 设备无档案（存量未回填）时按 Unknown 处理，退化为「返回全部」。
+    /// </summary>
+    /// <param name="deviceId">可选设备主键，用于按品类过滤。</param>
+    /// <returns>命令规格列表。</returns>
+    [HttpGet("catalog")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<AnShengCommandSpecDto>>>> GetCatalog(
+        [FromQuery] long? deviceId = null)
+    {
+        try
+        {
+            IReadOnlyList<AnShengCommandSpecDto> items;
+
+            if (deviceId is > 0)
+            {
+                // 过滤视图：按设备品类计算，条数只可能 ≤ 全量。
+                var profile = await _profileService.GetByDeviceIdAsync(deviceId.Value, HttpContext.RequestAborted);
+                var kind = profile?.Kind ?? AnShengDeviceKind.Unknown;
+                items = AnShengCommandCatalog.ListFor(kind, includeEvents: true, includeBeta: true)
+                    .Select(MapSpec)
+                    .ToList();
+            }
+            else
+            {
+                // 默认视图：纯静态数据，与任何设备档案无关。
+                items = AnShengCommandCatalog.ListAll()
+                    .Select(MapSpec)
+                    .ToList();
+            }
+
+            return ApiResponse<IReadOnlyList<AnShengCommandSpecDto>>.Success(items);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "获取安圣命令目录失败");
+            return ApiResponse<IReadOnlyList<AnShengCommandSpecDto>>.Error(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 获取指定安圣设备的能⼒档案（品类 / 固件 / 插槽数等）。
+    ///
+    /// 【null 容忍】存量设备可能无档案，返回 404 + 业务错误码，不抛异常（产品决策 Q5）。
+    /// </summary>
+    /// <param name="deviceId">设备主键。</param>
+    /// <returns>设备能力档案。</returns>
+    [HttpGet("{deviceId:long}/profile")]
+    public async Task<ActionResult<ApiResponse<AnShengDeviceProfileDto>>> GetProfile(long deviceId)
+    {
+        try
+        {
+            var profile = await _profileService.GetByDeviceIdAsync(deviceId, HttpContext.RequestAborted);
+            if (profile is null)
+            {
+                return ApiResponse<AnShengDeviceProfileDto>.NotFound("未找到该设备的安圣能力档案");
+            }
+
+            return ApiResponse<AnShengDeviceProfileDto>.Success(MapProfile(profile));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "获取安圣设备档案失败: DeviceId={DeviceId}", deviceId);
+            return ApiResponse<AnShengDeviceProfileDto>.Error(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 按平台命令标识查询单条命令的下发/应答全生命周期记录。
+    ///
+    /// 【安全红线】<c>RequestJson</c> / <c>ResponseJson</c> 在落库时已掩码，此处再经
+    /// <see cref="AnShengSecretMasker"/> 二次掩码，<b>永不</b>返回明文口令（T7 决策 D3）。
+    /// </summary>
+    /// <param name="commandId">平台命令标识（GUID，与 <c>DeviceCommand.CommandId</c> 同值）。</param>
+    /// <returns>命令记录。</returns>
+    [HttpGet("commands/{commandId}")]
+    public async Task<ActionResult<ApiResponse<AnShengCommandRecordDto>>> GetCommandRecord(string commandId)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(commandId))
+            {
+                return ApiResponse<AnShengCommandRecordDto>.BadRequest("commandId 不能为空");
+            }
+
+            var record = await _commandService.GetRecordAsync(commandId, HttpContext.RequestAborted);
+            if (record is null)
+            {
+                return ApiResponse<AnShengCommandRecordDto>.NotFound("未找到该命令记录");
+            }
+
+            return ApiResponse<AnShengCommandRecordDto>.Success(MapRecord(record));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "查询安圣命令记录失败: CommandId={CommandId}", commandId);
+            return ApiResponse<AnShengCommandRecordDto>.Error(ex.Message);
+        }
+    }
+
+    // ── 映射辅助 ──
+
+    private static readonly AnShengDeviceKind[] ConcreteKinds =
+    {
+        AnShengDeviceKind.Speaker4G,
+        AnShengDeviceKind.Switch4G,
+        AnShengDeviceKind.SpeakerWiFi,
+        AnShengDeviceKind.SwitchWiFi
+    };
+
+    private static AnShengCommandSpecDto MapSpec(AnShengCommandSpec spec)
+    {
+        return new AnShengCommandSpecDto
+        {
+            Method = spec.Method,
+            Group = DeriveGroupLabel(spec.SupportedKinds),
+            Description = spec.Title,
+            IsEvent = spec.IsEvent,
+            IsBeta = spec.IsBeta,
+            MinFirmware = spec.MinFirmware,
+            SupportedKinds = SupportedKindNames(spec.SupportedKinds),
+            Params = spec.Params.Select(MapParam).ToList()
+        };
+    }
+
+    private static AnShengParamSpecDto MapParam(AnShengParamSpec p)
+    {
+        return new AnShengParamSpecDto
+        {
+            Name = p.Name,
+            Type = p.Type.ToString(),
+            Required = p.Required,
+            MinFirmware = p.MinFirmware,
+            AllowedValues = p.AllowedValues?.ToList(),
+            Minimum = p.Minimum,
+            Maximum = p.Maximum,
+            IsSecret = p.IsSecret
+        };
+    }
+
+    /// <summary>
+    /// 把能力位掩码展开成「具体品类名称」数组，便于前端按设备过滤与渲染。
+    /// 例如 G3 开关组 → ["Switch4G", "SwitchWiFi"]。
+    /// </summary>
+    private static IReadOnlyList<string> SupportedKindNames(AnShengDeviceCapability capability)
+    {
+        var names = new List<string>(ConcreteKinds.Length);
+        foreach (var kind in ConcreteKinds)
+        {
+            if ((capability & kind.ToCapability()) != AnShengDeviceCapability.None)
+            {
+                names.Add(kind.ToString());
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// 由能力位掩码推导人类可读的能力分组标签。
+    /// 目录每条规格的能力位是单一组常量（GroupCommon/GroupMqtt/GroupSwitchAction/GroupTimeTask/Group4GOnly），
+    /// 用精确相等判定，避免 All 被误判成多个组。
+    /// </summary>
+    private static string DeriveGroupLabel(AnShengDeviceCapability capability)
+    {
+        if (capability == AnShengDeviceCapability.All) return "通用命令";
+        if (capability == AnShengDeviceCapability.GroupSwitchAction) return "开关动作/延时/电量实时/校准";
+        if (capability == AnShengDeviceCapability.GroupTimeTask) return "定时任务/电量统计/日志/RS485";
+        if (capability == AnShengDeviceCapability.Group4GOnly) return "对时/物联卡预警";
+        return "其他";
+    }
+
+    private static AnShengDeviceProfileDto MapProfile(AnShengDeviceProfile p)
+    {
+        return new AnShengDeviceProfileDto
+        {
+            Id = p.Id,
+            Imei = p.Imei,
+            DeviceId = p.DeviceId,
+            Kind = p.Kind,
+            KindName = p.Kind.ToDisplayName(),
+            KindSource = p.KindSource,
+            NetType = p.NetType,
+            SlotAmount = p.SlotAmount,
+            PhaseAmount = p.PhaseAmount,
+            Version = p.Version,
+            Model = p.Model,
+            Iccid = p.Iccid,
+            Signal = p.Signal,
+            ProbeStatus = p.ProbeStatus,
+            ProbeError = p.ProbeError,
+            LastProbedAt = p.LastProbedAt
+        };
+    }
+
+    private static AnShengCommandRecordDto MapRecord(AnShengCommandRecord r)
+    {
+        // 二次掩码：即便存量记录是 T7 之前明文落库的，也绝不外泄口令（T7 决策 D3）。
+        // 已掩码的内容再次掩码是幂等的（字段名命中 → 仍替换为 "***"），不会破坏排障信息。
+        var secretNames = AnShengSecretMasker.SecretFieldNames(r.Method);
+        return new AnShengCommandRecordDto
+        {
+            CommandId = r.CommandId,
+            DeviceId = r.DeviceId,
+            Imei = r.Imei,
+            Method = r.Method,
+            FrameId = r.FrameId,
+            Status = r.Status,
+            RejectReason = r.RejectReason,
+            RequestJson = AnShengSecretMasker.MaskJson(r.RequestJson, secretNames),
+            ResponseJson = AnShengSecretMasker.MaskJson(r.ResponseJson, secretNames),
+            ErrorCode = r.ErrorCode,
+            ErrorMessage = r.ErrorMessage,
+            IssuedAt = r.IssuedAt,
+            SentAt = r.SentAt,
+            CompletedAt = r.CompletedAt,
+            TimeoutAt = r.TimeoutAt,
+            DurationMs = r.DurationMs
+        };
     }
 }

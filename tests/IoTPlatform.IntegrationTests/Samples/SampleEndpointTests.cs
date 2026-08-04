@@ -104,11 +104,13 @@ public sealed class SampleEndpointTests : IntegrationTestBase
         body.Data!.Items.Should().ContainSingle().Which.Imei.Should().Be(Seed.Imei);
     }
 
-    [Fact(DisplayName = "示例-04 静态状态清理器可用（生产字段重命名时会失败告警）")]
+    [Fact(DisplayName = "示例-04 静态状态清理器可用（清理入口失效时会失败告警）")]
     public void StaticStateResetter_CanClearAllKnownStaticState()
     {
-        // 这条是「脚手架自检」：一旦生产代码把 DeviceKinds / FrameIdCommandIdMap 改名，
-        // 这里会红，从而避免静态污染以「随机幽灵失败」的形式渗进业务用例。
+        // 这条是「脚手架自检」：一旦生产侧的清理入口（如 AnShengMqttProtocolAdapter.ClearDeviceKinds）
+        // 失效或抛异常，这里会红，从而避免静态污染以「随机幽灵失败」的形式渗进业务用例。
+        // 注意它只是「不报错」级别的弱断言；真正的「确实清空了」由 QA-01 证伪用例负责。
+        // （T7-3 已删除 AnShengCommandService.FrameIdCommandIdMap，反射清理路径随之下线。）
         StaticStateResetter.Verify().Should().BeTrue(
             $"静态状态必须可清理，否则用例之间会串扰。诊断：{StaticStateResetter.LastError}");
     }

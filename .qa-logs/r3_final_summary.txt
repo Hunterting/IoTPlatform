@@ -1,0 +1,12 @@
+=== REBUILD (errors) ===
+    84 个警告
+    0 个错误
+BUILD_EXIT=0
+=== UNIT ===
+
+已通过! - 失败:     0，通过:   680，已跳过:     0，总计:   680，持续时间: 15 s - IoTPlatform.AnSheng.Tests.dll (net8.0)
+EXIT=0
+=== INTEGRATION ===
+
+已通过! - 失败:     0，通过:    27，已跳过:     0，总计:    27，持续时间: 17 s - IoTPlatform.IntegrationTests.dll (net8.0)
+EXIT=0

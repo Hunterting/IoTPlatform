@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Reflection;
 using IoTPlatform.Infrastructure.Protocol.Adapters;
 using IoTPlatform.Services;
 using IoTPlatform.Services.Interfaces;
@@ -11,15 +9,22 @@ namespace IoTPlatform.IntegrationTests.Infrastructure;
 /// 静态状态清理器（架构方案 §3.6）。
 ///
 /// 【为什么必须有】
-///   安圣链路上存在五处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
+///   安圣链路上存在四处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
 ///     1. <c>AnShengMqttProtocolAdapter.DeviceKinds</c>      —— IMEI → 设备型号，影响指令目录校验；
-///     2. <c>AnShengCommandService.FrameIdCommandIdMap</c>   —— frameId → commandId，影响回包关联；
-///     3. <c>AnShengProbeService</c> 的在途等待表             —— (imei, method) → 等待者，影响探测；
-///     4. <c>AnShengOfflineDebouncer</c> 的在途去抖窗口       —— IMEI → CTS，影响 T6 验收 #5（★ 最毒）；
-///     5. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定。
+///     2. <c>AnShengProbeService</c> 的在途等待表             —— (imei, method) → 等待者，影响探测；
+///     3. <c>AnShengOfflineDebouncer</c> 的在途去抖窗口       —— IMEI → CTS，影响 T6 验收 #5（★ 最毒）；
+///     4. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定。
 ///   若不清理，用例 A 注册的设备型号会泄漏给用例 B，制造「单跑绿、连跑红」的幽灵失败。
 ///
-/// 【T6 新增的 4 / 5 为什么危险程度高于前三项】
+/// 【T7-3 变更：原第 2 项已消失】
+///   原 <c>AnShengCommandService.FrameIdCommandIdMap</c>（frameId → commandId 静态字典）
+///   在 T7-3 被<b>物理删除</b>：实读证实它只写不读，生产代码零 <c>ResolveCommandId</c> 调用点。
+///   frameId ↔ commandId 的关联改由持久化的 <c>AnShengCommandRecord</c> 承载，
+///   在途判定则统一收敛到第 4 项 <c>IAnShengPendingCommandStore</c>。
+///   随之删除的还有本类原先那段<b>反射清理</b>逻辑——不再有私有静态字典需要反射触达，
+///   这同时消灭了「字段改名 ⇒ 清理静默退化」这一类隐患。
+///
+/// 【T6 引入的 3 / 4 为什么危险程度高于前两项】
 ///   去抖窗口是<b>带定时器的</b>：用例 A 投了 close 却在窗口到期前就结束，
 ///   那个 <c>Task.Delay</c> 仍在后台跑，到期后会调 <c>OnDeviceOfflineAsync</c>
 ///   把<b>用例 B 刚播种的同 IMEI 设备</b>改成 offline——B 的现场被一个已经结束的用例改写，
@@ -28,10 +33,11 @@ namespace IoTPlatform.IntegrationTests.Infrastructure;
 ///
 /// 【清理手段】
 ///   · DeviceKinds 已有公开的 <c>ClearDeviceKinds()</c>，直接调用（零反射，最稳）；
-///   · FrameIdCommandIdMap 是 <c>private static readonly</c>，只能反射取字段再调其 <c>Clear()</c>。
-///     反射失败时不抛异常、只记 <see cref="LastError"/> —— 生产代码重命名字段不应让全部用例爆红，
-///     但会在 <see cref="Verify"/> 里被显式检出；
-///   · 探测在途表通过 <c>IAnShengProbeService.ClearPending()</c> 清（需要 DI 容器，故有 provider 重载）。
+///   · 其余三处均为 DI 注册的 Singleton，通过各自公开的清理入口
+///     （<c>IAnShengProbeService.ClearPending()</c> / <c>AnShengOfflineDebouncer.ClearAll()</c> /
+///     <c>IAnShengPendingCommandStore.ClearAll()</c>）清空，故需要 provider 重载。
+///   · 任何一步失败都不抛异常、只记 <see cref="LastError"/> —— 单点故障不应让全部用例爆红，
+///     但会在 <see cref="Verify"/> 里被显式检出。
 ///
 /// 【⚠ 绝对禁止：AnShengUplinkHub.Reset()】
 ///   直觉上「清静态状态」应该顺手把静态总线也 Reset 一下，但那是个陷阱：
@@ -42,8 +48,6 @@ namespace IoTPlatform.IntegrationTests.Infrastructure;
 /// </summary>
 public static class StaticStateResetter
 {
-    private const string FrameIdMapFieldName = "FrameIdCommandIdMap";
-
     /// <summary>最近一次清理中遇到的问题描述；一切正常时为 null。</summary>
     public static string? LastError { get; private set; }
 
@@ -59,7 +63,6 @@ public static class StaticStateResetter
         LastError = null;
 
         ClearDeviceKinds();
-        ClearFrameIdCommandIdMap();
         ClearProbePending(services);
         ClearOfflineDebouncer(services);
         ClearPendingCommands(services);
@@ -175,52 +178,6 @@ public static class StaticStateResetter
         catch (Exception ex)
         {
             Append($"清理 AnShengMqttProtocolAdapter.DeviceKinds 失败：{ex.Message}");
-        }
-    }
-
-    private static void ClearFrameIdCommandIdMap()
-    {
-        try
-        {
-            var field = typeof(AnShengCommandService).GetField(
-                FrameIdMapFieldName,
-                BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-
-            if (field == null)
-            {
-                Append(
-                    $"未找到 AnShengCommandService.{FrameIdMapFieldName} 静态字段——" +
-                    "生产代码可能已重命名，请同步更新 StaticStateResetter。");
-                return;
-            }
-
-            var value = field.GetValue(null);
-            if (value == null)
-            {
-                // 字段存在但为 null，等价于已清空。
-                return;
-            }
-
-            // ConcurrentDictionary<,> 与 Dictionary<,> 都有无参 Clear()，按方法名反射调用即可，
-            // 无需硬编码泛型参数，生产代码换值类型也不会失配。
-            var clear = value.GetType().GetMethod("Clear", Type.EmptyTypes);
-            if (clear == null)
-            {
-                Append($"AnShengCommandService.{FrameIdMapFieldName} 类型 {value.GetType().Name} 没有无参 Clear() 方法。");
-                return;
-            }
-
-            clear.Invoke(value, null);
-
-            // 反射调用后二次确认真的空了（IEnumerable 计数，避免依赖具体泛型）。
-            if (value is IEnumerable enumerable && enumerable.GetEnumerator().MoveNext())
-            {
-                Append($"AnShengCommandService.{FrameIdMapFieldName} 调用 Clear() 后仍非空。");
-            }
-        }
-        catch (Exception ex)
-        {
-            Append($"清理 AnShengCommandService.{FrameIdMapFieldName} 失败：{ex.Message}");
         }
     }
 

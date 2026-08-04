@@ -1,0 +1,31 @@
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengClaimTests.cs:250:            frameId = "1111111111111111",
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengClaimTests.cs:266:            frameId = "2222222222222222",
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandAcceptanceTests.cs:29:/// 同 frameId 隔离、1000 条注册-清扫无残留、TCS 取消语义；<c>AnShengCatalogCountTests</c>
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandAcceptanceTests.cs:299:            batchSize, "frameId 含递增序号 + 随机数，同设备连发 12 条不应互相顶掉");
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:18:/// <param name="FrameId">本次下发生成的 16 位 frameId，可用于关联上行回包。</param>
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:189:        // 优先使用用例预置的 frameId，便于「先约定 frameId 再投递上行回包」的场景。
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:190:        var frameId = _plannedFrameIds.TryDequeue(out var planned) && !string.IsNullOrWhiteSpace(planned)
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:201:            frameId,
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:217:        return Task.FromResult(frameId);
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:226:        string frameId,
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:231:        // 接口契约（N1）：frameId 必须由调用方预先生成并登记在途，不得为空；
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:233:        if (string.IsNullOrWhiteSpace(frameId))
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:236:                "frameId 不得为空：下行接缝要求调用方预先生成并已登记在途表。", nameof(frameId));
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:251:        // frameId 优先级：入参 > 预置队列 > 自生成（设计 N1）。
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:252:        // 服务走下行接缝时必传非空的 frameId，故正常路径取入参；
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:254:        var effectiveFrameId = !string.IsNullOrWhiteSpace(frameId)
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:255:            ? frameId
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:262:        // 录制：与 SendCommandAsync 保持同构的快照（含 frameId），供断言。
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:313:    /// 预置下一次（或接下来若干次）<see cref="SendCommandAsync"/> 返回的 frameId。
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:314:    /// 用于让用例先拿到 frameId，再用同一个 frameId 构造上行回包。
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:316:    public RecordingAnShengAdapter EnqueueResponse(string frameId)
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:318:        ArgumentException.ThrowIfNullOrWhiteSpace(frameId);
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:319:        _plannedFrameIds.Enqueue(frameId);
+tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs:428:    /// 用例级复位：清录制、清预置 frameId、恢复连接状态。
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:16:///     4. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定。
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:20:///   原 <c>AnShengCommandService.FrameIdCommandIdMap</c>（frameId → commandId 静态字典）
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:22:///   frameId ↔ commandId 的关联改由持久化的 <c>AnShengCommandRecord</c> 承载，
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:32:///   在途命令表同理：A 遗留的 frameId 会让 B 的自动上报被判成 Response，直接改变路由分支。
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:144:    /// 清空在途命令表（frameId 登记簿）。
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:147:    ///   <c>AnShengMessageRouter.Classify</c> 第 3 级用 <c>IsInFlight(imei, frameId)</c>
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:149:    ///   条目会一直挂到 TTL 到期；用例 B 若恰好复用同一 frameId（测试里 frameId 常被固定），

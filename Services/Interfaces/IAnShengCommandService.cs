@@ -1,4 +1,5 @@
 using IoTPlatform.DTOs.Responses;
+using IoTPlatform.Models;
 
 namespace IoTPlatform.Services;
 
@@ -9,15 +10,29 @@ namespace IoTPlatform.Services;
 public interface IAnShengCommandService
 {
     /// <summary>
-    /// 向安圣设备发送原生命令
+    /// 向安圣设备发送原生命令。
+    ///
+    /// 【T7 起本方法是「有校验、有登记、有留痕」的完整受理入口】
+    ///   ① <c>AnShengCommandGuard</c> 单点校验（品类 / 参数 / 插槽 / 固件）；
+    ///   ② 写 <c>AnShengCommandRecord</c>（Pending）；
+    ///   ③ 先登记在途表、后发 MQTT（消除应答早于登记的竞态，硬约束 N1）；
+    ///   ④ 置 Sent 并算出 <c>TimeoutAt</c>，交由应答路径或超时清扫写终态。
+    /// 被 Guard 拒绝时<b>零 MQTT 发布、零在途登记、零 FrameId</b>，仅落一条 Rejected 记录。
     /// </summary>
     /// <param name="deviceId">设备 ID</param>
     /// <param name="method">安圣 method（如 getDevStatus, setAutoReport, orderStart）</param>
     /// <param name="parameters">参数字典，可为 null</param>
     /// <param name="ct">取消令牌</param>
-    /// <returns></returns>
+    /// <param name="commandId">
+    /// 平台命令标识（GUID 字符串）。由 <c>DeviceCommandService</c> 透传
+    /// <c>DeviceCommand.CommandId</c>，使两表以同一个值软关联（决策 D6，取代已删除的静态
+    /// <c>FrameIdCommandIdMap</c>）。传 null 时由本服务自行生成。
+    /// <b>放在 <paramref name="ct"/> 之后</b>是为了不破坏既有位置参数调用点。
+    /// </param>
+    /// <returns>下发结果；被拒绝时带 <c>RejectReason</c> 与 <c>Errors</c>。</returns>
     Task<AnShengCommandResponse> SendCommandAsync(long deviceId, string method,
-        Dictionary<string, object?>? parameters = null, CancellationToken ct = default);
+        Dictionary<string, object?>? parameters = null, CancellationToken ct = default,
+        string? commandId = null);
 
     /// <summary>
     /// 配置设备自动上报间隔并下发 setAutoReport 命令
@@ -42,6 +57,17 @@ public interface IAnShengCommandService
 
     /// <summary>远程重启二开设备</summary>
     Task<AnShengCommandResponse> RebootDeviceAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 按平台命令标识查询单条命令记录（T7-5 只读 API <c>GET /commands/{commandId}</c> 用）。
+    ///
+    /// 【租户隔离】在请求作用域内调用，<c>AppDbContext</c> 全局过滤器会自动按当前租户过滤，
+    /// 跨租户查询自然落空返回 null。
+    /// </summary>
+    /// <param name="commandId">平台命令标识（与 <c>DeviceCommand.CommandId</c> 同值）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>命令记录；不存在（含跨租户）返回 null。</returns>
+    Task<AnShengCommandRecord?> GetRecordAsync(string commandId, CancellationToken ct = default);
 }
 
 /// <summary>

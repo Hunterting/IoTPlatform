@@ -1789,14 +1789,26 @@ sequenceDiagram
 
 | ID | 任务 | 依赖 | 优先级 | 文件数 |
 |---|---|---|:--:|:--:|
-| **T7** | **命令服务重构：校验 + 在途表 + 命令记录 + Catalog API** | T1, T2, T5 | **P0** | 7 |
+| **T7** | **命令服务重构：校验 + 在途表 + 命令记录 + Catalog API** | T1, T2, T5, **T6** | **P0** | **5 新建 + 2 修改** |
+
+> **📌 口径修正（W2 回写）**：在途命令表两文件（`IAnShengPendingCommandStore` + `AnShengPendingCommandStore`）
+> **已在 T6 前移交付**（最小内存实现：`TryRegister` / `IsInFlight` / `CompleteAsync` / `SweepExpiredAsync` / `ClearAll` / `Count`），
+> 故在 T7 中由 🆕 **改判为 ✏️ 同文件增强**（补 D7 契约的 `RegisterAsync` + TCS + 带明细的清扫重载）。
+> T7 详细设计见 **`t7-command-refactor-design.md`**（含实读事实表、`IAnShengDownlinkPort` 下行接缝、
+> 10 项决策记录 D1–D10、5 个子任务 T7-1~T7-5、测试策略与回归护栏）。
+> 该详设中的**实施口径为 20 处改动**（6🆕 + 2✏️在途表 + 8✏️既有 + 4✏️测试），
+> 净新增生产类仅 4 个，差异原因见其 §2.5。
 
 - **改哪些文件**
   - ✏️ `Services/AnShengCommandService.cs`
   - ✏️ `Services/Interfaces/IAnShengCommandService.cs`
-  - 🆕 `Services/Interfaces/IAnShengPendingCommandStore.cs`
-  - 🆕 `Services/AnShengPendingCommandStore.cs`
+  - ✏️ `Services/Interfaces/IAnShengPendingCommandStore.cs`（**T6 前移已建，T7 增强**）
+  - ✏️ `Services/AnShengPendingCommandStore.cs`（**T6 前移已建，T7 增强**）
   - 🆕 `Models/AnShengCommandRecord.cs`
+  - 🆕 `Configuration/AnShengCommandOptions.cs`
+  - 🆕 `Services/AnShengCommandGuard.cs`（校验管线单点执行器 + 掩码器）
+  - 🆕 `Services/AnShengCommandSweepHostedService.cs`（超时旁路清扫宿主）
+  - 🆕 `Services/Interfaces/IAnShengDownlinkPort.cs`（frameId 预登记下行接缝，消除关联竞态）
   - ✏️ `Controllers/AnShengController.cs`（新增 `GET /catalog`、`GET /{id}/profile`、`GET /commands/{commandId}`）
   - ✏️ `Data/AppDbContext.cs` + Migration
 - **做什么**：Service 层单点做品类校验 + 参数 schema 校验 + slotNum 越界校验 + 固件门槛校验；在途表 key 改为 `{imei}:{frameId}` 并加 TTL 与后台清扫；每次下发落 `AnShengCommandRecord`；`setMqtt.password` 落库前掩码。
@@ -1804,6 +1816,7 @@ sequenceDiagram
   1. 单元测试：对 `SpeakerWiFi` 设备发 `action` → 返回 `RejectedByKind`，**MQTT 无任何发布**。
   2. 单元测试：`slotAmount=4` 的设备发 `action{slotNum:9}` → `RejectedByValidation`。
   3. 单元测试：固件 `4.0.8` 的设备发 `getDevStatus{q:"slots"}` → 被拦截或降级为不带 `q`（二选一，需在实现中明确并加测试）。
+     → **已裁定：选「拦截」**（`RejectedByFirmware` + 返回 `RequiredFirmware`，MQTT 零发布）。理由见 `t7-command-refactor-design.md` §8-D5（静默降级会造成「以为按条件查了、其实拿到全量」的语义偏差）。
   4. 单元测试：两台设备使用相同 `frameId="00001"` 各发一条命令，应答互不串扰。
   5. 集成测试：下发后 30s 无应答 → 命令记录 `Status=Timeout`，且在途表条目被清除（跑 1000 条后内存无增长）。
   6. `GET /api/ansheng/catalog` 返回 36 条，字段完整。
@@ -1972,7 +1985,7 @@ graph TD
     subgraph P2["Phase 2 · 能力模型与事件管道 (P0)"]
         T5["T5 设备能力档案 Profile<br/>6 files · P0"]
         T6["T6 事件识别与处理管道<br/>12 files · P0"]
-        T7["T7 命令服务重构<br/>校验/在途表/记录/Catalog API<br/>7 files · P0"]
+        T7["T7 命令服务重构<br/>校验/在途表/记录/Catalog API<br/>5 新建+2 修改 · P0"]
     end
 
     subgraph P3["Phase 3 · 开关与延时 (P1)"]

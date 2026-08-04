@@ -71,6 +71,7 @@ public class AppDbContext : DbContext
     public DbSet<DiscoveredAnShengDevice> DiscoveredAnShengDevices { get; set; }
     public DbSet<AnShengDeviceProfile> AnShengDeviceProfiles { get; set; }
     public DbSet<AnShengDeviceEvent> AnShengDeviceEvents { get; set; }
+    public DbSet<AnShengCommandRecord> AnShengCommandRecords { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -125,6 +126,7 @@ public class AppDbContext : DbContext
         ConfigureDiscoveredAnShengDevices(modelBuilder);
         ConfigureAnShengDeviceProfiles(modelBuilder);
         ConfigureAnShengDeviceEvents(modelBuilder);
+        ConfigureAnShengCommandRecords(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -513,6 +515,75 @@ public class AppDbContext : DbContext
                 .HasDatabaseName("IX_AnShengDeviceEvents_DeviceId_OccurredAt");
             entity.HasIndex(e => new { e.AppCode, e.Kind, e.OccurredAt })
                 .HasDatabaseName("IX_AnShengDeviceEvents_AppCode_Kind_OccurredAt");
+        });
+    }
+
+    /// <summary>
+    /// 安圣命令记录表配置（T7 决策 D2：19 列 + 5 索引）。
+    ///
+    /// 【索引设计理由 —— 每一条都对应一个真实查询，没有「先建着以防万一」的索引】
+    ///   · <c>UNIQUE(CommandId)</c>：对外主键。<c>GET /commands/{commandId}</c> 按它单点查询，
+    ///     同时唯一约束就是<b>幂等护栏</b>——同一 CommandId 重复提交在 DB 层直接失败，
+    ///     不必在应用层写「先查后插」的竞态代码。
+    ///   · <c>(Imei, FrameId)</c> <b>非唯一</b>：应答关联主路径。
+    ///     <b>刻意不设唯一</b>——frameId 只有 16 位 hex 且记录长期保留（默认 90 天），
+    ///     同一 IMEI 跨月理论上会撞重。设成唯一会在生产上偶发写入失败，
+    ///     而这类失败发生在「命令下发」这条最热的路径上，代价远大于收益。
+    ///     关联时取 <c>Status IN (Pending, Sent)</c> 的最新一条即可。
+    ///   · <c>(AppCode, IssuedAt)</c>：租户维度的命令列表/时间线。
+    ///     AppCode 打头是因为 HTTP 侧查询会被全局租户过滤器自动加 <c>WHERE AppCode = ?</c>，
+    ///     不打头则该谓词用不上索引（与 <c>ConfigureAnShengDeviceEvents</c> 同一理由）。
+    ///   · <c>(DeviceId, IssuedAt)</c>：设备详情页的命令时间线（已认领设备分支）。
+    ///   · <c>(Status, TimeoutAt)</c>：旁路清扫扫「未完成且已超时」。
+    ///     Status 打头是因为它选择性最强——终态记录占绝大多数，
+    ///     <c>Status IN (Pending, Sent)</c> 一步就能把扫描面收敛到在途区间。
+    ///
+    /// 【MySQL 5.7.26 约束】
+    ///   · <c>Status</c> / <c>RejectReason</c> 一律 <c>int</c>（<c>HasConversion&lt;int&gt;()</c>），禁原生 ENUM；
+    ///   · <b>不使用降序索引</b>——5.7 会静默忽略 DESC 关键字，写了只会给人「已按倒序优化」的错觉；
+    ///   · 不使用 CHECK 约束（5.7 静默忽略）；状态机合法性由应用层保证；
+    ///   · <c>DurationMs</c> <b>不用生成列</b>——5.7 生成列不能进函数索引，写入时算好存值；
+    ///   · <c>RequestJson</c> / <c>ResponseJson</c> 显式声明 <c>longtext</c>，只存不查、<b>不进任何索引</b>；
+    ///   · 时间列由 Pomelo 默认映射为 <c>datetime(6)</c>，存 UTC，禁 <c>timestamp</c>。
+    ///
+    /// 【为什么没有 Direction 列】本表定义是「<b>平台下发命令</b>的生命周期」，
+    ///   上行报文已由 <c>AnShengDeviceEvent</c>（T6）承载。恒为 Downlink 的列既浪费存储，
+    ///   又制造「两张表都能查上行」的错觉。将来若真需要上下行合并视图，用视图或联合查询。
+    ///
+    /// 【不建分区表】同事件表：5.7 的分区在外键与运维工具上限制颇多。
+    ///   保留期由 <c>AnShengCommandOptions.RecordRetentionDays</c> 声明，清理作业见开放问题 U1。
+    /// </summary>
+    private void ConfigureAnShengCommandRecords(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengCommandRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.CommandId).HasMaxLength(36).IsRequired();
+            entity.Property(e => e.Imei).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Method).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.FrameId).HasMaxLength(64);
+            entity.Property(e => e.ErrorCode).HasMaxLength(64);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(AnShengCommandRecord.ErrorMessageMaxLength);
+
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.RejectReason).HasConversion<int>();
+
+            entity.Property(e => e.RequestJson).HasColumnType("longtext").IsRequired();
+            entity.Property(e => e.ResponseJson).HasColumnType("longtext");
+
+            entity.HasIndex(e => e.CommandId)
+                .IsUnique()
+                .HasDatabaseName("IX_AnShengCommandRecords_CommandId");
+            entity.HasIndex(e => new { e.Imei, e.FrameId })
+                .HasDatabaseName("IX_AnShengCommandRecords_Imei_FrameId");
+            entity.HasIndex(e => new { e.AppCode, e.IssuedAt })
+                .HasDatabaseName("IX_AnShengCommandRecords_AppCode_IssuedAt");
+            entity.HasIndex(e => new { e.DeviceId, e.IssuedAt })
+                .HasDatabaseName("IX_AnShengCommandRecords_DeviceId_IssuedAt");
+            entity.HasIndex(e => new { e.Status, e.TimeoutAt })
+                .HasDatabaseName("IX_AnShengCommandRecords_Status_TimeoutAt");
         });
     }
 

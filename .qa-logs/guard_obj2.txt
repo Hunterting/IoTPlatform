@@ -1,0 +1,3 @@
+770:    /// 把一个对象型参数值转成 <see cref="JsonObject"/> 副本，并打掉点名的子字段。
+791:        if (node is not JsonObject obj) return value;
+814:            case JsonObject obj:

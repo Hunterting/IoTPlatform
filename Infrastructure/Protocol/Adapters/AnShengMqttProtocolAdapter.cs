@@ -23,8 +23,21 @@ namespace IoTPlatform.Infrastructure.Protocol.Adapters;
 /// 同一 IMEI 两条命令间隔 ≥100ms。
 ///
 /// 离线判定：<b>不看主题前缀</b>（上下行 will 与数据同主题），只看 <c>method == "close"</c>。
+///
+/// 【T7-2 变更 1：实现 <see cref="IoTPlatform.Services.Interfaces.IAnShengDownlinkPort"/>】
+///   原先 frameId 只能由本适配器内部生成，调用方拿到时报文已经发出（硬约束 N1），
+///   导致「先登记在途表、后下发」物理上做不到，快速应答会被路由误判为主动上报。
+///   新增的 <see cref="PublishAsync"/> 接受外部 frameId，与 <see cref="SendCommandAsync"/>
+///   共用 <c>BuildAndPublishAsync</c> 这一份实现，两个入口的报文除 frameId 外字节级一致。
+///
+/// 【T7-2 变更 2：摘除 <c>CommandResponse</c> 事件的触发】
+///   该事件在全仓<b>无任何订阅者</b>（F6 实读证实：ProtocolConfigService 只订阅 DataReceived，
+///   DeviceCommandService 订阅的是 IMqttClientService.OnCommandResponse，与本事件无关）。
+///   命令应答的关联已由 <c>AnShengMessageRouter</c> + <c>IAnShengPendingCommandStore</c> 承担，
+///   保留一个「构造事件参数、遍历空委托链」的分支只会误导后来者以为存在第二条应答链路。
+///   事件声明本身属于 <see cref="IProtocolAdapter"/> 契约，必须保留，故仅摘除 Invoke。
 /// </summary>
-public class AnShengMqttProtocolAdapter : IProtocolAdapter
+public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services.Interfaces.IAnShengDownlinkPort
 {
     private readonly ILogger<AnShengMqttProtocolAdapter>? _logger;
     private readonly int _configId;
@@ -69,6 +82,22 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     };
 
     /// <summary>
+    /// 判断某 method 是否属于 Legacy 充电桩白名单（T7-3 新增的<b>只读</b>查询入口）。
+    ///
+    /// 【为什么要暴露它】T7 起 <c>AnShengCommandGuard</c> 会在下发前统一判「这个 method 认不认识」。
+    /// 目录（<see cref="AnShengCommandCatalog"/>）里只有二开协议，
+    /// 若不让 Guard 知道 Legacy 白名单的存在，<c>orderStart</c> 这类现网仍在用的方法
+    /// 会在服务层就被判成「未知方法」而拒绝 —— 这是重构不该造成的功能回退。
+    ///
+    /// 【为什么不直接把字段改成 public】字段是<b>可变集合</b>，公开出去等于允许任何人往里塞方法，
+    /// 「默认拒绝」的闸门就形同虚设；且既有测试用反射读取该私有字段，改可见性会牵动测试脚手架。
+    /// </summary>
+    /// <param name="method">协议方法名，可为 null。</param>
+    /// <returns>命中白名单返回 true。</returns>
+    public static bool IsLegacyMethod(string? method)
+        => !string.IsNullOrWhiteSpace(method) && LegacyMethodWhitelist.Contains(method);
+
+    /// <summary>
     /// IMEI → 设备品类缓存。
     /// 由上行 <c>getDevInfo</c>/<c>getDevStatus</c>/<c>connected</c> 报文自动学习，
     /// 也可由业务层通过 <see cref="RegisterDeviceKind"/> 主动登记（例如从数据库读取 model/netType）。
@@ -82,7 +111,15 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     public int ConfigId => _configId;
 
     public event EventHandler<DeviceDataReceivedEventArgs>? DataReceived;
+
+    /// <summary>
+    /// 指令响应事件 —— <b>本适配器不再触发它</b>（T7-2 摘除，见类注释「变更 2」）。
+    ///
+    /// 声明保留是因为它属于 <see cref="IProtocolAdapter"/> 契约；
+    /// 安圣设备的应答关联请走 <c>AnShengMessageRouter</c> → <c>IAnShengPendingCommandStore</c>。
+    /// </summary>
     public event EventHandler<DeviceCommandResponseEventArgs>? CommandResponse;
+
     public event EventHandler<bool>? ConnectionStateChanged;
 
     /// <summary>
@@ -341,14 +378,14 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 向安圣设备下发命令，<paramref name="serialNumber"/> 即设备 IMEI。
+    /// 向安圣设备下发命令，<paramref name="serialNumber"/> 即设备 IMEI，frameId 由构建器<b>内部生成</b>。
     /// 报文由 <see cref="AnShengCommandBuilder"/> 统一构建，保证与 asopen.md 一致；
     /// 下发前经 <see cref="AnShengCommandThrottle"/> 按 IMEI 限流（≥100ms）。
     ///
-    /// 报文结构选择遵循「默认拒绝、显式放行」：
-    ///   1. 命中 <see cref="AnShengCommandCatalog"/> → 二开协议报文（参数平铺）；
-    ///   2. 命中 <see cref="LegacyMethodWhitelist"/> → Legacy 充电桩报文（param 包裹）；
-    ///   3. 其余一律抛出 <see cref="NotSupportedException"/>，不得下发协议外报文。
+    /// 报文结构选择遵循「默认拒绝、显式放行」，详见 <c>BuildAndPublishAsync</c>。
+    ///
+    /// ⚠️ 需要「先登记在途表、后下发」的调用方（T7 命令服务）请改用
+    /// <see cref="PublishAsync"/>：本方法返回 frameId 时报文已经发出，来不及登记。
     /// </summary>
     /// <param name="deviceId">设备主键（仅用于日志）。</param>
     /// <param name="serialNumber">设备 IMEI。</param>
@@ -360,31 +397,90 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
     /// <exception cref="NotSupportedException">
     /// <paramref name="commandType"/> 既不在二开协议目录中，也不在 Legacy 白名单内。
     /// </exception>
-    public async Task<string> SendCommandAsync(long deviceId, string serialNumber, string commandType,
+    public Task<string> SendCommandAsync(long deviceId, string serialNumber, string commandType,
         string parameters, CancellationToken cancellationToken = default)
+        => BuildAndPublishAsync(
+            deviceId, serialNumber, commandType, ParseParameters(parameters),
+            frameId: null, cancellationToken);
+
+    /// <summary>
+    /// 以<b>调用方指定的 frameId</b> 下发命令（<see cref="IoTPlatform.Services.Interfaces.IAnShengDownlinkPort"/> 实现）。
+    ///
+    /// 与 <see cref="SendCommandAsync"/> 的唯一差别是 frameId 来源：
+    /// 这里由 <c>AnShengCommandService</c> 预先生成并<b>已登记进在途表</b>，
+    /// 从而消除「应答先于登记到达」的竞态（硬约束 N1）。
+    /// 报文构建、限流、发布、日志全部复用 <c>BuildAndPublishAsync</c>，不存在第二条构建路径。
+    /// </summary>
+    /// <param name="deviceId">设备主键（仅用于日志）。</param>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="method">协议方法名。</param>
+    /// <param name="parameters">平铺参数字典，可为 null。</param>
+    /// <param name="frameId">预先生成并登记的帧 ID，不得为空。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>实际下发所用的 frameId（与入参相同）。</returns>
+    /// <exception cref="ArgumentException"><paramref name="frameId"/> 为空。</exception>
+    /// <exception cref="InvalidOperationException">MQTT 未连接。</exception>
+    /// <exception cref="NotSupportedException">方法既不在协议目录，也不在 Legacy 白名单内。</exception>
+    public Task<string> PublishAsync(long deviceId, string imei, string method,
+        IReadOnlyDictionary<string, object?>? parameters, string frameId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(frameId))
+        {
+            // 空 frameId 会让报文与在途登记对不上，命令必然走到超时兜底 —— 属调用方错误，快速失败。
+            throw new ArgumentException(
+                "frameId 不能为空：IAnShengDownlinkPort 的语义就是「以已登记的 frameId 下发」。",
+                nameof(frameId));
+        }
+
+        return BuildAndPublishAsync(deviceId, imei, method, parameters, frameId, cancellationToken);
+    }
+
+    /// <summary>
+    /// 报文构建 + 限流 + 发布的<b>唯一实现</b>，由 <see cref="SendCommandAsync"/>（frameId 自生成）
+    /// 与 <see cref="PublishAsync"/>（frameId 外部指定）共用。
+    ///
+    /// 报文结构选择遵循「默认拒绝、显式放行」：
+    ///   1. 命中 <see cref="AnShengCommandCatalog"/> → 二开协议报文（参数平铺）；
+    ///   2. 命中 <see cref="LegacyMethodWhitelist"/> → Legacy 充电桩报文（param 包裹）；
+    ///   3. 其余一律抛出 <see cref="NotSupportedException"/>，不得下发协议外报文。
+    /// </summary>
+    /// <param name="deviceId">设备主键（仅用于日志）。</param>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="method">协议方法名。</param>
+    /// <param name="flatParams">平铺参数字典，可为 null。</param>
+    /// <param name="frameId">指定的帧 ID；为 null 表示由构建器自生成。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>本次下发的 frameId（16 位）。</returns>
+    /// <exception cref="InvalidOperationException">MQTT 未连接。</exception>
+    /// <exception cref="NotSupportedException">
+    /// <paramref name="method"/> 既不在二开协议目录中，也不在 Legacy 白名单内。
+    /// </exception>
+    private async Task<string> BuildAndPublishAsync(long deviceId, string imei, string method,
+        IReadOnlyDictionary<string, object?>? flatParams, string? frameId,
+        CancellationToken cancellationToken)
     {
         if (_mqttClient?.IsConnected != true || _options == null)
         {
             throw new InvalidOperationException("安圣 MQTT 客户端未连接");
         }
 
-        var topic = _options.SubscribeTopicTemplate.Replace("{imei}", serialNumber);
-        var flatParams = ParseParameters(parameters);
-        var kind = GetDeviceKind(serialNumber);
+        var topic = _options.SubscribeTopicTemplate.Replace("{imei}", imei);
+        var kind = GetDeviceKind(imei);
 
-        string frameId;
+        string actualFrameId;
         string payloadJson;
 
-        if (AnShengCommandCatalog.Contains(commandType))
+        if (AnShengCommandCatalog.Contains(method))
         {
             // 二开协议：参数平铺、16 位 frameId、仅 4G 注入秒级 timestamp、压缩 JSON
-            (frameId, payloadJson) = _commandBuilder.BuildCommand(serialNumber, commandType, flatParams, kind);
+            (actualFrameId, payloadJson) = _commandBuilder.BuildCommand(imei, method, flatParams, kind, frameId);
         }
-        else if (LegacyMethodWhitelist.Contains(commandType))
+        else if (LegacyMethodWhitelist.Contains(method))
         {
             // Legacy 充电桩协议族（orderStart / orderEnd / orderUp）：保留 param 包裹，行为不变
-            _logger?.LogDebug("方法 {Method} 命中 Legacy 充电桩白名单，按 Legacy 报文结构下发", commandType);
-            (frameId, payloadJson) = _commandBuilder.BuildLegacyCommand(serialNumber, commandType, flatParams);
+            _logger?.LogDebug("方法 {Method} 命中 Legacy 充电桩白名单，按 Legacy 报文结构下发", method);
+            (actualFrameId, payloadJson) = _commandBuilder.BuildLegacyCommand(imei, method, flatParams, frameId);
         }
         else
         {
@@ -392,20 +488,20 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
             _logger?.LogWarning(
                 "拒绝下发协议外命令: DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, Kind={Kind}。"
                 + "该方法既未登记于 AnShengCommandCatalog，也不在 Legacy 充电桩白名单 [{Whitelist}] 内，已阻止外发。",
-                deviceId, serialNumber, commandType, kind, string.Join(", ", LegacyMethodWhitelist));
+                deviceId, imei, method, kind, string.Join(", ", LegacyMethodWhitelist));
 
             throw new NotSupportedException(
-                $"方法 {commandType} 不属于安圣二开协议目录，也不在 Legacy 充电桩白名单内，禁止下发。");
+                $"方法 {method} 不属于安圣二开协议目录，也不在 Legacy 充电桩白名单内，禁止下发。");
         }
 
         // 协议要求：同一设备多条命令之间间隔 ≥100ms，防止命令粘连
         if (_throttle != null)
         {
-            var waited = await _throttle.WaitTurnAsync(serialNumber, cancellationToken);
+            var waited = await _throttle.WaitTurnAsync(imei, cancellationToken);
             if (waited > 0)
             {
                 _logger?.LogDebug("安圣命令限流等待 {Waited}ms: IMEI={IMEI}, Method={Method}",
-                    waited, serialNumber, commandType);
+                    waited, imei, method);
             }
         }
 
@@ -420,8 +516,8 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
 
         _logger?.LogInformation(
             "安圣命令已发送: DeviceId={DeviceId}, Method={Method}, IMEI={IMEI}, Kind={Kind}, FrameId={FrameId}, Topic={Topic}, Payload={Payload}",
-            deviceId, commandType, serialNumber, kind, frameId, topic, payloadJson);
-        return frameId;
+            deviceId, method, imei, kind, actualFrameId, topic, payloadJson);
+        return actualFrameId;
     }
 
     /// <summary>
@@ -556,20 +652,17 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter
                 ProtocolType = ProtocolType
             });
 
-            // 命令响应：带 frameId 且非事件的报文，桥接给上层匹配在途命令
-            if (message != null
-                && !string.IsNullOrWhiteSpace(message.FrameId)
-                && !message.IsEvent)
-            {
-                CommandResponse?.Invoke(this, new DeviceCommandResponseEventArgs
-                {
-                    DeviceId = 0L, // IMEI → DeviceId 映射在 ProtocolConfigService 中完成
-                    CommandId = message.FrameId!,
-                    Status = message.IsOk ? "SUCCESS" : "FAILED",
-                    ResponseData = rawPayload,
-                    RespondedAt = DateTime.UtcNow
-                });
-            }
+            // ── T7-2 已摘除：CommandResponse?.Invoke(...) 分支 ──
+            // 原逻辑：带 frameId 且非事件的报文 → 触发 CommandResponse 事件「桥接给上层匹配在途命令」。
+            // 摘除理由（F6 实读证实）：
+            //   1. 全仓<b>无任何订阅者</b>——ProtocolConfigService 只订阅 DataReceived；
+            //      DeviceCommandService 订阅的是 IMqttClientService.OnCommandResponse，是另一套通道；
+            //   2. 事件参数里的 DeviceId 恒为 0、CommandId 塞的其实是 frameId，语义本身就是错的，
+            //      任何新订阅者照着用都会踩坑；
+            //   3. 应答关联的唯一正路是 AnShengUplinkHub → AnShengMessageRouter →
+            //      IAnShengPendingCommandStore.CompleteAsync（按 imei+frameId 摘在途条目），
+            //      上面的 Publish 调用已经把报文送进去了。
+            // 保留一条死分支只会让后来者以为存在第二条应答链路，进而写出两处互相打架的回填逻辑。
         }
         catch (Exception ex)
         {

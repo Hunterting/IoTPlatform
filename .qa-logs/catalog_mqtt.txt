@@ -1,0 +1,13 @@
+37:    /// <c>setMqtt.mqttParams</c> / <c>getMqtt</c> 应答中需要打码的敏感子字段（T7 决策 D3）。
+42:    private static readonly IReadOnlyList<string> MqttSecretFields = new[] { "password" };
+208:            // ⚠️ getMqtt 是一条<b>无参数</b>命令：口令只出现在设备<b>应答</b>里。
+209:            //    因此它的敏感字段必须挂在 responseSecretFields 上 ——
+210:            //    只从 Params 推导敏感字段集会让 getMqtt 恒为空集，应答口令原样落库（T7 决策 D3）。
+211:            Spec("getMqtt", "获取MQTT参数", AnShengDeviceCapability.GroupMqtt,
+212:                "获取MQTT参数（getMqtt）",
+214:                responseSecretFields: MqttSecretFields),
+219:            Spec("setMqtt", "设置MQTT参数", AnShengDeviceCapability.GroupMqtt,
+220:                "设置MQTT参数（setMqtt）",
+222:                    secretFields: MqttSecretFields),
+379:        IReadOnlyList<string>? responseSecretFields = null)
+387:            ResponseSecretFields = responseSecretFields ?? Array.Empty<string>(),

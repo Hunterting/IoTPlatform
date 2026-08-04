@@ -58,6 +58,30 @@ public sealed class AnShengParamSpec
     public double? Maximum { get; init; }
 
     /// <summary>
+    /// 本参数本身是否为敏感值（T7 决策 D3）。
+    ///
+    /// 【只影响「留痕」，不影响「下发」】为 <c>true</c> 时，
+    /// <c>AnShengSecretMasker</c> 会在写 <c>AnShengCommandRecord.RequestJson</c> /
+    /// <c>ResponseJson</c> / 打日志 / 出 <c>GET /commands/{id}</c> 之前，把该值替换为 <c>"***"</c>。
+    /// 真正发布到 MQTT 的报文<b>仍是明文</b> —— 设备只认明文口令。
+    /// </summary>
+    public bool IsSecret { get; init; }
+
+    /// <summary>
+    /// 当本参数是 <see cref="AnShengParamType.Object"/> 时，其对象<b>内部</b>需要掩码的字段名集合。
+    ///
+    /// 【为什么需要它 —— setMqtt 的真实形状】
+    ///   协议里 <c>setMqtt</c> 的顶层参数只有 <c>mqttParams</c>（对象）与 <c>reboot</c>（布尔），
+    ///   口令 <c>password</c> 是<b>嵌在 <c>mqttParams</c> 里面</b>的，并不是一个顶层参数。
+    ///   若只有 <see cref="IsSecret"/>，要么把整个 <c>mqttParams</c> 打码（连 host/port/clientId
+    ///   这些排障必需的信息一并丢失），要么就没法打码。
+    ///   因此这里用「父参数声明子字段」的方式，做到<b>精确到字段</b>的掩码。
+    ///
+    /// 为 null 或空表示对象内部无敏感字段。
+    /// </summary>
+    public IReadOnlyList<string>? SecretFields { get; init; }
+
+    /// <summary>
     /// 创建一个参数规格。
     /// </summary>
     /// <param name="name">参数名。</param>
@@ -68,6 +92,8 @@ public sealed class AnShengParamSpec
     /// <param name="allowedValues">允许的枚举值，可为 null。</param>
     /// <param name="minimum">数值下限，可为 null。</param>
     /// <param name="maximum">数值上限，可为 null。</param>
+    /// <param name="isSecret">本参数自身是否敏感（留痕时打码）。</param>
+    /// <param name="secretFields">对象型参数内部需要打码的字段名，可为 null。</param>
     /// <returns>参数规格实例。</returns>
     public static AnShengParamSpec Create(
         string name,
@@ -77,7 +103,9 @@ public sealed class AnShengParamSpec
         string? minFirmware = null,
         IReadOnlyList<string>? allowedValues = null,
         double? minimum = null,
-        double? maximum = null)
+        double? maximum = null,
+        bool isSecret = false,
+        IReadOnlyList<string>? secretFields = null)
     {
         return new AnShengParamSpec
         {
@@ -88,25 +116,55 @@ public sealed class AnShengParamSpec
             MinFirmware = minFirmware,
             AllowedValues = allowedValues,
             Minimum = minimum,
-            Maximum = maximum
+            Maximum = maximum,
+            IsSecret = isSecret,
+            SecretFields = secretFields
         };
     }
 
     /// <summary>
-    /// 校验给定值是否满足本参数规格。
+    /// 校验给定值是否满足本参数规格（文案版，T7 之前的既有签名）。
+    ///
+    /// 内部委托 <see cref="ValidateDetailed"/>，只把结构化违规降级成一句中文。
+    /// 保留它是为了不惊动既有调用方；新代码请用 <see cref="ValidateDetailed"/>，
+    /// 因为拒绝<b>类别</b>（<c>AnShengCommandRejectReason</c>）只能从违规种类推导，文案推不出来。
     /// </summary>
     /// <param name="value">待校验值，可为 null。</param>
     /// <param name="error">校验失败时的中文原因。</param>
     /// <returns>通过校验返回 true。</returns>
     public bool Validate(object? value, out string? error)
     {
-        error = null;
+        var ok = ValidateDetailed(value, out var violation);
+        error = violation?.Message;
+        return ok;
+    }
+
+    /// <summary>
+    /// 校验给定值是否满足本参数规格，失败时给出<b>结构化</b>违规描述。
+    ///
+    /// 【为什么要结构化】<c>AnShengCommandGuard</c> 必须区分「参数不合法」与「固件不够」——
+    /// 前者是 <c>RejectedByValidation</c>，后者是 <c>RejectedByFirmware</c> 且响应要回带
+    /// <c>RequiredFirmware</c> 引导用户升级。靠正则匹配错误文案去分类是最脆的做法。
+    ///
+    /// 注意：本方法<b>不做</b>固件校验（它不知道设备当前固件），固件由
+    /// <see cref="AnShengCommandSpec.ValidateParams(IReadOnlyDictionary{string, object?}, string, bool, out IReadOnlyList{AnShengParamViolation})"/>
+    /// 统一处理。
+    /// </summary>
+    /// <param name="value">待校验值，可为 null。</param>
+    /// <param name="violation">校验失败时的结构化违规；通过时为 null。</param>
+    /// <returns>通过校验返回 true。</returns>
+    public bool ValidateDetailed(object? value, out AnShengParamViolation? violation)
+    {
+        violation = null;
 
         if (value == null)
         {
             if (Required)
             {
-                error = $"参数 {Name} 为必填项";
+                violation = new AnShengParamViolation(
+                    Name,
+                    AnShengParamViolationKind.Missing,
+                    $"参数 {Name} 为必填项");
                 return false;
             }
 
@@ -115,7 +173,10 @@ public sealed class AnShengParamSpec
 
         if (!MatchesType(value))
         {
-            error = $"参数 {Name} 类型应为 {Type}，实际为 {value.GetType().Name}";
+            violation = new AnShengParamViolation(
+                Name,
+                AnShengParamViolationKind.TypeMismatch,
+                $"参数 {Name} 类型应为 {Type}，实际为 {value.GetType().Name}");
             return false;
         }
 
@@ -124,7 +185,10 @@ public sealed class AnShengParamSpec
             var text = ExtractString(value);
             if (text != null && !AllowedValues.Contains(text, StringComparer.Ordinal))
             {
-                error = $"参数 {Name} 取值应为 [{string.Join('|', AllowedValues)}]，实际为 {text}";
+                violation = new AnShengParamViolation(
+                    Name,
+                    AnShengParamViolationKind.NotAllowed,
+                    $"参数 {Name} 取值应为 [{string.Join('|', AllowedValues)}]，实际为 {text}");
                 return false;
             }
         }
@@ -136,13 +200,19 @@ public sealed class AnShengParamSpec
             {
                 if (Minimum.HasValue && number.Value < Minimum.Value)
                 {
-                    error = $"参数 {Name} 不能小于 {Minimum.Value}";
+                    violation = new AnShengParamViolation(
+                        Name,
+                        AnShengParamViolationKind.OutOfRange,
+                        $"参数 {Name} 不能小于 {Minimum.Value}");
                     return false;
                 }
 
                 if (Maximum.HasValue && number.Value > Maximum.Value)
                 {
-                    error = $"参数 {Name} 不能大于 {Maximum.Value}";
+                    violation = new AnShengParamViolation(
+                        Name,
+                        AnShengParamViolationKind.OutOfRange,
+                        $"参数 {Name} 不能大于 {Maximum.Value}");
                     return false;
                 }
             }
@@ -214,6 +284,62 @@ public sealed class AnShengParamSpec
             return null;
         }
     }
+}
+
+/// <summary>
+/// 参数违规的种类（T7 新增）。
+///
+/// 【为什么不用字符串】<c>AnShengCommandGuard</c> 要按种类映射到
+/// <c>AnShengCommandRejectReason</c>：<see cref="FirmwareTooLow"/> → <c>RejectedByFirmware</c>，
+/// 其余 → <c>RejectedByValidation</c>。这层映射必须是机器可读的编译期契约。
+///
+/// 【枚举值只能追加】它会随 <c>AnShengParamViolation</c> 出现在 API 响应里。
+/// </summary>
+public enum AnShengParamViolationKind
+{
+    /// <summary>必填参数缺失。</summary>
+    Missing = 0,
+
+    /// <summary>JSON 类型与规格不符。</summary>
+    TypeMismatch = 1,
+
+    /// <summary>取值不在允许的枚举集合内。</summary>
+    NotAllowed = 2,
+
+    /// <summary>数值越界（含 <c>slotNum</c> 超出设备实际插槽数）。</summary>
+    OutOfRange = 3,
+
+    /// <summary>设备固件版本低于该参数/命令要求的门槛。</summary>
+    FirmwareTooLow = 4,
+
+    /// <summary>传入了规格外的未知参数（仅当 <c>allowUnknownParams=false</c> 时产生）。</summary>
+    UnknownParam = 5,
+
+    /// <summary>该 method 是设备上行事件，平台不可下发。</summary>
+    NotDownlinkable = 6
+}
+
+/// <summary>
+/// 一条结构化的参数违规。
+/// </summary>
+/// <param name="ParamName">
+/// 违规参数名。命令级违规（<see cref="AnShengParamViolationKind.FirmwareTooLow"/> 落在整条命令上、
+/// 或 <see cref="AnShengParamViolationKind.NotDownlinkable"/>）时为空串。
+/// </param>
+/// <param name="Kind">违规种类。</param>
+/// <param name="Message">面向人的中文说明。</param>
+/// <param name="MinFirmware">
+/// 仅 <see cref="AnShengParamViolationKind.FirmwareTooLow"/> 有值 —— 满足该参数/命令所需的<b>最低</b>固件版本。
+/// 它会被原样回传到 <c>AnShengCommandResponse.RequiredFirmware</c>，供前端引导升级。
+/// </param>
+public sealed record AnShengParamViolation(
+    string ParamName,
+    AnShengParamViolationKind Kind,
+    string Message,
+    string? MinFirmware = null)
+{
+    /// <inheritdoc />
+    public override string ToString() => Message;
 }
 
 /// <summary>

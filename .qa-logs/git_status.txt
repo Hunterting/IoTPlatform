@@ -1,0 +1,44 @@
+ M .workbuddy/design/ansheng-open-redesign.md
+ M .workbuddy/memory/2026-08-04.md
+ M Controllers/AnShengController.cs
+ M DTOs/Responses/AnShengResponses.cs
+ M Data/AppDbContext.cs
+ M Infrastructure/Protocol/Adapters/AnShengMqttProtocolAdapter.cs
+ M Infrastructure/Protocol/AnSheng/AnShengCommandBuilder.cs
+ M Infrastructure/Protocol/AnSheng/AnShengCommandCatalog.cs
+ M Infrastructure/Protocol/AnSheng/AnShengCommandSpec.cs
+ M Infrastructure/Protocol/AnSheng/AnShengMessageRouter.cs
+ M Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs
+ M Migrations/AppDbContextModelSnapshot.cs
+ M Program.cs
+ M Services/AnShengCommandService.cs
+ M Services/AnShengPendingCommandStore.cs
+ M Services/DeviceCommandService.cs
+ M Services/Interfaces/IAnShengCommandService.cs
+ M Services/Interfaces/IAnShengPendingCommandStore.cs
+ M appsettings.json
+ M tests/IoTPlatform.IntegrationTests/Collections/IntegrationTestCollection.cs
+ M tests/IoTPlatform.IntegrationTests/Infrastructure/Mqtt/RecordingAnShengAdapter.cs
+ M tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs
+ M tests/IoTPlatform.IntegrationTests/Infrastructure/TestWebAppFactory.cs
+ M tests/IoTPlatform.IntegrationTests/Samples/SampleEndpointTests.cs
+ M tests/IoTPlatform.IntegrationTests/Samples/ScaffoldFalsificationTests.cs
+ M tests/IoTPlatform.IntegrationTests/appsettings.Testing.json
+?? .qa-logs/
+?? .workbuddy/design/t7-class-diagram.mermaid
+?? .workbuddy/design/t7-command-refactor-design.md
+?? .workbuddy/design/t7-sequence-diagram.mermaid
+?? Configuration/AnShengCommandOptions.cs
+?? Migrations/20260804051159_AddAnShengCommandRecord.Designer.cs
+?? Migrations/20260804051159_AddAnShengCommandRecord.cs
+?? Models/AnShengCommandRecord.cs
+?? Services/AnShengCommandGuard.cs
+?? Services/AnShengCommandSweepHostedService.cs
+?? Services/Interfaces/IAnShengDownlinkPort.cs
+?? tests/IoTPlatform.AnSheng.Tests/AnShengCommandGuardTests.cs
+?? tests/IoTPlatform.AnSheng.Tests/AnShengDownlinkPortTests.cs
+?? tests/IoTPlatform.AnSheng.Tests/AnShengPendingCommandStoreTests.cs
+?? tests/IoTPlatform.AnSheng.Tests/TestResults/
+?? tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandAcceptanceTests.cs
+?? tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandRecordEndpointTests.cs
+?? tests/IoTPlatform.IntegrationTests/TestResults/

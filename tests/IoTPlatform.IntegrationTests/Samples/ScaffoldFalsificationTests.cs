@@ -8,7 +8,8 @@ using IoTPlatform.Infrastructure.Protocol.Adapters;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using IoTPlatform.IntegrationTests.Infrastructure;
 using IoTPlatform.IntegrationTests.Infrastructure.Auth;
-using IoTPlatform.Services;
+using IoTPlatform.Services.Interfaces;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace IoTPlatform.IntegrationTests.Samples;
@@ -37,26 +38,48 @@ public sealed class ScaffoldFalsificationTests : IntegrationTestBase
     {
     }
 
-    [Fact(DisplayName = "QA-01 两处静态字典被真实污染后，ResetAll() 经生产读 API 观测确实归零")]
-    public void StaticStateResetter_ActuallyEmptiesPollutedDictionaries()
+    [Fact(DisplayName = "QA-01 两处进程级状态被真实污染后，ResetAll() 经生产读 API 观测确实归零")]
+    public void StaticStateResetter_ActuallyEmptiesPollutedState()
     {
+        // 【T7-3 改造说明】
+        //   本用例原先观测的第二处状态是 AnShengCommandService.FrameIdCommandIdMap（静态字典 + 反射清理）。
+        //   T7-3 已将该字典<b>物理删除</b>（实读证实只写不读，生产零 ResolveCommandId 调用点），
+        //   frameId 的在途判定统一收敛到 IAnShengPendingCommandStore。
+        //   为不丢失证伪能力，这里把观测对象平移到「在途命令表」——它同样是进程级 Singleton、
+        //   同样会跨用例泄漏，且同样有生产自己的读 API（IsInFlight / Count）可供观测。
+        //   若有人把 StaticStateResetter.ClearPendingCommands 那步删掉，本用例立刻变红。
+
         // 用与基线 IMEI 不同的值，避免与其它用例的语义纠缠
         const string pollutedImei = "864536072949999";
         const string pollutedFrameId = "QA00000000000001";
-        const string pollutedCommandId = "qa-falsification-command-id";
 
-        // ── Arrange：把两处静态字典真正弄脏，并确认「脏」是可观测的 ──
+        var store = Fixture.Factory.Services.GetRequiredService<IAnShengPendingCommandStore>();
+
+        // ── Arrange：把两处进程级状态真正弄脏，并确认「脏」是可观测的 ──
         // 前置断言不可省：污染若没生效，后面的「已清空」断言就成了永真式，用例失去证伪能力。
         AnShengMqttProtocolAdapter.RegisterDeviceKind(pollutedImei, AnShengDeviceKind.Switch4G);
-        AnShengCommandService.RegisterFrameIdMapping(pollutedFrameId, pollutedCommandId);
+
+        // TTL 取 5 分钟：远大于单个用例耗时，排除「其实是惰性过期把它摘掉的」这一混淆因素。
+        // 若 TTL 太短，即便清理器完全失效用例也会绿，那才是真正危险的假阳性。
+        store.TryRegister(
+                pollutedImei,
+                pollutedFrameId,
+                PendingCommand.Create(
+                    commandId: 0,
+                    imei: pollutedImei,
+                    frameId: pollutedFrameId,
+                    method: "getDevStatus",
+                    ttl: TimeSpan.FromMinutes(5)))
+            .Should().BeTrue("前置条件：在途命令表必须登记成功才谈得上被污染");
 
         AnShengMqttProtocolAdapter.GetDeviceKind(pollutedImei)
             .Should().Be(AnShengDeviceKind.Switch4G, "前置条件：DeviceKinds 必须先被污染");
-        AnShengCommandService.ResolveCommandId(pollutedFrameId)
-            .Should().Be(pollutedCommandId, "前置条件：FrameIdCommandIdMap 必须先被污染");
+        store.IsInFlight(pollutedImei, pollutedFrameId)
+            .Should().BeTrue("前置条件：在途命令表必须先被污染");
 
         // ── Act ──
-        StaticStateResetter.ResetAll();
+        // 必须传 Provider：三处 Singleton 状态都只能经容器取到实例才清得掉。
+        StaticStateResetter.ResetAll(Fixture.Factory.Services);
 
         // ── Assert：不看 LastError，看生产自己的读 API ──
         StaticStateResetter.LastError.Should().BeNull(
@@ -66,11 +89,11 @@ public sealed class ScaffoldFalsificationTests : IntegrationTestBase
             .Should().Be(AnShengDeviceKind.Unknown,
                 "DeviceKinds 必须被真正清空（走生产公开的 ClearDeviceKinds）");
 
-        // 这一条才是反射路径的真正体检：字段名 FrameIdCommandIdMap 一旦漂移，
-        // StaticStateResetter 会记 LastError，但更糟的情况是「找到了字段却清错了对象」——
-        // 那种退化只有从生产读 API 观测才发现得了。
-        AnShengCommandService.ResolveCommandId(pollutedFrameId)
-            .Should().BeNull("FrameIdCommandIdMap 必须被真正清空（反射路径）");
+        // 这一条是「在途表清理」的真正体检：ClearAll 一旦退化成 no-op（或忘了取消等待者），
+        // 残留条目会把下一个用例的自动上报误判成 Response，症状极难归因。
+        store.IsInFlight(pollutedImei, pollutedFrameId)
+            .Should().BeFalse("在途命令表必须被真正清空（IAnShengPendingCommandStore.ClearAll）");
+        store.Count.Should().Be(0, "ClearAll 之后不应残留任何条目，包括尚未被惰性摘除的过期条目");
     }
 
     [Fact(DisplayName = "QA-02 用例级钩子会清掉 GetOrCreateFor 登记的额外分身，而不只是默认分身")]

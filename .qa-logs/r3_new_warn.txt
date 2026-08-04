@@ -1,0 +1,11 @@
+---
+     66 warning CS8766
+     22 warning MSB3277
+     22 warning CS8604
+     18 warning CS8602
+     10 warning CS8600
+     10 warning CS1570
+      8 warning CS8620
+      6 warning CS0067
+      4 warning CS8981
+      4 warning CS8601

@@ -1,0 +1,22 @@
+0
+22
+  IoTPlatform.IntegrationTests -> H:\IoTPlatform\tests\IoTPlatform.IntegrationTests\bin\Debug\net8.0\IoTPlatform.IntegrationTests.dll
+
+已成功生成。
+
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: 发现无法解析的“Microsoft.EntityFrameworkCore.Relational”的不同版本之间存在冲突。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277: “Microsoft.EntityFrameworkCore.Relational, Version=8.0.2.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”与“Microsoft.EntityFrameworkCore.Relational, Version=8.0.11.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”之间存在冲突。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     已选择“Microsoft.EntityFrameworkCore.Relational, Version=8.0.2.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”，因为它是主版本而“Microsoft.EntityFrameworkCore.Relational, Version=8.0.11.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”不是。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于“Microsoft.EntityFrameworkCore.Relational, Version=8.0.2.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”[C:\Users\HEyiz\.nuget\packages\microsoft.entityframeworkcore.relational\8.0.2\lib\net8.0\Microsoft.EntityFrameworkCore.Relational.dll]的引用。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         C:\Users\HEyiz\.nuget\packages\microsoft.entityframeworkcore.relational\8.0.2\lib\net8.0\Microsoft.EntityFrameworkCore.Relational.dll [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“C:\Users\HEyiz\.nuget\packages\microsoft.entityframeworkcore.relational\8.0.2\lib\net8.0\Microsoft.EntityFrameworkCore.Relational.dll”的项目文件项 Include 特性。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             C:\Users\HEyiz\.nuget\packages\microsoft.entityframeworkcore.relational\8.0.2\lib\net8.0\Microsoft.EntityFrameworkCore.Relational.dll [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:     依赖于或已统一到“Microsoft.EntityFrameworkCore.Relational, Version=8.0.11.0, Culture=neutral, PublicKeyToken=adb9793829ddae60”[] 的引用。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:         H:\IoTPlatform\bin\Debug\net8.0\IoTPlatform.dll [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:           导致引用“H:\IoTPlatform\bin\Debug\net8.0\IoTPlatform.dll”的项目文件项 Include 特性。 [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+C:\Program Files\dotnet\sdk\10.0.302\Microsoft.Common.CurrentVersion.targets(2453,5): warning MSB3277:             H:\IoTPlatform\bin\Debug\net8.0\IoTPlatform.dll [H:\IoTPlatform\tests\IoTPlatform.AnSheng.Tests\IoTPlatform.AnSheng.Tests.csproj]
+    1 个警告
+    0 个错误
+
+已用时间 00:00:04.55
+EXIT=0

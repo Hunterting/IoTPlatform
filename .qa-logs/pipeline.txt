@@ -1,0 +1,18 @@
+Infrastructure/Protocol/AnSheng/AnShengMessageRouter.cs:21:///   · <see cref="RouteAsync"/> 在判定之后执行各分支的动作（分发 / 摘在途 / 刷档案）。
+Infrastructure/Protocol/AnSheng/AnShengMessageRouter.cs:25:///   <see cref="AnShengUplinkPipeline"/> 通过 <c>IServiceScopeFactory.CreateScope()</c> 取用。
+Infrastructure/Protocol/AnSheng/AnShengMessageRouter.cs:197:    public async Task<AnShengRouteResult> RouteAsync(
+Infrastructure/Protocol/AnSheng/AnShengMessageRouter.cs:303:    ///   本路由器虽是 Scoped，但它跑在 <c>AnShengUplinkPipeline</c> 用
+Infrastructure/Protocol/AnSheng/AnShengUplinkContext.cs:25:/// 一次上行处理的上下文。由 <see cref="AnShengUplinkPipeline"/> 组装，贯穿 Router 与全部 Handler。
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:45:/// <c>app.Services.GetRequiredService&lt;AnShengUplinkPipeline&gt;()</c>。
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:58:public sealed class AnShengUplinkPipeline : IDisposable
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:61:    private readonly ILogger<AnShengUplinkPipeline> _logger;
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:76:    public AnShengUplinkPipeline(
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:79:        ILogger<AnShengUplinkPipeline> logger)
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:90:        _logger.LogInformation("AnShengUplinkPipeline 已订阅上行总线");
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:185:        await router.RouteAsync(ctx, CancellationToken.None).ConfigureAwait(false);
+Infrastructure/Protocol/AnSheng/AnShengUplinkPipeline.cs:308:        _logger.LogInformation("AnShengUplinkPipeline 已退订上行总线");
+Services/AnShengCommandSweepHostedService.cs:10://   · 搭车 AnShengUplinkPipeline：上行管道是数据面，无上行消息时不转动 —— 设备全离线场景下
+Program.cs:196:builder.Services.AddSingleton<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengUplinkPipeline>();
+Program.cs:446:// ★★★ T6 关键：强制解析 AnShengUplinkPipeline ★★★
+Program.cs:451:// 这是本次改动最容易被误删的一行，删除前请先读 AnShengUplinkPipeline 的类注释。
+Program.cs:452:app.Services.GetRequiredService<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengUplinkPipeline>();

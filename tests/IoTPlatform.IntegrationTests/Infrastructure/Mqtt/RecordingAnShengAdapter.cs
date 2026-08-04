@@ -1,8 +1,10 @@
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Text.Json;
 using IoTPlatform.Infrastructure.Protocol.Adapters;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
+using IoTPlatform.Services.Interfaces;
 
 namespace IoTPlatform.IntegrationTests.Infrastructure.Mqtt;
 
@@ -37,7 +39,7 @@ public sealed record SentCommand(
 ///
 /// 【线程安全】xUnit 集合已禁并行，但事件回调可能在别的线程，故用 ConcurrentQueue 兜底。
 /// </summary>
-public sealed class RecordingAnShengAdapter : IProtocolAdapter
+public sealed class RecordingAnShengAdapter : IProtocolAdapter, IAnShengDownlinkPort
 {
     private const string LegacyWhitelistFieldName = "LegacyMethodWhitelist";
 
@@ -213,6 +215,87 @@ public sealed class RecordingAnShengAdapter : IProtocolAdapter
         }
 
         return Task.FromResult(frameId);
+    }
+
+    /// <inheritdoc />
+    public Task<string> PublishAsync(
+        long deviceId,
+        string imei,
+        string method,
+        IReadOnlyDictionary<string, object?>? parameters,
+        string frameId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // 接口契约（N1）：frameId 必须由调用方预先生成并登记在途，不得为空；
+        // 为空意味着在途表无法与该帧关联，命令必然走到超时兜底，属调用方错误。
+        if (string.IsNullOrWhiteSpace(frameId))
+        {
+            throw new ArgumentException(
+                "frameId 不得为空：下行接缝要求调用方预先生成并已登记在途表。", nameof(frameId));
+        }
+
+        var methodName = method ?? string.Empty;
+
+        // 复刻生产护栏：默认拒绝、显式放行。必须在录制之前判断，
+        // 否则被拒绝的命令仍会进 Sent，破坏「拒绝 ⇒ 零副作用」的断言语义。
+        if (EnforceProtocolWhitelist &&
+            !AnShengCommandCatalog.Contains(methodName) &&
+            !ProductionLegacyWhitelist.Contains(methodName))
+        {
+            throw new NotSupportedException(
+                $"方法 {methodName} 不属于安圣二开协议目录，也不在 Legacy 充电桩白名单内，禁止下发。");
+        }
+
+        // frameId 优先级：入参 > 预置队列 > 自生成（设计 N1）。
+        // 服务走下行接缝时必传非空的 frameId，故正常路径取入参；
+        // 直接调替身且不传时，退化为与 SendCommandAsync 一致的策略（先消耗预置、再自生成）。
+        var effectiveFrameId = !string.IsNullOrWhiteSpace(frameId)
+            ? frameId
+            : (_plannedFrameIds.TryDequeue(out var planned) && !string.IsNullOrWhiteSpace(planned)
+                ? planned
+                : AnShengCommandBuilder.NewFrameId());
+
+        var deviceImei = imei ?? string.Empty;
+
+        // 录制：与 SendCommandAsync 保持同构的快照（含 frameId），供断言。
+        _sent.Enqueue(new SentCommand(
+            deviceId,
+            deviceImei,
+            methodName,
+            SerializeParameters(parameters),
+            effectiveFrameId,
+            DateTime.UtcNow));
+
+        // 自动上行应答：必须在本方法内<b>同步</b>发布（与生产链路「先登记等待者、再下发」一致）。
+        if (_autoUplinkReplies.TryGetValue(methodName, out var factory))
+        {
+            var payload = factory?.Invoke(deviceImei);
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                RaiseAnShengUplink(deviceImei, methodName, payload!);
+            }
+        }
+
+        return Task.FromResult(effectiveFrameId);
+    }
+
+    /// <summary>
+    /// 把参数字典序列化成 JSON 字符串用于录制（与 <see cref="SentCommand.Parameters"/> 形态一致）。
+    /// </summary>
+    private static string SerializeParameters(IReadOnlyDictionary<string, object?>? parameters)
+    {
+        if (parameters is null || parameters.Count == 0) return "{}";
+        try
+        {
+            return JsonSerializer.Serialize(parameters);
+        }
+        catch (NotSupportedException)
+        {
+            // 参数里混入了不可序列化的对象（理论上不该发生）。失败关闭：宁可丢留痕也不能泄漏。
+            return "{}";
+        }
     }
 
     /// <inheritdoc />

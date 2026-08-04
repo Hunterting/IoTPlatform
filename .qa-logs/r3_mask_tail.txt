@@ -1,0 +1,6 @@
+  正在确定要还原的项目…
+  所有项目均是最新的，无法还原。
+  IoTPlatform -> H:\IoTPlatform\bin\Debug\net8.0\IoTPlatform.dll
+H:\IoTPlatform\tests\IoTPlatform.IntegrationTests\AnSheng\AnShengCommandRecordEndpointTests.cs(129,13): error CS0103: 当前上下文中不存在名称“AnShengSecretMasker” [H:\IoTPlatform\tests\IoTPlatform.IntegrationTests\IoTPlatform.IntegrationTests.csproj]
+H:\IoTPlatform\tests\IoTPlatform.IntegrationTests\AnSheng\AnShengCommandRecordEndpointTests.cs(230,13): error CS0103: 当前上下文中不存在名称“AnShengSecretMasker” [H:\IoTPlatform\tests\IoTPlatform.IntegrationTests\IoTPlatform.IntegrationTests.csproj]
+EXIT=1

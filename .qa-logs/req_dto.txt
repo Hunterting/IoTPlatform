@@ -1,0 +1,21 @@
+DTOs/Requests/AnShengRequests.cs:64:public class AnShengCommandRequest
+DTOs/Requests/AnShengRequests.cs-65-{
+DTOs/Requests/AnShengRequests.cs-66-    /// <summary>安圣方法名（如 getDevStatus, setAutoReport, orderStart, orderEnd）</summary>
+DTOs/Requests/AnShengRequests.cs-67-    [Required, MaxLength(50)]
+DTOs/Requests/AnShengRequests.cs-68-    public string Method { get; set; } = string.Empty;
+DTOs/Requests/AnShengRequests.cs-69-
+DTOs/Requests/AnShengRequests.cs-70-    /// <summary>命令参数（可选）</summary>
+DTOs/Requests/AnShengRequests.cs-71-    public Dictionary<string, object?>? Parameters { get; set; }
+DTOs/Requests/AnShengRequests.cs-72-}
+DTOs/Requests/AnShengRequests.cs-73-
+DTOs/Requests/AnShengRequests.cs-74-/// <summary>
+DTOs/Requests/AnShengRequests.cs-75-/// 安圣自动上报配置请求
+DTOs/Requests/AnShengRequests.cs-76-/// </summary>
+DTOs/Requests/AnShengRequests.cs-77-public class AnShengAutoReportRequest
+DTOs/Requests/AnShengRequests.cs-78-{
+DTOs/Requests/AnShengRequests.cs-79-    /// <summary>状态上报间隔（秒）</summary>
+DTOs/Requests/AnShengRequests.cs-80-    public int? GetDevStatusSec { get; set; } = 60;
+DTOs/Requests/AnShengRequests.cs-81-
+DTOs/Requests/AnShengRequests.cs-82-    /// <summary>额外查询参数</summary>
+DTOs/Requests/AnShengRequests.cs-83-    [MaxLength(255)]
+DTOs/Requests/AnShengRequests.cs-84-    public string? GetDevStatusQ { get; set; }

@@ -499,10 +499,12 @@ public class AnShengCommandBuilder
     /// <param name="imei">设备 IMEI。</param>
     /// <param name="method">方法名。</param>
     /// <param name="param">参数对象，可为 null；为 null 或空时不输出 <c>param</c> 字段。</param>
+    /// <param name="frameId">指定 frameId；为 null 时自动生成（T7-2 起支持外部预登记）。</param>
     /// <returns>(FrameId, 压缩后的 JSON 报文)。</returns>
     /// <exception cref="ArgumentException"><paramref name="imei"/> 为空。</exception>
     public (string FrameId, string Payload) BuildLegacyCommand(
-        string imei, string method, IReadOnlyDictionary<string, object?>? param = null)
+        string imei, string method, IReadOnlyDictionary<string, object?>? param = null,
+        string? frameId = null)
     {
         if (string.IsNullOrWhiteSpace(imei))
         {
@@ -519,7 +521,7 @@ public class AnShengCommandBuilder
             }
         }
 
-        return BuildLegacy(imei, method, copy);
+        return BuildLegacy(imei, method, copy, frameId);
     }
 
     /// <summary>
@@ -528,16 +530,21 @@ public class AnShengCommandBuilder
     /// <param name="imei">设备 IMEI。</param>
     /// <param name="method">方法名。</param>
     /// <param name="param">参数对象（会被包裹进 <c>param</c>）。</param>
+    /// <param name="frameId">
+    /// 指定 frameId；为 null 时自动生成。
+    /// T7-2 起下发可走「先登记在途、后发 MQTT」，此时 frameId 由调用方预先生成并登记，
+    /// 这里<b>必须</b>沿用它——若仍自生成，登记的 key 与实际报文对不上，命令必然走到超时兜底。
+    /// </param>
     /// <returns>(FrameId, JSON 报文)。</returns>
     private (string FrameId, string Payload) BuildLegacy(
-        string imei, string method, Dictionary<string, object?> param)
+        string imei, string method, Dictionary<string, object?> param, string? frameId = null)
     {
-        var frameId = NewFrameId();
+        var actualFrameId = string.IsNullOrWhiteSpace(frameId) ? NewFrameId() : frameId;
         var command = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["method"] = method,
             ["imei"] = imei,
-            ["frameId"] = frameId,
+            ["frameId"] = actualFrameId,
             ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
         };
 
@@ -548,7 +555,7 @@ public class AnShengCommandBuilder
 
         var payload = JsonSerializer.Serialize(command, MinifiedJson);
         _logger?.LogDebug("构建 Legacy 充电桩命令: Method={Method}, IMEI={IMEI}, FrameId={FrameId}",
-            method, imei, frameId);
-        return (frameId, payload);
+            method, imei, actualFrameId);
+        return (actualFrameId, payload);
     }
 }

@@ -1,0 +1,300 @@
+%% T7 命令服务重构 - 数据结构与接口类图
+%% 来源: t7-command-refactor-design.md §3.1
+
+classDiagram
+    %% ───────── 控制器与服务 ─────────
+    class AnShengController {
+        <<Controller, api/v1/ansheng>>
+        -IAnShengCommandService _commandService
+        -IAnShengCommandQueryService _query
+        +Task~IActionResult~ SendCommand(long deviceId, SendAnShengCommandRequest req)
+        +Task~IActionResult~ GetCatalog(long? deviceId)
+        +Task~IActionResult~ GetProfile(long deviceId)
+        +Task~IActionResult~ GetCommand(string commandId)
+    }
+
+    class IAnShengCommandService {
+        <<interface>>
+        +Task~AnShengCommandResponse~ SendCommandAsync(long deviceId, string method, IDictionary~string,object~ parameters, string? commandId, CancellationToken ct)
+        +Task~AnShengCommandResponse~ ConfigureAutoReportAsync(long deviceId, ...)
+        +Task~AnShengCommandResponse~ TriggerDiscoveryAsync(...)
+        +Task~AnShengCommandResponse~ RebootDeviceAsync(long deviceId, CancellationToken ct)
+    }
+
+    class AnShengCommandService {
+        -AppDbContext _db
+        -IProtocolAdapterFactory _adapterFactory
+        -IAnShengDeviceProfileService _profiles
+        -AnShengCommandGuard _guard
+        -IAnShengPendingCommandStore _pending
+        -AnShengCommandOptions _options
+        -ILogger _logger
+        +Task~AnShengCommandResponse~ SendCommandAsync(...)
+        -Task~AnShengCommandRecord~ CreateRecordAsync(...)
+        -Task PersistRejectionAsync(AnShengCommandDecision d)
+        -TimeSpan ResolveTtl(string method)
+    }
+
+    class AnShengCommandResponse {
+        +bool Success
+        +string CommandId
+        +string? FrameId
+        +string? Payload
+        +DateTime SentAt
+        +AnShengCommandRejectReason? RejectReason
+        +IReadOnlyList~string~ Errors
+        +string? RequiredFirmware
+    }
+
+    %% ───────── 校验管线 ─────────
+    class AnShengCommandGuard {
+        <<Scoped>>
+        -AnShengCommandOptions _options
+        -ILogger _logger
+        +AnShengCommandDecision Evaluate(AnShengCommandContext ctx)
+        -AnShengCommandDecision CheckMethodKnown(ctx)
+        -AnShengCommandDecision CheckKind(ctx)
+        -AnShengCommandDecision CheckParams(ctx)
+        -AnShengCommandDecision CheckSlotRange(ctx)
+        -AnShengCommandDecision CheckFirmware(ctx)
+    }
+
+    class AnShengCommandContext {
+        +long DeviceId
+        +string Imei
+        +string Method
+        +IReadOnlyDictionary~string,object~ Parameters
+        +AnShengDeviceKind Kind
+        +string? Firmware
+        +int? SlotAmount
+        +bool KindFromProfile
+    }
+
+    class AnShengCommandDecision {
+        +bool Allowed
+        +AnShengCommandRejectReason? Reason
+        +IReadOnlyList~string~ Errors
+        +string? RequiredFirmware
+        +AnShengCommandSpec? Spec
+        +Allow(spec)$ AnShengCommandDecision
+        +Reject(reason, errors)$ AnShengCommandDecision
+    }
+
+    class AnShengSecretMasker {
+        <<static>>
+        +string MaskRequest(string method, IReadOnlyDictionary~string,object~ parameters)
+        +string? MaskResponse(string method, string? json)
+        -bool IsSecret(string method, string paramName)
+    }
+
+    %% ───────── 协议目录（既有，T7 小幅增强）─────────
+    class AnShengCommandCatalog {
+        <<static>>
+        +int Count  36
+        +bool TryGet(string method, out AnShengCommandSpec? spec)$
+        +bool Contains(string method)$
+        +IReadOnlyCollection~AnShengCommandSpec~ All()$
+    }
+
+    class AnShengCommandSpec {
+        +string Method
+        +string Group
+        +string Description
+        +bool IsEvent
+        +bool IsBeta
+        +string? MinFirmware
+        +AnShengDeviceCapability SupportedKinds
+        +IReadOnlyList~AnShengParamSpec~ Parameters
+        +bool IsSupportedBy(AnShengDeviceKind kind)
+        +bool ValidateParams(parameters, firmware, allowUnknown, out IReadOnlyList~AnShengParamViolation~ violations)
+    }
+
+    class AnShengParamSpec {
+        +string Name
+        +bool Required
+        +AnShengParamType Type
+        +string? MinFirmware
+        +bool IsSecret
+        +IReadOnlyList~string~? AllowedValues
+        +double? Minimum
+        +double? Maximum
+        +bool Validate(object? value, out AnShengParamViolation? violation)
+    }
+
+    class AnShengParamViolation {
+        <<record>>
+        +string ParamName
+        +AnShengViolationKind Kind
+        +string Message
+        +string? MinFirmware
+    }
+
+    %% ───────── 在途表（T6 建 / T7 增强）─────────
+    class IAnShengPendingCommandStore {
+        <<interface, Singleton>>
+        +int Count
+        +bool TryRegister(string imei, string frameId, PendingCommand cmd)
+        +Task~AnShengPendingRegistration~ RegisterAsync(string imei, string frameId, PendingCommand cmd)
+        +bool IsInFlight(string imei, string frameId)
+        +Task~PendingCommand?~ CompleteAsync(string imei, string frameId, AnShengMessage? response)
+        +Task~int~ SweepExpiredAsync(CancellationToken ct)
+        +Task~IReadOnlyList~PendingCommand~~ SweepExpiredAsync(DateTime nowUtc, CancellationToken ct)
+        +void ClearAll()
+        +string BuildKey(string imei, string frameId)$
+    }
+
+    class AnShengPendingCommandStore {
+        -ConcurrentDictionary~string,PendingEntry~ _inFlight
+        -ILogger _logger
+        +... 实现全部接口成员
+    }
+
+    class PendingEntry {
+        -PendingCommand Command
+        -TaskCompletionSource~AnShengMessage?~ Completion
+    }
+
+    class PendingCommand {
+        <<record>>
+        +long CommandId
+        +string Imei
+        +string FrameId
+        +string Method
+        +DateTime SentAt
+        +DateTime ExpiresAt
+        +bool IsExpired
+        +Create(commandId, imei, frameId, method, ttl)$ PendingCommand
+    }
+
+    class AnShengPendingRegistration {
+        +string Imei
+        +string FrameId
+        +bool Registered
+        +Task~AnShengMessage?~ Completion
+        +Task~AnShengMessage?~ WaitAsync(TimeSpan timeout, CancellationToken ct)
+    }
+
+    %% ───────── 下行接缝 ─────────
+    class IAnShengDownlinkPort {
+        <<interface>>
+        +Task~string~ PublishAsync(long deviceId, string imei, string method, IReadOnlyDictionary~string,object~ parameters, string frameId, CancellationToken ct)
+    }
+
+    class AnShengMqttProtocolAdapter {
+        <<IProtocolAdapter, IAnShengDownlinkPort>>
+        +Task~string~ SendCommandAsync(long, string, string, string, CancellationToken)
+        +Task~string~ PublishAsync(..., string frameId, ...)
+        -Task~string~ BuildAndPublishAsync(imei, method, flatParams, kind, frameId, ct)
+    }
+
+    class RecordingAnShengAdapter {
+        <<TestDouble, IProtocolAdapter, IAnShengDownlinkPort>>
+        +IReadOnlyList~SentCommand~ Sent
+    }
+
+    %% ───────── 持久化 ─────────
+    class AnShengCommandRecord {
+        <<Entity, IHasAppCode>>
+        +long Id
+        +string AppCode
+        +string CommandId
+        +long? DeviceId
+        +string Imei
+        +string Method
+        +string? FrameId
+        +AnShengCommandStatus Status
+        +AnShengCommandRejectReason? RejectReason
+        +string RequestJson
+        +string? ResponseJson
+        +string? ErrorCode
+        +string? ErrorMessage
+        +DateTime IssuedAt
+        +DateTime? SentAt
+        +DateTime? CompletedAt
+        +DateTime? TimeoutAt
+        +int? DurationMs
+        +long? OperatorUserId
+    }
+
+    class AnShengCommandStatus {
+        <<enum int>>
+        Pending 0
+        Sent 1
+        Succeeded 2
+        Failed 3
+        Timeout 4
+        Rejected 5
+    }
+
+    class AnShengCommandRejectReason {
+        <<enum int>>
+        RejectedByKind 0
+        RejectedByValidation 1
+        RejectedByFirmware 2
+        RejectedByOffline 3
+        RejectedByUnknownMethod 4
+        RejectedByConfirm 5
+    }
+
+    %% ───────── 后台与上行 ─────────
+    class AnShengCommandSweepHostedService {
+        <<BackgroundService>>
+        -IServiceScopeFactory _scopeFactory
+        -IAnShengPendingCommandStore _store
+        -AnShengCommandOptions _options
+        #Task ExecuteAsync(CancellationToken ct)
+        -Task SweepOnceAsync(CancellationToken ct)
+    }
+
+    class AnShengMessageRouter {
+        <<Scoped>>
+        -IAnShengPendingCommandStore _pendingStore
+        -AppDbContext _db
+        -Task HandleResponseAsync(ctx, result, ct)
+        -Task CompleteRecordAsync(PendingCommand cmd, AnShengMessage? msg, ct)
+    }
+
+    class AnShengCommandOptions {
+        +int DefaultTimeoutSeconds  30
+        +int LongRunningTimeoutSeconds  60
+        +int SweepIntervalSeconds  5
+        +bool SweepEnabled  true
+        +bool RejectWhenKindUnknown  false
+        +int RecordRetentionDays  90
+    }
+
+    %% ───────── 关系 ─────────
+    IAnShengCommandService <|.. AnShengCommandService
+    AnShengController ..> IAnShengCommandService : 下发/查询
+    AnShengController ..> AnShengCommandCatalog : GET /catalog
+    AnShengCommandService ..> AnShengCommandResponse : 返回
+    AnShengCommandService *-- AnShengCommandGuard : 单点校验
+    AnShengCommandService o-- IAnShengPendingCommandStore : 先登记
+    AnShengCommandService ..> IAnShengDownlinkPort : 后下发
+    AnShengCommandService ..> AnShengCommandRecord : 落库
+    AnShengCommandService o-- AnShengCommandOptions
+
+    AnShengCommandGuard ..> AnShengCommandContext : 输入
+    AnShengCommandGuard ..> AnShengCommandDecision : 输出
+    AnShengCommandGuard ..> AnShengCommandCatalog : 查 spec
+    AnShengCommandGuard ..> AnShengSecretMasker
+    AnShengCommandCatalog *-- AnShengCommandSpec : 36 条
+    AnShengCommandSpec *-- AnShengParamSpec
+    AnShengCommandSpec ..> AnShengParamViolation : 产出
+    AnShengParamSpec ..> AnShengParamViolation
+
+    IAnShengPendingCommandStore <|.. AnShengPendingCommandStore
+    AnShengPendingCommandStore *-- PendingEntry
+    PendingEntry *-- PendingCommand
+    IAnShengPendingCommandStore ..> AnShengPendingRegistration : RegisterAsync 返回
+
+    IAnShengDownlinkPort <|.. AnShengMqttProtocolAdapter
+    IAnShengDownlinkPort <|.. RecordingAnShengAdapter
+
+    AnShengCommandRecord *-- AnShengCommandStatus
+    AnShengCommandRecord *-- AnShengCommandRejectReason
+
+    AnShengCommandSweepHostedService o-- IAnShengPendingCommandStore : 旁路清扫
+    AnShengCommandSweepHostedService ..> AnShengCommandRecord : 置 Timeout
+    AnShengMessageRouter o-- IAnShengPendingCommandStore : CompleteAsync
+    AnShengMessageRouter ..> AnShengCommandRecord : 置 Succeeded/Failed

@@ -220,6 +220,101 @@ namespace IoTPlatform.Migrations
                     b.ToTable("alert_records");
                 });
 
+            modelBuilder.Entity("IoTPlatform.Models.AnShengCommandRecord", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AppCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<string>("CommandId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("varchar(36)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("DeviceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(512)
+                        .HasColumnType("varchar(512)");
+
+                    b.Property<string>("FrameId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Imei")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime>("IssuedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<long?>("OperatorUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("RejectReason")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RequestJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResponseJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("TimeoutAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommandId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AnShengCommandRecords_CommandId");
+
+                    b.HasIndex("AppCode", "IssuedAt")
+                        .HasDatabaseName("IX_AnShengCommandRecords_AppCode_IssuedAt");
+
+                    b.HasIndex("DeviceId", "IssuedAt")
+                        .HasDatabaseName("IX_AnShengCommandRecords_DeviceId_IssuedAt");
+
+                    b.HasIndex("Imei", "FrameId")
+                        .HasDatabaseName("IX_AnShengCommandRecords_Imei_FrameId");
+
+                    b.HasIndex("Status", "TimeoutAt")
+                        .HasDatabaseName("IX_AnShengCommandRecords_Status_TimeoutAt");
+
+                    b.ToTable("AnShengCommandRecords");
+                });
+
             modelBuilder.Entity("IoTPlatform.Models.AnShengDeviceConfig", b =>
                 {
                     b.Property<long>("Id")

@@ -1,0 +1,46 @@
+124-    /// <summary>
+125-    /// 未找到（404）
+126-    /// </summary>
+127:    public static ApiResponse<T> NotFound(string message = "资源不存在")
+128-    {
+129-        return Fail(404, message);
+130-    }
+131-
+132-    /// <summary>
+133-    /// 未找到（404，带失败上下文数据）。
+134-    /// </summary>
+135-    /// <param name="message">面向人的描述。</param>
+136-    /// <param name="data">失败上下文数据。</param>
+137-    /// <returns>失败响应。</returns>
+138:    public static ApiResponse<T> NotFound(string message, T data)
+139-    {
+140-        return Fail(404, message, data);
+141-    }
+142-
+143-    /// <summary>
+144-    /// 服务器错误（500）
+145-    /// </summary>
+146-    public static ApiResponse<T> Error(string message = "服务器内部错误")
+147-    {
+148-        return Fail(500, message);
+149-    }
+150-
+151-    /// <summary>
+152-    /// 服务器错误（500，带失败上下文数据）。
+153-    /// </summary>
+154-    /// <param name="message">面向人的描述。</param>
+155-    /// <param name="data">失败上下文数据。</param>
+156-    /// <returns>失败响应。</returns>
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengClaimTests.cs:77:        response.StatusCode.Should().Be(HttpStatusCode.OK);
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengClaimTests.cs:174:        response.StatusCode.Should().Be(HttpStatusCode.OK, "全站 ApiResponse 约定：业务失败不改 HTTP 码");
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandAcceptanceTests.cs:149:        response.StatusCode.Should().Be(HttpStatusCode.OK);
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandAcceptanceTests.cs:291:            response.StatusCode.Should().Be(HttpStatusCode.OK, $"第 {i + 1} 条下发失败");
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandRecordEndpointTests.cs:189:        sendResponse.StatusCode.Should().Be(HttpStatusCode.OK, $"实际响应：{Truncate(sendBody)}");
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandRecordEndpointTests.cs:214:        recordResponse.StatusCode.Should().Be(HttpStatusCode.OK, $"实际响应：{Truncate(recordBody)}");
+tests/IoTPlatform.IntegrationTests/AnSheng/AnShengCommandRecordEndpointTests.cs:272:            HttpStatusCode.NotFound,
+tests/IoTPlatform.IntegrationTests/Samples/CommandDispatchSampleTests.cs:55:        response.StatusCode.Should().Be(HttpStatusCode.OK);
+tests/IoTPlatform.IntegrationTests/Samples/CommandDispatchSampleTests.cs:101:        response.StatusCode.Should().Be(HttpStatusCode.OK);
+tests/IoTPlatform.IntegrationTests/Samples/CommandDispatchSampleTests.cs:187:        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+tests/IoTPlatform.IntegrationTests/Samples/SampleEndpointTests.cs:55:        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized,
+tests/IoTPlatform.IntegrationTests/Samples/SampleEndpointTests.cs:72:        response.StatusCode.Should().Be(HttpStatusCode.OK);
+tests/IoTPlatform.IntegrationTests/Samples/ScaffoldFalsificationTests.cs:180:        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);

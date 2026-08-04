@@ -1,0 +1,5 @@
+46:    protected SeedResult Seed =>
+50:    protected RecordingAnShengAdapter Adapter => Fixture.Adapter;
+112:    /// var count = await QueryDbAsync(db => db.Devices.CountAsync());
+115:    protected async Task<T> QueryDbAsync<T>(Func<AppDbContext, Task<T>> query)
+127:    protected async Task ExecuteDbAsync(Func<AppDbContext, Task> action)

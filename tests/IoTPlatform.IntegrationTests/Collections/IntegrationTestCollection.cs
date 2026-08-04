@@ -8,7 +8,8 @@ namespace IoTPlatform.IntegrationTests.Collections;
 /// （= 一个一次性 MySQL schema + 一个 TestServer）。
 ///
 /// 【为什么禁用并行】三重共享状态：
-///   1. 生产侧静态字典（<c>AnShengMqttProtocolAdapter.DeviceKinds</c> / <c>AnShengCommandService.FrameIdCommandIdMap</c>）；
+///   1. 生产侧进程级状态（静态字典 <c>AnShengMqttProtocolAdapter.DeviceKinds</c>，
+///      以及 Singleton 的 <c>IAnShengPendingCommandStore</c> 在途命令表 / 探测在途表 / 离线去抖窗口）；
 ///   2. 单一测试 schema（Respawn 清库是全库级操作）；
 ///   3. EF 模型缓存会冻结租户过滤器的 AppCode。
 /// 另见 <c>xunit.runner.json</c> 的 <c>parallelizeTestCollections: false</c>。

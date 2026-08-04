@@ -4,8 +4,10 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.Data;
+using IoTPlatform.Models;
 using IoTPlatform.Services;
 using IoTPlatform.Services.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace IoTPlatform.Infrastructure.Protocol.AnSheng;
@@ -47,6 +49,19 @@ public sealed class AnShengMessageRouter
     ///   路由层只需要「哪个方法带能力快照」这一条本地知识，就地声明即可。
     /// </summary>
     public const string MethodGetDevStatus = "getDevStatus";
+
+    /// <summary>
+    /// 设备应答缺少 <c>result</c> 字段时写入的错误码（T7-4）。
+    ///
+    /// 单列一个常量而不是复用设备原文，是为了让运维能按码聚合出「哪些固件在违反协议」，
+    /// 而不用去 <c>LIKE '%result%'</c> 匹配自由文本。
+    /// </summary>
+    public const string MissingResultErrorCode = "NO_RESULT";
+
+    /// <summary>
+    /// <c>AnShengCommandRecord.ErrorCode</c> 的列长上限，落库前按它截断设备回包的 <c>result</c>。
+    /// </summary>
+    private const int ErrorCodeMaxLength = 64;
 
     /// <summary>
     /// 软事件白名单（T6 新增，决策 4）。
@@ -242,10 +257,16 @@ public sealed class AnShengMessageRouter
     }
 
     /// <summary>
-    /// Response 分支：摘除在途条目；若报文是有效状态快照，顺带刷新档案。
+    /// Response 分支：摘除在途条目 → <b>回填命令记录终态</b> → 若报文是有效状态快照顺带刷档案。
     ///
     /// 【为什么应答也要刷档案】<c>getDevStatus</c> 的应答与自动上报是<b>同一份</b>状态数据，
     /// 只是触发方式不同。只在自动上报时刷档案，会让「刚探测过的设备档案反而更旧」。
+    ///
+    /// 【回填必须在摘除成功之后】<see cref="IAnShengPendingCommandStore.CompleteAsync"/> 返回
+    /// 非 null 才代表本次调用<b>赢得了 CAS</b>（<c>ConcurrentDictionary.TryRemove</c>）。
+    /// 返回 null 时条目已被超时清扫宿主摘走 —— 那条记录的终态归它写（<c>Timeout</c>），
+    /// 本方法此时若还去写 <c>Succeeded</c>，就会把「已判超时」的命令改写成成功，
+    /// 破坏 T7 §7 的「终态只由一个组件写」不变式。
     /// </summary>
     /// <param name="ctx">上行上下文。</param>
     /// <param name="result">判定结果。</param>
@@ -264,9 +285,163 @@ public sealed class AnShengMessageRouter
             _logger.LogDebug(
                 "[AnShengRouter] 应答关联 {Imei} frameId={FrameId} matched={Matched}",
                 ctx.Imei, result.FrameId, completed != null);
+
+            if (completed != null)
+            {
+                await BackfillCommandRecordAsync(completed, ctx, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await RefreshProfileAsync(ctx, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 把设备应答回填进 <see cref="AnShengCommandRecord"/>，写入终态
+    /// <see cref="AnShengCommandStatus.Succeeded"/> / <see cref="AnShengCommandStatus.Failed"/>（T7-4）。
+    ///
+    /// 【AppCode 陷阱 —— 与清扫宿主同源的坑（T6 §7.2）】
+    ///   本路由器虽是 Scoped，但它跑在 <c>AnShengUplinkPipeline</c> 用
+    ///   <c>IServiceScopeFactory.CreateScope()</c> 造出来的<b>后台作用域</b>里，没有 HTTP 上下文 ⇒
+    ///   <c>ITenantContextAccessor.Current</c> 为 null ⇒ <c>AppDbContext</c> 的全局租户过滤器
+    ///   会把所有行都滤掉，普通查询<b>一行都查不到</b>（表现为「应答收到了但记录永远是 Sent」）。
+    ///   故这里与 <c>AnShengCommandSweepHostedService</c> 一样：
+    ///   <c>IgnoreQueryFilters()</c> + <b>按主键 <c>RecordId</c> 定位</b>。
+    ///   主键定位天然跨租户安全 —— RecordId 是我们下发时自己写进在途表的，不来自设备。
+    ///
+    /// 【幂等：只更新 <c>Status IN (Pending, Sent)</c>】（设计文档 T7-4 要点 3）
+    ///   设备重发应答、或人工干预已置过终态时，这道判定保证不会把 <c>Timeout</c> 改回
+    ///   <c>Succeeded</c>。CAS 已经挡掉了绝大多数并发，这里是纵深防御。
+    ///
+    /// 【异常一律吞掉】回填失败不得冒泡：它会打断 <see cref="RefreshProfileAsync"/>，
+    ///   进而让整条上行管道对该报文的处理半途而废。记录停在 Sent 由超时清扫兜底。
+    /// </summary>
+    /// <param name="completed">刚被摘除的在途条目（携带 <c>RecordId</c>）。</param>
+    /// <param name="ctx">上行上下文，取应答原文与成败判据。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    private async Task BackfillCommandRecordAsync(
+        PendingCommand completed,
+        AnShengUplinkContext ctx,
+        CancellationToken cancellationToken)
+    {
+        if (completed.RecordId <= 0)
+        {
+            // T6 遗留调用与纯内存单测登记的条目没有库记录，跳过是正常路径而非异常。
+            _logger.LogDebug(
+                "[AnShengRouter] 在途条目 {Imei}:{FrameId} 无 RecordId，跳过记录回填（未落库的登记）。",
+                completed.Imei, completed.FrameId);
+            return;
+        }
+
+        try
+        {
+            var record = await _db.AnShengCommandRecords
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(r => r.Id == completed.RecordId, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (record == null)
+            {
+                _logger.LogWarning(
+                    "[AnShengRouter] 找不到命令记录 Id={RecordId}（{Imei}:{FrameId}），跳过回填。",
+                    completed.RecordId, completed.Imei, completed.FrameId);
+                return;
+            }
+
+            if (record.Status != AnShengCommandStatus.Pending &&
+                record.Status != AnShengCommandStatus.Sent)
+            {
+                _logger.LogDebug(
+                    "[AnShengRouter] 记录 Id={RecordId} 已是终态 {Status}，跳过回填（终态互斥）。",
+                    record.Id, record.Status);
+                return;
+            }
+
+            var message = ctx.Message;
+            var succeeded = message != null && message.IsOk;
+            var now = DateTime.UtcNow;
+
+            record.Status = succeeded ? AnShengCommandStatus.Succeeded : AnShengCommandStatus.Failed;
+            record.CompletedAt = now;
+            record.DurationMs = ComputeDurationMs(record.SentAt ?? completed.SentAt, now);
+
+            // ★ 掩码集以「我方下发的 method」（record.Method）为准，而不是设备回包自称的 ctx.Method：
+            //   否则设备只要在应答里谎报一个无敏感字段的 method，就能让口令绕过掩码原样落库。
+            //   敏感性是命令语义决定的，不该由对端自述决定。
+            record.ResponseJson = AnShengCommandRecord.TruncateJson(
+                AnShengSecretMasker.MaskResponseJson(record.Method, message?.RawJson));
+
+            if (!succeeded)
+            {
+                record.ErrorCode = NormalizeDeviceErrorCode(message?.Result);
+                record.ErrorMessage = AnShengCommandRecord.TruncateErrorMessage(
+                    $"设备应答失败：result={(string.IsNullOrWhiteSpace(message?.Result) ? "(缺失)" : message!.Result)}" +
+                    $"（method={record.Method}，frameId={completed.FrameId}）");
+            }
+
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "[AnShengRouter] 命令记录回填完成 Id={RecordId} {Imei} {Method} => {Status}，耗时 {Duration}ms。",
+                record.Id, record.Imei, record.Method, record.Status, record.DurationMs);
+        }
+        catch (Exception ex)
+        {
+            // 回填失败绝不冒泡：条目已从在途表摘除，记录会停在 Sent，
+            // 由「Status=Sent 且 TimeoutAt < now」的运维巡检兜底（风险 R6）。
+            _logger.LogError(ex,
+                "[AnShengRouter] 回填命令记录失败 RecordId={RecordId} imei={Imei} frameId={FrameId}",
+                completed.RecordId, completed.Imei, completed.FrameId);
+        }
+    }
+
+    /// <summary>
+    /// 把设备回包的 <c>result</c> 归一化成可落库的机器可读错误码。
+    ///
+    /// 【为什么不直接存原文】<c>AnShengCommandRecord.ErrorCode</c> 列长 64；
+    /// 而 <c>result</c> 来自设备，长度不可信（异常固件可能回几 KB 的堆栈）。
+    ///
+    /// 【为什么 result 缺失也算失败】协议规定下行命令的应答<b>必带</b> <c>result</c>
+    /// （目录里 <c>ResultOk</c> / <c>ResultUnsupported</c> 就是它的取值）。
+    /// 缺失属于协议违例，静默判成功会把「设备行为异常」永久隐藏；
+    /// 判 Failed 并给出专用错误码 <c>NO_RESULT</c>，运维一眼可辨、可按码聚合告警。
+    /// </summary>
+    /// <param name="result">设备回包的 <c>result</c> 字段，可为 null。</param>
+    /// <returns>不超过 64 字符的错误码。</returns>
+    private static string NormalizeDeviceErrorCode(string? result)
+    {
+        if (string.IsNullOrWhiteSpace(result))
+        {
+            return MissingResultErrorCode;
+        }
+
+        var trimmed = result.Trim();
+        return trimmed.Length <= ErrorCodeMaxLength ? trimmed : trimmed[..ErrorCodeMaxLength];
+    }
+
+    /// <summary>
+    /// 计算往返耗时（毫秒）。
+    ///
+    /// 与 <c>AnShengCommandSweepHostedService.ComputeDurationMs</c> 同口径：
+    /// 时钟回拨造成的负值钳到 0，溢出钳到 <see cref="int.MaxValue"/>，
+    /// 避免出现「耗时 -3 毫秒」这类让人怀疑数据可信度的值。
+    /// </summary>
+    /// <param name="sentAt">发布时刻（UTC），可为 null。</param>
+    /// <param name="completedAt">终态时刻（UTC）。</param>
+    /// <returns>毫秒数；无法计算时为 null。</returns>
+    private static int? ComputeDurationMs(DateTime? sentAt, DateTime completedAt)
+    {
+        if (sentAt == null)
+        {
+            return null;
+        }
+
+        var ms = (completedAt - sentAt.Value).TotalMilliseconds;
+        if (ms < 0)
+        {
+            return 0;
+        }
+
+        return ms > int.MaxValue ? int.MaxValue : (int)ms;
     }
 
     /// <summary>

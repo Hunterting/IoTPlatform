@@ -1,0 +1,2 @@
+./Services/AnShengCommandGuard.cs:571:public static class AnShengSecretMasker
+./tests/IoTPlatform.AnSheng.Tests/AnShengCommandGuardTests.cs:334:public class AnShengSecretMaskerTests

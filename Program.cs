@@ -135,6 +135,28 @@ builder.Services.AddScoped<IoTPlatform.Services.IDeviceCommandService, IoTPlatfo
 // 安圣 MQTT 命令服务
 builder.Services.AddScoped<IoTPlatform.Services.IAnShengCommandService, IoTPlatform.Services.AnShengCommandService>();
 
+// ───────────────────────────────────────────────────────────────────────────
+// T7 命令服务重构：配置 / 校验闸门 / 超时清扫宿主
+//
+// ★ 这三行缺一，AnShengController 的<b>全部</b>端点都会在首个请求时抛
+//   InvalidOperationException（Unable to resolve service for type ...）。
+//   注意它<b>不会</b>在启动时暴露：本项目未开启 ValidateOnBuild / ValidateScopes，
+//   .NET 的 DI 图是惰性校验的 —— 「dotnet run 起得来」不等于「接线接对了」。
+//   这正是 QA Round 1 的 P0-1：编译零错误、单测全绿，运行期整片 500。
+//
+// 生命周期理由：
+//   · AnShengCommandOptions —— Options 模式，与 Probe/Event 两处保持同一范式；
+//   · AnShengCommandGuard   —— Scoped。本身无状态（纯函数、零字段），
+//       选 Scoped 而非 Singleton 是为了与唯一消费方 AnShengCommandService 同域，
+//       将来若需注入租户/审计上下文不必改注册（见 Guard 类注释）；
+//   · SweepHostedService    —— Hosted（进程级单例）。它经 IServiceScopeFactory
+//       自建 scope 取 AppDbContext，构造函数里绝不可直接注入任何 Scoped 服务。
+// ───────────────────────────────────────────────────────────────────────────
+builder.Services.Configure<IoTPlatform.Configuration.AnShengCommandOptions>(
+    builder.Configuration.GetSection(IoTPlatform.Configuration.AnShengCommandOptions.SectionName));
+builder.Services.AddScoped<IoTPlatform.Services.AnShengCommandGuard>();
+builder.Services.AddHostedService<IoTPlatform.Services.AnShengCommandSweepHostedService>();
+
 // 安圣设备能力档案服务（Scoped：内部持有 AppDbContext，不可被 Singleton 构造注入）
 builder.Services.AddScoped<IoTPlatform.Services.IAnShengDeviceProfileService, IoTPlatform.Services.AnShengDeviceProfileService>();
 

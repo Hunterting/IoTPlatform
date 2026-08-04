@@ -1,0 +1,14 @@
+Services/AnShengCommandService.cs:4://   1. 删除 R1 静态字典 FrameIdCommandIdMap 及其三个静态方法。
+Services/AnShengCommandService.cs:5://      实读证实它<b>只写不读</b>（生产代码零 ResolveCommandId 调用点），
+Services/AnShengCommandService.cs:601:    // 原有的 static ConcurrentDictionary<string,string> FrameIdCommandIdMap 及
+Services/AnShengCommandService.cs:602:    // RegisterFrameIdMapping / ResolveCommandId / RemoveFrameIdMapping 三个静态方法已物理删除。
+Services/AnShengCommandService.cs:604:    // 删除依据：全仓检索证实生产代码中<b>零</b> ResolveCommandId 调用点 —— 它只被写入、从不被读取，
+Services/Interfaces/IAnShengCommandService.cs:29:    /// <c>FrameIdCommandIdMap</c>）。传 null 时由本服务自行生成。
+Models/AnShengCommandRecord.cs:112:///   由 <c>DeviceCommandService</c> 透传。这是取代 R1 静态 <c>FrameIdCommandIdMap</c> 的持久化软关联，
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:20:///   原 <c>AnShengCommandService.FrameIdCommandIdMap</c>（frameId → commandId 静态字典）
+tests/IoTPlatform.IntegrationTests/Infrastructure/StaticStateResetter.cs:21:///   在 T7-3 被<b>物理删除</b>：实读证实它只写不读，生产代码零 <c>ResolveCommandId</c> 调用点。
+tests/IoTPlatform.IntegrationTests/Samples/SampleEndpointTests.cs:113:        // （T7-3 已删除 AnShengCommandService.FrameIdCommandIdMap，反射清理路径随之下线。）
+tests/IoTPlatform.IntegrationTests/Samples/ScaffoldFalsificationTests.cs:45:        //   本用例原先观测的第二处状态是 AnShengCommandService.FrameIdCommandIdMap（静态字典 + 反射清理）。
+tests/IoTPlatform.IntegrationTests/Samples/ScaffoldFalsificationTests.cs:46:        //   T7-3 已将该字典<b>物理删除</b>（实读证实只写不读，生产零 ResolveCommandId 调用点），
+---count---
+13

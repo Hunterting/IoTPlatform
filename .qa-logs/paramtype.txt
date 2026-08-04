@@ -1,0 +1,18 @@
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:9:public enum AnShengParamType
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:43:    public AnShengParamType Type { get; init; } = AnShengParamType.String;
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:51:    /// <summary>允许的枚举值集合；为 null 表示不做枚举校验。仅对 <see cref="AnShengParamType.String"/> 生效。</summary>
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:71:    /// 当本参数是 <see cref="AnShengParamType.Object"/> 时，其对象<b>内部</b>需要掩码的字段名集合。
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:100:        AnShengParamType type,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:183:        if (AllowedValues is { Count: > 0 } && Type == AnShengParamType.String)
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:230:            AnShengParamType.String => value is string,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:231:            AnShengParamType.Int => value is sbyte or byte or short or ushort or int or uint or long or ulong,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:232:            AnShengParamType.Double => value is float or double or decimal
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:234:            AnShengParamType.Bool => value is bool,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:235:            AnShengParamType.Array => value is IEnumerable and not string,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:236:            AnShengParamType.Object => value is not string && value is not IEnumerable && !IsPrimitive(value),
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:245:            AnShengParamType.String => element.ValueKind == JsonValueKind.String,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:246:            AnShengParamType.Int => element.ValueKind == JsonValueKind.Number,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:247:            AnShengParamType.Double => element.ValueKind == JsonValueKind.Number,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:248:            AnShengParamType.Bool => element.ValueKind is JsonValueKind.True or JsonValueKind.False,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:249:            AnShengParamType.Array => element.ValueKind == JsonValueKind.Array,
+Infrastructure/Protocol/AnSheng/AnShengParamSpec.cs:250:            AnShengParamType.Object => element.ValueKind == JsonValueKind.Object,

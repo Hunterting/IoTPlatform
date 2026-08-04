@@ -554,20 +554,17 @@ public class DeviceCommandService : IDeviceCommandService
         // 通过安圣服务下发
         try
         {
+            // T7-3：透传 CommandId —— DeviceCommand.CommandId 即 AnShengCommandRecord.CommandId，
+            // 二者同值构成「单一真相」，取代原 R1 静态 frameId→commandId 映射（已物理删除）。
             var result = await _anShengCommandService!.SendCommandAsync(
                 deviceId: request.DeviceId,
                 method: request.CommandType,
                 parameters: request.Parameters,
-                ct: CancellationToken.None);
+                ct: CancellationToken.None,
+                commandId: command.CommandId);
 
             if (result.Success)
             {
-                // 注册 frameId ↔ commandId 映射
-                if (result.FrameId != null)
-                {
-                    AnShengCommandService.RegisterFrameIdMapping(result.FrameId, command.CommandId);
-                }
-
                 command.Status = CommandStatus.Sent;
                 command.SentAt = DateTime.UtcNow;
                 command.UpdatedAt = DateTime.UtcNow;

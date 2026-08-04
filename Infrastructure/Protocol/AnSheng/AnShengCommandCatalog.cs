@@ -33,6 +33,14 @@ public static class AnShengCommandCatalog
     private static readonly IReadOnlyList<string> ActionValues = new[] { "on", "off", "toggle" };
     private static readonly IReadOnlyList<string> StartActionValues = new[] { "on", "off", "toggle", "none" };
 
+    /// <summary>
+    /// <c>setMqtt.mqttParams</c> / <c>getMqtt</c> 应答中需要打码的敏感子字段（T7 决策 D3）。
+    ///
+    /// 这是「哪些字段算机密」的<b>唯一出处</b> —— <c>AnShengSecretMasker</c> 从目录读取，
+    /// 不再各自维护一份关键字黑名单。将来协议新增机密字段，只改这一行。
+    /// </summary>
+    private static readonly IReadOnlyList<string> MqttSecretFields = new[] { "password" };
+
     private static readonly Dictionary<string, AnShengCommandSpec> CommandMap = BuildCatalog();
 
     private static readonly HashSet<string> EventMethodSet = new(StringComparer.Ordinal)
@@ -197,12 +205,21 @@ public static class AnShengCommandCatalog
 
             // ───────── G2 MQTT 参数（4 个品类全部支持）─────────
 
+            // ⚠️ getMqtt 是一条<b>无参数</b>命令：口令只出现在设备<b>应答</b>里。
+            //    因此它的敏感字段必须挂在 responseSecretFields 上 ——
+            //    只从 Params 推导敏感字段集会让 getMqtt 恒为空集，应答口令原样落库（T7 决策 D3）。
             Spec("getMqtt", "获取MQTT参数", AnShengDeviceCapability.GroupMqtt,
-                "获取MQTT参数（getMqtt）"),
+                "获取MQTT参数（getMqtt）",
+                isBeta: false,
+                responseSecretFields: MqttSecretFields),
 
+            // ⚠️ 口令 password 是<b>嵌在 mqttParams 对象里</b>的，不是顶层参数（协议原文如此）。
+            //    因此这里用 secretFields 精确点名子字段，而不是把整个 mqttParams 打码 ——
+            //    host / port / clientId 是排障必需信息，一并打掉等于把留痕废掉（T7 决策 D3）。
             Spec("setMqtt", "设置MQTT参数", AnShengDeviceCapability.GroupMqtt,
                 "设置MQTT参数（setMqtt）",
-                P("mqttParams", AnShengParamType.Object, true, "mqtt 参数对象"),
+                P("mqttParams", AnShengParamType.Object, true, "mqtt 参数对象",
+                    secretFields: MqttSecretFields),
                 P("reboot", AnShengParamType.Bool, false, "设置完是否重启")),
 
             // ───────── G3 开关动作 / 延时任务 / 电量实时 / 校准（仅开关类）─────────
@@ -358,7 +375,8 @@ public static class AnShengCommandCatalog
         string docAnchor,
         bool isBeta,
         string? minFirmware = null,
-        AnShengParamSpec[]? paramSpecs = null)
+        AnShengParamSpec[]? paramSpecs = null,
+        IReadOnlyList<string>? responseSecretFields = null)
         => new()
         {
             Method = method,
@@ -366,6 +384,7 @@ public static class AnShengCommandCatalog
             Direction = AnShengCommandDirection.Downlink,
             SupportedKinds = supported,
             Params = paramSpecs ?? Array.Empty<AnShengParamSpec>(),
+            ResponseSecretFields = responseSecretFields ?? Array.Empty<string>(),
             IsEvent = false,
             IsBeta = isBeta,
             MinFirmware = minFirmware,
@@ -400,6 +419,10 @@ public static class AnShengCommandCatalog
         string? minFirmware = null,
         IReadOnlyList<string>? allowedValues = null,
         double? minimum = null,
-        double? maximum = null)
-        => AnShengParamSpec.Create(name, type, required, description, minFirmware, allowedValues, minimum, maximum);
+        double? maximum = null,
+        bool isSecret = false,
+        IReadOnlyList<string>? secretFields = null)
+        => AnShengParamSpec.Create(
+            name, type, required, description, minFirmware, allowedValues, minimum, maximum,
+            isSecret, secretFields);
 }
