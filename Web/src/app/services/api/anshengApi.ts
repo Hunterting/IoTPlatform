@@ -9,6 +9,14 @@ import type {
   AnShengCommandResponse,
   AnShengAutoReportRequest,
   DiscoveredDeviceQueryParams,
+  AnShengSwitchActionRequest,
+  AnShengSwitchActionsRequest,
+  AnShengStartDelayTaskRequest,
+  AnShengStopDelayTaskRequest,
+  AnShengSwitchResultDto,
+  AnShengDelayTaskDto,
+  AnShengDelayTaskResultDto,
+  AnShengDeviceProfileDto,
 } from './types/ansheng.types';
 
 /**
@@ -78,6 +86,101 @@ export const anshengApi = {
   ): Promise<AxiosResponse<ApiResponse<AnShengCommandResponse>>> => {
     return httpClient.post<ApiResponse<AnShengCommandResponse>>(
       `/ansheng/${deviceId}/reboot`
+    );
+  },
+
+  /**
+   * 读取设备能力档案（含插槽数量与最近一次插槽通断快照）。
+   * GET /api/v1/ansheng/{deviceId}/profile
+   *
+   * 【T9 为何需要它】开关矩阵的「当前通断态」权威落点是 Profile.SlotsSnapshot；
+   * delay-tasks 端点只返回延时任务配置镜像，并不含通断态。
+   */
+  getProfile: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengDeviceProfileDto>>> => {
+    return httpClient.get<ApiResponse<AnShengDeviceProfileDto>>(
+      `/ansheng/${deviceId}/profile`
+    );
+  },
+
+  // ── T9：开关动作 + 延时任务（后端 AnShengSwitchController）────────
+  //
+  // 五个方法一一对应五个真实端点，全部走官方协议 action / actions /
+  // getDelayTasks / startDelayTask / stopDelayTask，**不得**重新引入
+  // setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig 伪命令。
+  //
+  // 【响应信封】ApiResponse<T> = { code, message, data, timestamp }。
+  // 业务失败（含喇叭类被拒）HTTP 状态恒为 200，靠 code=400 表达，
+  // 机器可读原因在 data.rejectReason（字符串枚举，如 "RejectedByKind"）。
+
+  /**
+   * 单插槽开关动作。
+   * POST /api/v1/ansheng/{deviceId}/action
+   */
+  switchAction: async (
+    deviceId: number,
+    request: AnShengSwitchActionRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengSwitchResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengSwitchResultDto>>(
+      `/ansheng/${deviceId}/action`,
+      request
+    );
+  },
+
+  /**
+   * 多插槽批量开关动作。
+   * POST /api/v1/ansheng/{deviceId}/actions
+   *
+   * request.slotNums 必须是整数数组（如 [1,3]），绝不能是逗号串。
+   */
+  switchActions: async (
+    deviceId: number,
+    request: AnShengSwitchActionsRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengSwitchResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengSwitchResultDto>>(
+      `/ansheng/${deviceId}/actions`,
+      request
+    );
+  },
+
+  /**
+   * 读取延时任务镜像（平台侧视图，按插槽升序）。
+   * GET /api/v1/ansheng/{deviceId}/delay-tasks
+   */
+  getDelayTasks: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengDelayTaskDto[]>>> => {
+    return httpClient.get<ApiResponse<AnShengDelayTaskDto[]>>(
+      `/ansheng/${deviceId}/delay-tasks`
+    );
+  },
+
+  /**
+   * 开始 / 配置某插槽的延时任务。
+   * POST /api/v1/ansheng/{deviceId}/delay-tasks/start
+   */
+  startDelayTask: async (
+    deviceId: number,
+    request: AnShengStartDelayTaskRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengDelayTaskResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengDelayTaskResultDto>>(
+      `/ansheng/${deviceId}/delay-tasks/start`,
+      request
+    );
+  },
+
+  /**
+   * 停止某插槽的延时任务。
+   * POST /api/v1/ansheng/{deviceId}/delay-tasks/stop
+   */
+  stopDelayTask: async (
+    deviceId: number,
+    request: AnShengStopDelayTaskRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengDelayTaskResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengDelayTaskResultDto>>(
+      `/ansheng/${deviceId}/delay-tasks/stop`,
+      request
     );
   },
 };

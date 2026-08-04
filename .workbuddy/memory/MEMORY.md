@@ -92,6 +92,14 @@
 - QA 集成验收 5/5 通过（零源缺陷）：字节级报文一致、slotNums JSON 数组、乐观镜像+自动回读 bump SyncedAt、delayEvent→Enable=false+快照更新、喇叭类 200+code=400+RejectedByKind+零出网。
 - **三条铁律**：①后台作用域写 `IgnoreQueryFilters()`+显式 AppCode；②拒绝走 `ApiResponse<T>.BadRequest` 信封（HTTP200/零裸400）；③报文全走 `AnShengCommandBuilder`+`SendCommandAsync`+`Guard`。
 
+### T9 开关控制面板（前端）✅ 验收 (2026-08-04)
+- 消费 T8 五端点 + `GET /profile`（插槽矩阵权威源）的前端页面 `Web/src/app/pages/SwitchControlPage.tsx`。
+- 5 文件改动：`SwitchControlPage.tsx`(新增) + `anshengApi.ts`(6方法) + `ansheng.types.ts`(T9类型) + `App.tsx`(路由) + `Sidebar.tsx`(菜单子项「开关控制」归「设备管理」下)。
+- QA 第2轮回归 9/9 通过、43/43 断言、tsc T9 文件 0 错误、vite build 通过。T9 引入遗留 0（仅 3 个预存无关类型错误：dictionary/settings-database/VIEW_DATABASE）。
+- **关键偏差已闭环**：①插槽矩阵改用 `GET /profile` 的 `SlotsSnapshot`（delay-tasks 只返配置不含通断态）；②F1 菜单权限 `SEND_DEVICE_COMMANDS`→`VIEW_DEVICES`（否则只读用户进不了页）；③F2 路数用 `max(slotNum)` 而非 `delayTasks.length`（稀疏镜像会算错），`slotCountKnown` 只认 profile/slots。
+- 契约核查脚本留存 `.qa-logs/t9_contract_check.js`（可复跑，退出码0=全绿）。
+- 前端栈：React18 + Vite + Tailwind + Radix + MUI + lucide-react + axios；`Web` 仓库无 tsconfig.json、全项目 tsc 约 200 错历史债（前端不强制 tsc，靠 vite/esbuild 转译）。
+
 ## 演进规划
 - **P0-P2** ✅ 全部完成（P0: JSON解析+配置键 | P1: 能耗字段+差异化 | P2: 协议集成+时序抽象）
 - **下一阶段**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 完善

@@ -33,6 +33,7 @@ import {
   Terminal,
   Radio,
   RadioTower,
+  Power,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, Permission } from '@/app/config/permissions';
@@ -74,7 +75,8 @@ export type PageType =
   | 'settings-devices'
   | 'settings-api'
   | 'settings-dictionary'
-  | 'ansheng-management';
+  | 'ansheng-management'
+  | 'switch-control';
 
 interface SidebarProps {
   currentPage: PageType;
@@ -144,6 +146,14 @@ const menuItems: MenuItem[] = [
         id: 'ansheng-management',
         label: '安圣设备',
         icon: <RadioTower className="w-4 h-4" />,
+        requiredPermission: PERMISSIONS.VIEW_DEVICES,
+      },
+      {
+        id: 'switch-control',
+        label: '开关控制',
+        icon: <Power className="w-4 h-4" />,
+        // 与同级「安圣设备」一致：菜单按 view 权限可见，动作按钮的 send 权限门控交给页面自身。
+        // 这样「有 VIEW_DEVICES、无 SEND_DEVICE_COMMANDS」的只读用户也能进入页面看只读 UI。
         requiredPermission: PERMISSIONS.VIEW_DEVICES,
       },
     ],
