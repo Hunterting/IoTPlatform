@@ -72,6 +72,7 @@ public class AppDbContext : DbContext
     public DbSet<AnShengDeviceProfile> AnShengDeviceProfiles { get; set; }
     public DbSet<AnShengDeviceEvent> AnShengDeviceEvents { get; set; }
     public DbSet<AnShengCommandRecord> AnShengCommandRecords { get; set; }
+    public DbSet<AnShengDelayTask> AnShengDelayTasks { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -127,6 +128,7 @@ public class AppDbContext : DbContext
         ConfigureAnShengDeviceProfiles(modelBuilder);
         ConfigureAnShengDeviceEvents(modelBuilder);
         ConfigureAnShengCommandRecords(modelBuilder);
+        ConfigureAnShengDelayTasks(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -465,6 +467,40 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Kind).HasConversion<int>();
             entity.Property(e => e.KindSource).HasConversion<int>();
             entity.Property(e => e.ProbeStatus).HasConversion<int>();
+
+            // T8：插槽快照（设备权威回写落点）。
+            //   SlotsSnapshot 存 int[] 的 JSON 文本，只存不查、不进索引，显式 longtext；
+            //   SlotsSnapshotAt 时间列由 Pomelo 默认映射为 datetime(6)，存 UTC。
+            entity.Property(e => e.SlotsSnapshot).HasColumnType("longtext");
+        });
+    }
+
+    /// <summary>
+    /// 安圣延时任务镜像表配置（T8）。
+    ///
+    /// 【索引设计理由】
+    ///   · <c>UNIQUE(DeviceId, SlotNum)</c>：每设备每插槽一行，靠数据库兜底并发重复插入
+    ///     （两次 startDelayTask 同一插槽时，后者会撞唯一键而不是写出两份）。
+    ///   · <c>(AppCode, DeviceId)</c>：后台作用域用 <c>IgnoreQueryFilters</c> 时仍能走索引快速定位；
+    ///     AppCode 打头是因为显式定位查询会带它（见 <see cref="Services.AnShengScheduleService"/>）。
+    ///   · <c>DeviceId</c>：按设备反查全部插槽镜像（GET 端点主路径）。
+    ///
+    /// 【MySQL 5.7.26 约束】不使用 CHECK 约束、不使用函数索引；SAction/EAction 为 varchar 字符串
+    ///   （无原生 ENUM）；时间列 datetime(6) 存 UTC。
+    /// </summary>
+    private void ConfigureAnShengDelayTasks(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengDelayTask>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.DeviceId, e.SlotNum }).IsUnique();
+            entity.HasIndex(e => new { e.AppCode, e.DeviceId });
+            entity.HasIndex(e => e.DeviceId);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.SAction).HasMaxLength(16).IsRequired();
+            entity.Property(e => e.EAction).HasMaxLength(16).IsRequired();
         });
     }
 

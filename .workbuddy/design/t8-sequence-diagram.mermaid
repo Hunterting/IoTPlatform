@@ -1,0 +1,98 @@
+%% T8 开关动作与延时任务 —— 关键调用时序图（对应验收 #1~#5）
+
+%% ===== 验收 #1 / #2：action / actions 下发往返 =====
+sequenceDiagram
+    participant C as AnShengSwitchController
+    participant S as IAnShengScheduleService
+    participant CS as AnShengCommandService(T7)
+    participant G as AnShengCommandGuard(T7)
+    participant B as AnShengCommandBuilder(T7)
+    participant MQ as MQTT 适配器
+    participant R as AnShengMessageRouter(T6)
+    participant P as AnShengDeviceProfile
+
+    C->>CS: SendCommandAsync(deviceId,"action",{slotNum:2,action:"on"})
+    CS->>G: Evaluate(ctx)
+    G-->>CS: Allowed
+    CS->>B: BuildAction(imei,2,"on")
+    B-->>CS: (frameId, payload)
+    CS->>MQ: PublishAsync(...)
+    MQ-->>设备: 下发报文
+    CS-->>C: AnShengCommandResponse{Success,CommandId,FrameId,Payload}
+    C-->>C: 读 Profile.SlotsSnapshot 填入 result.Slots
+    C-->>HTTP: ApiResponse<AnShengSwitchResultDto>.Success(result)
+
+    Note over 设备,MQ: 设备应答（含 slots[]）
+    MQ-->>R: 上行(method=action,frameId,slots[])
+    R->>R: HandleResponseAsync → BackfillCommandRecord
+    R->>S: ApplyResponseMirrorAsync(deviceId,"action",msg)
+    S->>P: UpdateSlotsSnapshotAsync(deviceId, slots[])
+    Note right of P: Profile.SlotsSnapshot 写入（验收 #1）
+
+%% ===== 验收 #2：actions 数组构造 =====
+sequenceDiagram
+    participant C as AnShengSwitchController
+    participant CS as AnShengCommandService(T7)
+    participant B as AnShengCommandBuilder(T7)
+    C->>CS: SendCommandAsync(deviceId,"actions",{slotNums:[1,3],action:"toggle"})
+    CS->>B: BuildActions(imei,[1,3],"toggle")
+    B-->>CS: payload = {"method":"actions","slotNums":[1,3],"action":"toggle","frameId":"...",...}
+    CS-->>C: AnShengCommandResponse{Payload=上面报文}
+    Note right of C: 断言 Payload.slotNums == [1,3]（验收 #2）
+
+%% ===== 验收 #3：startDelayTask 写后回读 =====
+sequenceDiagram
+    participant C as AnShengSwitchController
+    participant S as AnShengScheduleService
+    participant CS as AnShengCommandService(T7)
+    participant DB as AnShengDelayTask
+    participant R as AnShengMessageRouter(T6)
+    participant SF as IServiceScopeFactory
+
+    C->>S: StartDelayTaskAsync(deviceId,slotNum,enable,sAction,eAction,secs)
+    S->>CS: SendCommandAsync(deviceId,"startDelayTask",{...})
+    CS-->>S: AnShengCommandResponse{Success,CommandId}
+    S->>DB: Upsert 乐观镜像(Enable,SAction,EAction,Secs,SyncedAt=now)
+    S-->>C: AnShengDelayTaskResultDto{Accepted,Tasks=当前镜像}
+    C-->>HTTP: ApiResponse.Success(result)
+
+    Note over S,SF: Task.Delay(≥100ms) 后在【新作用域】触发
+    S->>SF: CreateScope()
+    SF->>CS: SendCommandAsync(deviceId,"getDelayTasks",null)
+    CS-->>设备: 下发 getDelayTasks
+    设备-->>R: 应答 tasks[]
+    R->>S: ApplyDelayTasksReadbackAsync(deviceId, tasks[])
+    S->>DB: 按下标+1 覆盖每行 + SyncedAt=now
+    Note right of DB: 验收 #3：SyncedAt 已更新
+
+%% ===== 验收 #4：delayEvent 更新镜像 =====
+sequenceDiagram
+    participant MQ as MQTT 适配器
+    participant D as AnShengMessageRouter(T6)
+    participant H as DelayEventHandler(T6)
+    participant S as IAnShengScheduleService
+    participant DB as AnShengDelayTask
+    participant P as AnShengDeviceProfile
+
+    MQ-->>D: 上行(method=delayEvent, slot_num, slots[], frameId, timestamp)
+    D->>D: Classify → 命中硬事件白名单 → Event
+    D->>H: DispatchAsync(ctx)
+    H->>H: 解析 slot_num + slots[]
+    H->>S: ApplyDelayEventAsync(deviceId, slotNum, slots)
+    S->>DB: 该 slotNum 行 Enable=false
+    S->>P: UpdateSlotsSnapshotAsync(deviceId, slots[])
+    H-->>D: AnShengEventOutcome{PersistEvent,DispatchToRules}
+    Note right of DB: 验收 #4：Enable=false + SlotsSnapshot 更新
+
+%% ===== 验收 #5：喇叭类拒绝（零发布 + 信封） =====
+sequenceDiagram
+    participant C as AnShengSwitchController
+    participant CS as AnShengCommandService(T7)
+    participant G as AnShengCommandGuard(T7)
+    C->>CS: SendCommandAsync(deviceId,"action",{...})  %% 喇叭类设备
+    CS->>G: Evaluate(ctx)
+    G-->>CS: Reject(RejectedByKind)
+    CS-->>C: AnShengCommandResponse{Success=false,RejectReason=RejectedByKind}
+    Note over CS,MQ: 零 MQTT 发布
+    C-->>HTTP: ApiResponse<AnShengSwitchResultDto>.BadRequest(msg, result)
+    Note right of HTTP: Code=400，HTTP=200，Data.RejectReason=RejectedByKind（验收 #5）

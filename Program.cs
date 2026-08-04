@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using IoTPlatform.Data;
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.Data.Repositories.Implementations;
@@ -160,6 +161,23 @@ builder.Services.AddHostedService<IoTPlatform.Services.AnShengCommandSweepHosted
 // 安圣设备能力档案服务（Scoped：内部持有 AppDbContext，不可被 Singleton 构造注入）
 builder.Services.AddScoped<IoTPlatform.Services.IAnShengDeviceProfileService, IoTPlatform.Services.AnShengDeviceProfileService>();
 
+// ───────────────────────────────────────────────────────────────────────────
+// T8 安圣延时任务调度服务（开关动作 / 延时任务镜像）
+//
+// ★ 这一行缺失，AnShengSwitchController 的全部端点、以及 AnShengMessageRouter /
+//   DelayEventHandler 的构造都会在<b>首个上行报文或首个请求</b>时抛
+//   InvalidOperationException —— 与 T7 那次 P0 完全同型（本项目未开
+//   ValidateOnBuild，DI 图惰性校验，「起得来」不代表「接得上」）。
+//
+// 生命周期 Scoped 的三条理由：
+//   1. 内部持有 AppDbContext，Singleton 化会造成跨请求共享 DbContext；
+//   2. 消费方 AnShengMessageRouter / DelayEventHandler 本身就是 Scoped，同域最省事；
+//   3. 写后回读需要脱离当前作用域，已由内部注入的 IServiceScopeFactory（Singleton）解决，
+//      不需要把整个服务提升为 Singleton。
+// ───────────────────────────────────────────────────────────────────────────
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengScheduleService,
+    IoTPlatform.Services.AnShengScheduleService>();
+
 // 安圣同步探测服务
 // Singleton 是硬要求：它在构造函数里订阅静态上行总线 AnShengUplinkHub。
 // 若注册为 Scoped，每个请求都会新订阅一次却从不退订，事件链会无限增长直至内存耗尽。
@@ -259,7 +277,11 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 
 // 配置Swagger
 builder.Services.AddEndpointsApiExplorer();

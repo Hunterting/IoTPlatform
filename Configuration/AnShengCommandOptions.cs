@@ -83,6 +83,38 @@ public class AnShengCommandOptions
     public HashSet<string> LongRunningMethods { get; set; } =
         new(StringComparer.OrdinalIgnoreCase) { "getLogs", "getEMStatistics" };
 
+    /// <summary>
+    /// 延时任务「写后回读」的等待毫秒数，默认 120（T8 设计 §7.4）。
+    ///
+    /// 【为什么要等这一小会儿】<c>startDelayTask</c> / <c>stopDelayTask</c> 刚出网，
+    ///   设备还没来得及把新状态落到自己的任务表；此刻立刻问 <c>getDelayTasks</c>，
+    ///   拿回来的极可能是<b>改之前</b>的旧值，反而把平台的乐观镜像覆盖成陈旧数据。
+    ///   ≥100ms 是设计给出的下限（同时满足 R3 节流），120 是留了余量的默认值。
+    ///
+    /// 【集成测试请置 0】关掉等待可让回读在同一轮断言内完成，避免 sleep 式测试。
+    /// </summary>
+    public int ReadbackDelayMs { get; set; } = 120;
+
+    /// <summary>
+    /// 延时任务镜像的陈旧阈值，单位小时，默认 24（T8 设计 §7.5）。
+    ///
+    /// 设备是权威、平台只存快照，因此镜像「旧」是常态而非故障。
+    /// 超过该阈值仍未被任何应答刷新过，才在 <c>AnShengDelayTaskDto.IsStale</c> 上打标，
+    /// 提示前端「这份数据可能已经跟设备对不上，建议手动同步」。
+    /// </summary>
+    public int MirrorStaleHours { get; set; } = 24;
+
+    /// <summary>
+    /// 归一化后的 <see cref="ReadbackDelayMs"/>：负数按默认 120 处理（0 合法，表示不等待）。
+    /// </summary>
+    public int EffectiveReadbackDelayMs => ReadbackDelayMs >= 0 ? ReadbackDelayMs : 120;
+
+    /// <summary>
+    /// 归一化后的镜像陈旧阈值：非正数按默认 24 小时处理，避免误配 0 导致所有镜像恒为陈旧。
+    /// </summary>
+    public TimeSpan EffectiveMirrorStaleThreshold =>
+        TimeSpan.FromHours(MirrorStaleHours > 0 ? MirrorStaleHours : 24);
+
     /// <summary>归一化后的 <see cref="DefaultTimeoutSeconds"/>：下限 1 秒，避免误配 0/负数导致命令刚发就超时。</summary>
     public int EffectiveDefaultTimeoutSeconds => DefaultTimeoutSeconds > 0 ? DefaultTimeoutSeconds : 1;
 

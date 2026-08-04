@@ -95,3 +95,64 @@ public class AnShengAutoReportRequest
 // getSwitchConfig 四个臆造方法。开关通断请改用 AnShengCommandRequest：
 //   { "method": "action",  "parameters": { "slotNum": 1, "action": "on" } }
 //   { "method": "actions", "parameters": { "slotNums": [1,2], "action": "off" } }
+
+/// <summary>
+/// 单插槽开关动作请求（T8）。经 <c>AnShengCommandService.SendCommandAsync("action", ...)</c> 下发，
+/// 复用 T7 单点校验 / 在途登记 / 记录落库，零自造下发通道。
+/// </summary>
+public class AnShengActionRequest
+{
+    /// <summary>插槽编号，从 1 开始；<c>0</c> 表示所有插槽。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>动作：<c>on</c> / <c>off</c> / <c>toggle</c>。</summary>
+    public string Action { get; set; } = "on";
+
+    /// <summary>是否同时停止延时任务，可为 null（不下发该字段）。</summary>
+    public bool? HasStopDelayTask { get; set; }
+}
+
+/// <summary>
+/// 多插槽开关动作请求（T8）。构造 <c>{"method":"actions","slotNums":[...],"action":"..."}</c> 数组报文。
+/// </summary>
+public class AnShengActionsRequest
+{
+    /// <summary>插槽编号数组，子项从 1 开始，非空。</summary>
+    public int[] SlotNums { get; set; } = Array.Empty<int>();
+
+    /// <summary>动作：<c>on</c> / <c>off</c> / <c>toggle</c>。</summary>
+    public string Action { get; set; } = "on";
+
+    /// <summary>是否同时停止延时任务，可为 null。</summary>
+    public bool? HasStopDelayTask { get; set; }
+}
+
+/// <summary>
+/// 开始延时任务请求（T8）。经 <c>SendCommandAsync("startDelayTask", ...)</c> 下发。
+/// </summary>
+public class AnShengStartDelayTaskRequest
+{
+    /// <summary>插槽编号，从 1 开始；<c>0</c> 表示所有插槽。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>是否启用。</summary>
+    public bool Enable { get; set; }
+
+    /// <summary>开始动作：<c>on</c> / <c>off</c> / <c>toggle</c> / <c>none</c>。</summary>
+    public string SAction { get; set; } = "on";
+
+    /// <summary>结束动作：<c>on</c> / <c>off</c> / <c>toggle</c>。</summary>
+    public string EAction { get; set; } = "off";
+
+    /// <summary>延时秒数，&gt; 0。</summary>
+    public int Secs { get; set; }
+}
+
+/// <summary>
+/// 停止延时任务请求（T8）。经 <c>SendCommandAsync("stopDelayTask", { slotNum })</c> 下发。
+/// </summary>
+public class AnShengStopDelayTaskRequest
+{
+    /// <summary>插槽编号，从 1 开始。</summary>
+    public int SlotNum { get; set; }
+}

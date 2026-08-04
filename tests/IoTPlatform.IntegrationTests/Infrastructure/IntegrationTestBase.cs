@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using IoTPlatform.Data;
 using IoTPlatform.IntegrationTests.Infrastructure.Mqtt;
 using IoTPlatform.IntegrationTests.Seed;
@@ -49,8 +50,19 @@ public abstract class IntegrationTestBase : IAsyncLifetime
     /// <summary>录制替身适配器，下发链路的断言锚点。</summary>
     protected RecordingAnShengAdapter Adapter => Fixture.Adapter;
 
-    /// <summary>JSON 反序列化选项：与 ASP.NET Core 默认的 camelCase 对齐。</summary>
-    protected static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// JSON 反序列化选项：与服务端 <c>AddControllers().AddJsonOptions(...)</c> 保持对称。
+    ///
+    /// 【camelCase】与 ASP.NET Core 默认的 camelCase 对齐。
+    /// 【枚举按字符串】服务端已全局注册 <see cref="JsonStringEnumConverter"/>，
+    ///   枚举以原名（PascalCase，如 "RejectedByKind"）出网；测试客户端必须装同一个
+    ///   转换器才能读回强类型 DTO，否则 <c>ReadFromJsonAsync</c> 会抛
+    ///   "The JSON value could not be converted to ...Enum"。
+    /// </summary>
+    protected static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     public virtual async Task InitializeAsync()
     {

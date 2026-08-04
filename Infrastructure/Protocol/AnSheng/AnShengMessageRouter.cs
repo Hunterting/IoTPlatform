@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
 using IoTPlatform.Data;
 using IoTPlatform.Models;
 using IoTPlatform.Services;
@@ -51,6 +52,15 @@ public sealed class AnShengMessageRouter
     public const string MethodGetDevStatus = "getDevStatus";
 
     /// <summary>
+    /// <c>getDelayTasks</c> 方法名（写后回读用，T8）。
+    ///
+    /// 与 <see cref="MethodGetDevStatus"/> 同理，路由层只在本地需要知道「哪个方法携带延时任务镜像」，
+    /// 因此就地声明，不复用 <c>AnShengCommandCatalog</c> 也不反向依赖 <c>AnShengScheduleService</c> 的
+    /// 私有常量（避免跨层耦合）。
+    /// </summary>
+    private const string MethodGetDelayTasks = "getDelayTasks";
+
+    /// <summary>
     /// 设备应答缺少 <c>result</c> 字段时写入的错误码（T7-4）。
     ///
     /// 单列一个常量而不是复用设备原文，是为了让运维能按码聚合出「哪些固件在违反协议」，
@@ -95,6 +105,7 @@ public sealed class AnShengMessageRouter
     private readonly AnShengMessageParser _parser;
     private readonly ILogger<AnShengMessageRouter> _logger;
     private readonly AnShengEventDispatcher? _dispatcher;
+    private readonly IAnShengScheduleService _schedule;
 
     /// <summary>
     /// 构造路由器。
@@ -104,6 +115,11 @@ public sealed class AnShengMessageRouter
     /// <param name="db">数据库上下文，用于分支动作后的 SaveChanges。</param>
     /// <param name="parser">报文解析器，用于把 <c>getDevStatus</c> 转成能力快照。</param>
     /// <param name="logger">日志器。</param>
+    /// <param name="schedule">
+    /// 延时任务调度服务（T8）。命令应答（action / actions / getDelayTasks / getDevStatus）携带的
+    /// <c>slots[]</c> / <c>tasks[]</c> 快照由它写回平台镜像与档案（设计 D-H）。已注册为 Scoped，
+    /// 与路由器同生命周期，由 DI 注入（非可选）。
+    /// </param>
     /// <param name="dispatcher">
     /// 事件分发器；<b>可选</b>。
     /// T6-1 阶段 <c>AnShengEventDispatcher</c> 尚未实现/注册，此时为 <c>null</c>，
@@ -116,6 +132,7 @@ public sealed class AnShengMessageRouter
         AppDbContext db,
         AnShengMessageParser parser,
         ILogger<AnShengMessageRouter> logger,
+        IAnShengScheduleService schedule,
         AnShengEventDispatcher? dispatcher = null)
     {
         _pendingStore = pendingStore ?? throw new ArgumentNullException(nameof(pendingStore));
@@ -123,6 +140,7 @@ public sealed class AnShengMessageRouter
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _parser = parser ?? throw new ArgumentNullException(nameof(parser));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
         _dispatcher = dispatcher;
     }
 
@@ -291,6 +309,11 @@ public sealed class AnShengMessageRouter
                 await BackfillCommandRecordAsync(completed, ctx, cancellationToken).ConfigureAwait(false);
             }
         }
+
+        // T8-5（设计 D-H）：命令应答若携带 slots[] / tasks[] 快照，写回平台镜像与档案。
+        // 后台作用域内的写回由 IAnShengScheduleService 内部 IgnoreQueryFilters + 显式 AppCode 定位。
+        await ApplyResponseMirrorAsync(ctx.DeviceId, ctx.Method, ctx.Message, cancellationToken)
+            .ConfigureAwait(false);
 
         await RefreshProfileAsync(ctx, cancellationToken).ConfigureAwait(false);
     }
@@ -502,5 +525,191 @@ public sealed class AnShengMessageRouter
             _logger.LogWarning(ex,
                 "[AnShengRouter] 刷新设备档案失败 imei={Imei} method={Method}", ctx.Imei, ctx.Method);
         }
+    }
+
+    /// <summary>
+    /// 应答镜像写回钩子（T8-5，设计 D-H）。
+    ///
+    /// 在 <see cref="BackfillCommandRecordAsync"/>（终态回填）之后、<see cref="RefreshProfileAsync"/>
+    /// （getDevStatus 能力刷新）之前调用。按 method 把设备应答里的 <c>slots[]</c> / <c>tasks[]</c>
+    /// 分发到 <see cref="IAnShengScheduleService"/> 的快照 / 镜像写回：
+    ///   · action / actions / getDevStatus 应答带 slots[]  ⇒ <c>UpdateSlotsSnapshotAsync</c>
+    ///   · getDelayTasks 应答带 tasks[]（按下标 +1 推导插槽）         ⇒ <c>ApplyDelayTasksReadbackAsync</c>
+    ///
+    /// 【后台作用域】本方法运行在 AnShengUplinkPipeline 后台作用域，ITenantContextAccessor.Current 为 null；
+    /// 因此写回路径上的所有 EF 查询都在 IAnShengScheduleService 内部 IgnoreQueryFilters + 显式 AppCode 定位（§7.1）。
+    ///
+    /// 【异常一律吞掉】镜像写回失败绝不可冒泡，否则会打断 RefreshProfileAsync 乃至整条上行链路。
+    /// </summary>
+    /// <param name="deviceId">平台设备主键，可为 null（未认领设备）。</param>
+    /// <param name="method">应答方法名。</param>
+    /// <param name="message">已解析的应答报文。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    private async Task ApplyResponseMirrorAsync(
+        long? deviceId, string method, AnShengMessage? message, CancellationToken cancellationToken)
+    {
+        if (!deviceId.HasValue || message == null || string.IsNullOrWhiteSpace(method))
+        {
+            return;
+        }
+
+        // 只有这四类应答携带可写回的快照 / 镜像数据。getDelayTasks 携带 tasks[]（非 slots[]），
+        // 其余三类携带 slots[]；二者不重叠，避免把 getDelayTasks 的 tasks[] 误当 slots[] 写回档案。
+        bool isDelayTasks = string.Equals(method, MethodGetDelayTasks, StringComparison.Ordinal);
+        bool isSlotsCarrier = !isDelayTasks &&
+            (string.Equals(method, "action", StringComparison.Ordinal) ||
+             string.Equals(method, "actions", StringComparison.Ordinal) ||
+             string.Equals(method, MethodGetDevStatus, StringComparison.Ordinal));
+
+        if (!isDelayTasks && !isSlotsCarrier)
+        {
+            return;
+        }
+
+        try
+        {
+            var body = AnShengMessageParser.GetBodyJson(message);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return;
+            }
+
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+
+            if (isSlotsCarrier)
+            {
+                var slots = ParseSlotsArray(root);
+                if (slots != null)
+                {
+                    await _schedule.UpdateSlotsSnapshotAsync(deviceId.Value, slots, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            else // isDelayTasks
+            {
+                var tasks = ParseDelayTaskItems(root);
+                if (tasks != null)
+                {
+                    await _schedule.ApplyDelayTasksReadbackAsync(deviceId.Value, tasks, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[AnShengRouter] 应答镜像写回失败 imei={Imei} method={Method}", message.Imei, method);
+        }
+    }
+
+    /// <summary>
+    /// 从应答报文体提取 <c>slots[]</c> 数组（int 列表，0=关 1=开），用于插槽状态快照写回。
+    /// 报文不规范（缺字段 / 非数组）时返回 null，由上层按「本帧没带」跳过。
+    /// </summary>
+    /// <param name="root">报文体根元素。</param>
+    /// <returns>插槽状态数组；无有效数据时为 null。</returns>
+    private static List<int>? ParseSlotsArray(JsonElement root)
+    {
+        if (!root.TryGetProperty("slots", out var slotsEl) ||
+            slotsEl.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var list = new List<int>(slotsEl.GetArrayLength());
+        foreach (var item in slotsEl.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var v))
+            {
+                list.Add(v);
+            }
+        }
+
+        return list.Count > 0 ? list : null;
+    }
+
+    /// <summary>
+    /// 从 <c>getDelayTasks</c> 应答报文体提取 <c>tasks[]</c> 数组，映射为
+    /// <see cref="AnShengDelayTaskItem"/> 列表（下标 i 对应插槽 i+1，由调度服务推导）。
+    ///
+    /// 设备字段名以请求报文（startDelayTask 的 enable/sAction/eAction/secs）为权威回显，
+    /// 容错接受 sec/count 等同义写法；缺字段时回落默认值，绝不抛异常。
+    /// </summary>
+    /// <param name="root">报文体根元素。</param>
+    /// <returns>延时任务项列表；无有效数据时为 null。</returns>
+    private static List<AnShengDelayTaskItem>? ParseDelayTaskItems(JsonElement root)
+    {
+        if (!root.TryGetProperty("tasks", out var tasksEl) ||
+            tasksEl.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var items = new List<AnShengDelayTaskItem>(tasksEl.GetArrayLength());
+        foreach (var el in tasksEl.EnumerateArray())
+        {
+            if (el.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            items.Add(new AnShengDelayTaskItem
+            {
+                Enable = TryGetBool(el, "enable"),
+                SAction = TryGetString(el, "sAction") ?? "none",
+                EAction = TryGetString(el, "eAction") ?? "off",
+                Secs = TryGetInt(el, new[] { "secs", "sec" }),
+                Cnt = TryGetInt(el, new[] { "cnt", "count" }),
+            });
+        }
+
+        return items.Count > 0 ? items : null;
+    }
+
+    /// <summary>宽松读取布尔字段（支持 true/false、0/1、字符串）。</summary>
+    private static bool TryGetBool(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var v))
+        {
+            return false;
+        }
+
+        return v.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Number => v.TryGetInt32(out var n) && n != 0,
+            JsonValueKind.String => bool.TryParse(v.GetString(), out var b) && b,
+            _ => false,
+        };
+    }
+
+    /// <summary>宽松读取字符串字段（空白回落 null）。</summary>
+    private static string? TryGetString(JsonElement element, string name)
+    {
+        if (element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String)
+        {
+            var s = v.GetString();
+            return string.IsNullOrEmpty(s) ? null : s;
+        }
+
+        return null;
+    }
+
+    /// <summary>宽松读取整数字段，按候选名依次尝试（支持数字 / 数字字符串）。</summary>
+    private static int TryGetInt(JsonElement element, string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var v) &&
+                ((v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n)) ||
+                 (v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out n))))
+            {
+                return n;
+            }
+        }
+
+        return 0;
     }
 }

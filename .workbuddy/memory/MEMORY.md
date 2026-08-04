@@ -84,6 +84,14 @@
 5. OPCUA 适配器为骨架代码（20%），所有 OPC Foundation 调用为 TODO
 6. **待办**：消息队列(RabbitMQ)、限流熔断、软删除+审计
 
+### 契约约定（2026-07-31 起生效）
+- **全局枚举字符串出网**：`Program.cs` 已注册 `JsonStringEnumConverter`，所有经控制器出网的枚举以**字符串原名（PascalCase）**出网（如 `RejectedByKind` 而非 `0`）。前端必须按字符串分支，不得按整数。T7 遗留的 `AnShengCommandRejectReason`/`AnShengCommandStatus` 同样生效。
+
+### T8 开关动作与延时任务（后端）✅ 验收 (2026-07-31)
+- 新增 `AnShengSwitchController`(5 端点: action/actions/delay-tasks 读/start/stop) + `AnShengScheduleService` + `AnShengDelayTask` 模型 + 迁移 `20260804112806_T8DelayTask`。
+- QA 集成验收 5/5 通过（零源缺陷）：字节级报文一致、slotNums JSON 数组、乐观镜像+自动回读 bump SyncedAt、delayEvent→Enable=false+快照更新、喇叭类 200+code=400+RejectedByKind+零出网。
+- **三条铁律**：①后台作用域写 `IgnoreQueryFilters()`+显式 AppCode；②拒绝走 `ApiResponse<T>.BadRequest` 信封（HTTP200/零裸400）；③报文全走 `AnShengCommandBuilder`+`SendCommandAsync`+`Guard`。
+
 ## 演进规划
 - **P0-P2** ✅ 全部完成（P0: JSON解析+配置键 | P1: 能耗字段+差异化 | P2: 协议集成+时序抽象）
 - **下一阶段**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 完善

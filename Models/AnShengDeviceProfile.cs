@@ -144,6 +144,16 @@ public class AnShengDeviceProfile : IHasAppCode
     /// <summary>最近一次探测时间（UTC）。从未探测过为 <c>null</c>。</summary>
     public DateTime? LastProbedAt { get; set; }
 
+    /// <summary>
+    /// 最近一次 <c>slots</c> 的 JSON 快照（<c>int[]</c>，0=关 1=开）。
+    /// 由 <c>action</c> / <c>actions</c> / <c>delayEvent</c> / <c>getDelayTasks</c> / <c>getDevStatus</c>
+    /// 应答写回（设备权威，D6 Option A）。控制器出网即时读取此值填充 <c>AnShengSwitchResultDto.Slots</c>。
+    /// </summary>
+    public string? SlotsSnapshot { get; set; }
+
+    /// <summary><see cref="SlotsSnapshot"/> 写入时间（UTC）。</summary>
+    public DateTime? SlotsSnapshotAt { get; set; }
+
     /// <summary>档案创建时间（UTC）。</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

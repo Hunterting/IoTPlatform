@@ -1,0 +1,102 @@
+classDiagram
+    class AnShengSwitchController {
+        +Action(deviceId, req) ApiResponse~AnShengSwitchResultDto~
+        +Actions(deviceId, req) ApiResponse~AnShengSwitchResultDto~
+        +GetDelayTasks(deviceId) ApiResponse~List~AnShengDelayTaskDto~~
+        +StartDelayTask(deviceId, req) ApiResponse~AnShengDelayTaskResultDto~
+        +StopDelayTask(deviceId, slotNum) ApiResponse~AnShengDelayTaskResultDto~
+    }
+
+    class IAnShengScheduleService {
+        <<interface>>
+        +StartDelayTaskAsync(deviceId, slotNum, enable, sAction, eAction, secs, ct) Task
+        +StopDelayTaskAsync(deviceId, slotNum, ct) Task
+        +GetDelayTasksAsync(deviceId, ct) Task~List~AnShengDelayTaskDto~~
+        +ApplyDelayTasksReadbackAsync(deviceId, tasks, ct) Task
+        +ApplyDelayEventAsync(deviceId, slotNum, slots, ct) Task
+        +UpdateSlotsSnapshotAsync(deviceId, slots, ct) Task
+    }
+
+    class AnShengScheduleService {
+        -IAnShengCommandService _cmd
+        -IServiceScopeFactory _scopeFactory
+        -TimeProvider _time
+        +StartDelayTaskAsync(...) Task
+        +StopDelayTaskAsync(...) Task
+        +GetDelayTasksAsync(...) Task
+        +ApplyDelayTasksReadbackAsync(...) Task
+        +ApplyDelayEventAsync(...) Task
+        +UpdateSlotsSnapshotAsync(...) Task
+        -ScheduleReadback(deviceId) Task
+    }
+
+    class AnShengDelayTask {
+        +long Id
+        +string AppCode
+        +long DeviceId
+        +int SlotNum
+        +bool Enable
+        +string SAction
+        +string EAction
+        +int Secs
+        +int Cnt
+        +DateTime SyncedAt
+    }
+
+    class AnShengDeviceProfile {
+        <<T5 已有，本任务扩展>>
+        +string SlotsSnapshot
+        +DateTime SlotsSnapshotAt
+    }
+
+    class DelayEventHandler {
+        -IAnShengScheduleService _schedule
+        +Method : string = "delayEvent"
+        +OnHandleAsync(ctx, ct) Task~AnShengEventOutcome~
+    }
+
+    class AnShengMessageRouter {
+        -IAnShengScheduleService _schedule
+        +HandleResponseAsync(ctx, result, ct) Task
+    }
+
+    class AnShengSwitchResultDto {
+        +bool Accepted
+        +string CommandId
+        +string FrameId
+        +AnShengCommandRejectReason RejectReason
+        +string ErrorMessage
+        +int[] Slots
+    }
+
+    class AnShengDelayTaskDto {
+        +int SlotNum
+        +bool Enable
+        +string SAction
+        +string EAction
+        +int Secs
+        +int Cnt
+        +DateTime SyncedAt
+        +bool IsStale
+    }
+
+    class AnShengDelayTaskResultDto {
+        +bool Accepted
+        +string CommandId
+        +string FrameId
+        +AnShengCommandRejectReason RejectReason
+        +string ErrorMessage
+        +List~AnShengDelayTaskDto~ Tasks
+    }
+
+    AnShengSwitchController --> IAnShengScheduleService : "读/写镜像"
+    AnShengSwitchController --> IAnShengCommandService : "下发(复用T7)"
+    AnShengScheduleService ..|> IAnShengScheduleService
+    AnShengScheduleService --> IAnShengCommandService : "写后回读getDelayTasks"
+    AnShengScheduleService --> AnShengDelayTask : "镜像读写"
+    AnShengScheduleService --> AnShengDeviceProfile : "写SlotsSnapshot"
+    DelayEventHandler --> IAnShengScheduleService : "ApplyDelayEventAsync"
+    AnShengMessageRouter --> IAnShengScheduleService : "ApplyResponseMirrorAsync"
+    AnShengDelayTaskDto .. AnShengDelayTask : "映射"
+    AnShengSwitchResultDto .. AnShengCommandResponse : "包裹"
+    AnShengDelayTaskResultDto .. AnShengCommandResponse : "包裹"

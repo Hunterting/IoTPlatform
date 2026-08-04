@@ -13,31 +13,42 @@ namespace IoTPlatform.Services.AnShengEventHandlers;
 /// <summary>
 /// <c>delayEvent</c>（延时到期）事件 Handler。
 ///
-/// 业务动作：解析位路号 <c>slot_num</c>，连同展平的 <c>slot{n}_state</c> 快照落库 / 投递规则引擎。
+/// 业务动作：解析位路号 <c>slot_num</c> 及同帧的 <c>slots[]</c> 快照，
+/// 调 <see cref="IAnShengScheduleService.ApplyDelayEventAsync"/> 把对应插槽镜像置
+/// <c>Enable=false</c> 并刷新 <see cref="AnShengDeviceProfile.SlotsSnapshot"/>（验收 #4）。
 ///
-/// 【T9 待办（设计 §8.7 W6）】延时任务的「镜像」（哪一路、何时到期、剩余时长）更新属 T9，
-/// 本 Handler 仅留 TODO 锚点，不做任务状态维护。
+/// 沿用 T6 双出口（出口①落 <see cref="AnShengDeviceEvent"/>、出口②投规则引擎），
+/// 仅把原 <c>TODO(W6/T9)</c> 锚点替换为真实镜像写回（设计 D-C）。
 /// </summary>
 public sealed class DelayEventHandler : AnShengEventHandlerBase
 {
+    /// <summary>
+    /// 延时任务调度服务（T8）。<b>可空</b>：仅当 <see cref="IAnShengScheduleService"/> 已注册时注入；
+    /// 该服务已在 <c>Program.cs</c> 注册为 Scoped，正常运行时非空。
+    /// </summary>
+    private readonly IAnShengScheduleService? _schedule;
+
     /// <summary>构造 Handler。</summary>
     public DelayEventHandler(
         AnShengDataNormalizer normalizer,
         IDataCollectionService collector,
         AppDbContext db,
-        ILogger<DelayEventHandler> logger)
+        ILogger<DelayEventHandler> logger,
+        IAnShengScheduleService? schedule = null)
         : base(normalizer, collector, db, logger)
     {
+        _schedule = schedule;
     }
 
     /// <inheritdoc />
     public override string Method => "delayEvent";
 
     /// <inheritdoc />
-    protected override Task<AnShengEventOutcome> OnHandleAsync(
+    protected override async Task<AnShengEventOutcome> OnHandleAsync(
         AnShengUplinkContext ctx, CancellationToken cancellationToken)
     {
         int? slotNum = null;
+        List<int>? slots = null;
         IDictionary<string, object?>? dataPoints = null;
 
         if (ctx.Message != null)
@@ -47,17 +58,31 @@ public sealed class DelayEventHandler : AnShengEventHandlerBase
             {
                 slotNum = i;
             }
+
+            // 同帧的 slots[] 已由 AnShengDataNormalizer 原样透传为 List<int>，
+            // 直接取出即可，无需二次解析报文体。
+            if (dataPoints.TryGetValue("slots", out var slotsObj) && slotsObj is List<int> sl)
+            {
+                slots = sl;
+            }
         }
 
-        // TODO(W6/T9): 延时任务镜像更新 —— 记录 scheduled task 的状态，待 T9 落位。
-        return Task.FromResult(new AnShengEventOutcome
+        // 延时任务镜像写回（验收 #4，设计 D-C）：
+        // delayEvent 表示该插槽的延时任务已执行完毕并自行结束，
+        // 由调度服务把对应行 Enable=false 并刷新插槽快照。
+        if (_schedule != null && ctx.DeviceId.HasValue)
+        {
+            await _schedule.ApplyDelayEventAsync(ctx.DeviceId.Value, slotNum ?? 0, slots, cancellationToken);
+        }
+
+        return new AnShengEventOutcome
         {
             DataPoints = dataPoints,
             SlotNum = slotNum,
             PersistEvent = true,
             DispatchToRules = true,
             Severity = AnShengEventSeverity.Info,
-            Note = "delayEvent 任务镜像见待办 W6（T9）",
-        });
+            Note = "delayEvent 触发的延时任务镜像更新（Enable=false + SlotsSnapshot 刷新）",
+        };
     }
 }

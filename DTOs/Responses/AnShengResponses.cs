@@ -357,4 +357,115 @@ public class AnShengDeviceProfileDto
 
     /// <summary>最近一次探测时间（UTC）。</summary>
     public DateTime? LastProbedAt { get; set; }
+
+    /// <summary>
+    /// 最近一次插槽状态快照（0=关 1=开），由设备应答写回（T8）。
+    /// 设备权威 + 异步刷新，可能为 <c>null</c>（尚未收到过任何带 <c>slots[]</c> 的应答）。
+    /// </summary>
+    public int[]? Slots { get; set; }
+
+    /// <summary><see cref="Slots"/> 写入时间（UTC）；未写回为 <c>null</c>。</summary>
+    public DateTime? SlotsSnapshotAt { get; set; }
+}
+
+/// <summary>
+/// 开关动作下发结果（T8 <c>action</c> / <c>actions</c> 端点）。
+///
+/// 包裹 <see cref="AnShengCommandResponse"/> 的关键字段，并附带<b>当前</b>插槽快照（来自
+/// <c>Profile.SlotsSnapshot</c>，可能尚未反映本次下发结果——设备应答异步写回）。
+/// </summary>
+public class AnShengSwitchResultDto
+{
+    /// <summary>平台是否受理并下发了命令（被 Guard 拒收时为 false）。</summary>
+    public bool Accepted { get; set; }
+
+    /// <summary>平台命令标识（GUID），被拒时为 null。</summary>
+    public string? CommandId { get; set; }
+
+    /// <summary>安圣 FrameId，被拒（未出网）时为 null。</summary>
+    public string? FrameId { get; set; }
+
+    /// <summary>
+    /// 机器可读拒绝原因；仅当命令被 <see cref="AnShengCommandGuard"/> 拦下时有值。
+    /// 验收 #5 断言点：喇叭类设备为 <see cref="AnShengCommandRejectReason.RejectedByKind"/>。
+    /// </summary>
+    public AnShengCommandRejectReason? RejectReason { get; set; }
+
+    /// <summary>面向人的失败原因（勿用于程序分支判断）。</summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>
+    /// 实际出网的 JSON 报文回显（被拒时为 <c>null</c>——因为压根没构造出网帧）。
+    ///
+    /// 【为什么响应体里要带原始报文】验收 #1 / #2 要断言「报文与协议文档字节级一致」
+    /// （<c>action</c> 的字段序、<c>actions</c> 的 <c>slotNums</c> 必须是数组而非逗号串）。
+    /// 若只回 <c>CommandId</c>，测试就得反查 <c>AnShengCommandRecord.RequestJson</c>——
+    /// 而那份是<b>掩码后</b>的，字节级断言在它上面不成立。
+    /// </summary>
+    public string? Payload { get; set; }
+
+    /// <summary>
+    /// 当前插槽状态快照（0=关 1=开），来自 <c>Profile.SlotsSnapshot</c>；
+    /// 设备应答尚未到达时可能为 <c>null</c> 或陈旧值。
+    /// </summary>
+    public int[]? Slots { get; set; }
+}
+
+/// <summary>
+/// 单个延时任务镜像的只读视图（T8 <c>getDelayTasks</c> 端点）。
+/// </summary>
+public class AnShengDelayTaskDto
+{
+    /// <summary>插槽编号，从 1 开始。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>是否启用。</summary>
+    public bool Enable { get; set; }
+
+    /// <summary>开始动作（on/off/toggle/none）。</summary>
+    public string SAction { get; set; } = "none";
+
+    /// <summary>结束动作（on/off/toggle）。</summary>
+    public string EAction { get; set; } = "off";
+
+    /// <summary>延时秒数。</summary>
+    public int Secs { get; set; }
+
+    /// <summary>任务计数快照（非实时）。</summary>
+    public int Cnt { get; set; }
+
+    /// <summary>镜像最后与设备同步的时刻（UTC）。</summary>
+    public DateTime SyncedAt { get; set; }
+
+    /// <summary>
+    /// 是否陈旧：<c>(UtcNow - SyncedAt) &gt; 24h</c>。设备权威 + 只读镜像，超时才标陈旧。
+    /// </summary>
+    public bool IsStale { get; set; }
+}
+
+/// <summary>
+/// 延时任务下发结果（T8 <c>startDelayTask</c> / <c>stopDelayTask</c> 端点）。
+///
+/// <see cref="Tasks"/> 为<b>乐观镜像快照</b>——命令一发出立即返回平台已有镜像，
+/// 真实的设备镜像由写后回读（getDelayTasks 应答经 Router 钩子）异步覆盖并 bump <see cref="AnShengDelayTask.SyncedAt"/>。
+/// </summary>
+public class AnShengDelayTaskResultDto
+{
+    /// <summary>平台是否受理并下发了命令。</summary>
+    public bool Accepted { get; set; }
+
+    /// <summary>平台命令标识（GUID），被拒时为 null。</summary>
+    public string? CommandId { get; set; }
+
+    /// <summary>安圣 FrameId，被拒时为 null。</summary>
+    public string? FrameId { get; set; }
+
+    /// <summary>机器可读拒绝原因；喇叭类设备为 <see cref="AnShengCommandRejectReason.RejectedByKind"/>。</summary>
+    public AnShengCommandRejectReason? RejectReason { get; set; }
+
+    /// <summary>面向人的失败原因。</summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>乐观镜像快照（立即返回，可能尚未反映本次下发）。</summary>
+    public List<AnShengDelayTaskDto>? Tasks { get; set; }
 }

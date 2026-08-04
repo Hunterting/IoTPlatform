@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.Data;
+using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using IoTPlatform.Models;
 using IoTPlatform.Services;
@@ -60,13 +61,46 @@ public sealed class AnShengEventRoutingTests : IDisposable
             new NoopProfileService(),
             _db,
             _parser,
-            NullLogger<AnShengMessageRouter>.Instance);
+            NullLogger<AnShengMessageRouter>.Instance,
+            new NoopScheduleService());
     }
 
     public void Dispose()
     {
         _pending.ClearAll();
         _db.Dispose();
+    }
+
+    /// <summary>
+    /// <see cref="IAnShengScheduleService"/> 的最小替身：T6 路由判定测试只关心 <c>Classify</c> 的五级顺序，
+    /// 不触发任何写后回读 / 镜像更新路径，因此这里全部走 no-op，仅满足 Router 构造的非空校验。
+    /// </summary>
+    private sealed class NoopScheduleService : IAnShengScheduleService
+    {
+        public Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
+            long deviceId, int slotNum, bool enable, string sAction, string eAction, int secs,
+            CancellationToken ct = default) =>
+            Task.FromResult(new AnShengDelayTaskResultDto());
+
+        public Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
+            long deviceId, int slotNum, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengDelayTaskResultDto());
+
+        public Task<List<AnShengDelayTaskDto>> GetDelayTasksAsync(
+            long deviceId, CancellationToken ct = default) =>
+            Task.FromResult(new List<AnShengDelayTaskDto>());
+
+        public Task ApplyDelayTasksReadbackAsync(
+            long deviceId, IReadOnlyList<AnShengDelayTaskItem> tasks, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task ApplyDelayEventAsync(
+            long deviceId, int slotNum, IReadOnlyList<int>? slots, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task UpdateSlotsSnapshotAsync(
+            long deviceId, IReadOnlyList<int> slots, CancellationToken ct = default) =>
+            Task.CompletedTask;
     }
 
     // ─────────────────────────────────────────────────────────────
