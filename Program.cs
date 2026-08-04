@@ -149,6 +149,51 @@ builder.Services.AddSingleton<IoTPlatform.Services.IAnShengProbeService, IoTPlat
 builder.Services.AddSingleton<IoTPlatform.Services.IAnShengDiscoveryService, IoTPlatform.Services.AnShengDiscoveryService>();
 builder.Services.AddHostedService(sp => (IoTPlatform.Services.AnShengDiscoveryService)sp.GetRequiredService<IoTPlatform.Services.IAnShengDiscoveryService>());
 
+// ───────────────────────────────────────────────────────────────────────────
+// T6 安圣事件识别与处理管道
+//
+// 生命周期约束（设计文档 §7.3）：
+//   · Pipeline / PendingCommandStore / OfflineDebouncer = Singleton（与 AnShengProbeService 一致）
+//   · Router / Dispatcher / Handler / Normalizer        = Scoped（要用 AppDbContext）
+//   · Singleton 绝不可直接注入 Scoped —— Pipeline 与 Debouncer 一律经
+//     IServiceScopeFactory.CreateScope() 取用 Scoped 服务。
+// ───────────────────────────────────────────────────────────────────────────
+builder.Services.Configure<IoTPlatform.Configuration.AnShengEventOptions>(
+    builder.Configuration.GetSection(IoTPlatform.Configuration.AnShengEventOptions.SectionName));
+
+// 报文解析器无状态，Singleton 即可（既有代码多处 new，这里为 DI 消费方提供一份共享实例）
+builder.Services.AddSingleton<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengMessageParser>();
+
+builder.Services.AddSingleton<IoTPlatform.Services.Interfaces.IAnShengPendingCommandStore,
+    IoTPlatform.Services.AnShengPendingCommandStore>();
+builder.Services.AddSingleton<IoTPlatform.Services.AnShengOfflineDebouncer>();
+
+// ★ Pipeline 在构造函数里订阅静态上行总线 AnShengUplinkHub。
+//   必须是 Singleton：注册为 Scoped 会每个请求订阅一次却从不退订，事件链无限增长。
+//   且必须在 app.Run() 之前被解析一次（见文件末尾），否则惰性构造永不发生、订阅永不生效。
+builder.Services.AddSingleton<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengUplinkPipeline>();
+
+builder.Services.AddScoped<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengDataNormalizer>();
+builder.Services.AddScoped<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengMessageRouter>();
+builder.Services.AddScoped<IoTPlatform.Services.AnShengEventDispatcher>();
+
+// 事件责任链：7 个 Handler 全部注册到 IAnShengEventHandler 集合，
+// 由 AnShengEventDispatcher 在构造时建 O(1) 索引并校验覆盖完整性（缺一即抛）。
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.ConnectedEventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.CloseEventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.KeyEventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.DelayEventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.TimeEventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.Recv485EventHandler>();
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEventHandler,
+    IoTPlatform.Services.AnShengEventHandlers.SimCheckEventHandler>();
+
 // 受控设备服务
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IControlledDeviceService, IoTPlatform.Services.ControlledDeviceService>();
 
@@ -375,6 +420,14 @@ app.MapControllers();
 
 // 配置SignalR
 app.MapHub<DeviceHub>("/hubs/device");
+
+// ★★★ T6 关键：强制解析 AnShengUplinkPipeline ★★★
+//
+// DI 的 Singleton 是惰性构造的。Pipeline 在<b>构造函数里</b>订阅静态总线 AnShengUplinkHub，
+// 若没有任何地方解析它，构造函数永远不执行 ⇒ 订阅永远不发生 ⇒
+// 所有安圣事件（含 close 遗嘱与 30 秒离线去抖）会<b>静默</b>失效：不报错、就是没数据。
+// 这是本次改动最容易被误删的一行，删除前请先读 AnShengUplinkPipeline 的类注释。
+app.Services.GetRequiredService<IoTPlatform.Infrastructure.Protocol.AnSheng.AnShengUplinkPipeline>();
 
 app.Run();
 

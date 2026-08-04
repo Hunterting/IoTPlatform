@@ -1,0 +1,368 @@
+%% T6 事件识别与处理管道 —— 数据结构与接口类图
+%% 说明：仅画 T6 新增/修改的部分，以及与之直接接壤的既有类（标注 <<existing>>）。
+classDiagram
+    direction LR
+
+    %% ═══════════ 既有：上行入口（T2 / T5 产出，本次不改） ═══════════
+    class AnShengMqttProtocolAdapter {
+        <<existing>>
+        -AnShengMessageParser _parser
+        +OnMessageReceivedAsync(e) Task
+        +DataReceived EventHandler
+        +DeviceWill EventHandler$
+        -HandleWillMessage(imei, raw) void
+    }
+
+    class AnShengUplinkHub {
+        <<existing static>>
+        +Uplink EventHandler$
+        +Publish(imei, method, msg, raw)$ void
+        +Reset()$ void
+    }
+
+    class AnShengUplinkEventArgs {
+        <<existing>>
+        +string Imei
+        +string Method
+        +AnShengMessage Message
+        +string RawPayload
+        +DateTime ReceivedAt
+    }
+
+    class AnShengMessage {
+        <<existing>>
+        +string Method
+        +string Result
+        +string Imei
+        +string FrameId
+        +long RawTimestamp
+        +DateTime TimestampUtc
+        +DateTime ReceivedAt
+        +string RawJson
+        +bool IsEvent
+    }
+
+    class AnShengCommandCatalog {
+        <<existing static>>
+        +EventMethods IReadOnlyCollection~string~$
+        +IsEvent(method)$ bool
+        +WillMethod string$
+    }
+
+    %% ═══════════ T6 新增：管道入口 ═══════════
+    class AnShengUplinkPipeline {
+        <<new singleton>>
+        -IServiceScopeFactory _scopes
+        -ILogger _logger
+        -int _inFlight
+        +AnShengUplinkPipeline(scopes, logger)
+        -OnUplink(sender, AnShengUplinkEventArgs) void
+        -ProcessAsync(AnShengUplinkEventArgs) Task
+        +DrainAsync(TimeSpan timeout) Task~bool~
+        +Dispose() void
+    }
+
+    %% ═══════════ T6 新增：路由 ═══════════
+    class AnShengRouteKind {
+        <<enumeration>>
+        Event
+        Response
+        AutoReport
+        Ignored
+    }
+
+    class AnShengRouteResult {
+        <<new record>>
+        +AnShengRouteKind Kind
+        +string Imei
+        +string Method
+        +string FrameId
+        +string Reason
+    }
+
+    class AnShengMessageRouter {
+        <<new>>
+        -IAnShengPendingCommandStore _pending
+        -AnShengEventDispatcher _events
+        -IAnShengDeviceProfileService _profiles
+        -AppDbContext _db
+        -ILogger _logger
+        +RouteAsync(AnShengUplinkContext ctx) Task~AnShengRouteResult~
+        +Classify(AnShengMessage msg, string imei) AnShengRouteKind
+        -SoftEventMethods IReadOnlySet~string~$
+        -RefreshProfileAsync(ctx) Task
+    }
+
+    class AnShengUplinkContext {
+        <<new record>>
+        +string Imei
+        +AnShengMessage Message
+        +string RawPayload
+        +DateTime ReceivedAt
+        +long DeviceId
+        +string AppCode
+        +AnShengDeviceProfile Profile
+    }
+
+    %% ═══════════ T6 新增：归一化 ═══════════
+    class AnShengDataNormalizer {
+        <<new>>
+        -AnShengMessageParser _parser
+        +Normalize(AnShengMessage msg) IDictionary~string, object~
+        +NormalizeToJson(AnShengMessage msg) string
+        +NormalizeEvent(AnShengMessage msg) IDictionary~string, object~
+        -FlattenDevStatus(AnShengDevStatus s, dict) void
+        -FlattenSlots(List~int~ slots, dict) void
+        -FlattenEmData(List~AnShengEmData~ em, dict) void
+    }
+
+    %% ═══════════ T6 新增：事件分发与责任链 ═══════════
+    class AnShengEventDispatcher {
+        <<new scoped>>
+        -IEnumerable~IAnShengEventHandler~ _handlers
+        -ILogger _logger
+        +DispatchAsync(AnShengUplinkContext ctx) Task~bool~
+    }
+
+    class IAnShengEventHandler {
+        <<interface>>
+        +string Method
+        +HandleAsync(AnShengUplinkContext ctx) Task~AnShengEventOutcome~
+    }
+
+    class AnShengEventOutcome {
+        <<new record>>
+        +bool PersistEvent
+        +bool DispatchToRules
+        +AnShengEventSeverity Severity
+        +int SlotNum
+        +IDictionary~string, object~ DataPoints
+        +string Note
+    }
+
+    class AnShengEventHandlerBase {
+        <<abstract new>>
+        #AppDbContext Db
+        #AnShengDataNormalizer Normalizer
+        #IDataCollectionService Collector
+        #AnShengEventOptions Options
+        +HandleAsync(ctx) Task~AnShengEventOutcome~
+        #OnHandleAsync(ctx) Task~AnShengEventOutcome~*
+        #PersistAsync(ctx, outcome) Task~AnShengDeviceEvent~
+        #DispatchToRulesAsync(ctx, outcome) Task~bool~
+    }
+
+    class ConnectedEventHandler {
+        <<new>>
+        -AnShengOfflineDebouncer _debouncer
+        -IAnShengDiscoveryService _discovery
+        +Method = "connected"
+    }
+    class CloseEventHandler {
+        <<new>>
+        -AnShengOfflineDebouncer _debouncer
+        +Method = "close"
+    }
+    class KeyEventHandler {
+        <<new>>
+        +Method = "keyEvent"
+    }
+    class DelayEventHandler {
+        <<new>>
+        +Method = "delayEvent"
+    }
+    class TimeEventHandler {
+        <<new>>
+        +Method = "timeEvent"
+    }
+    class Recv485EventHandler {
+        <<new>>
+        +Method = "recv485"
+    }
+    class SimCheckEventHandler {
+        <<new>>
+        +Method = "simCheck"
+    }
+
+    %% ═══════════ T6 新增：离线去抖 ═══════════
+    class AnShengOfflineDebouncer {
+        <<new singleton>>
+        -ConcurrentDictionary~string, CancellationTokenSource~ _pending
+        -IServiceScopeFactory _scopes
+        -TimeSpan _window
+        +ArmAsync(string imei, string appCode) void
+        +Cancel(string imei) bool
+        +IsArmed(string imei) bool
+        +ClearAll() void
+    }
+
+    %% ═══════════ T6 新增（T7 增强）：在途命令表 ═══════════
+    class IAnShengPendingCommandStore {
+        <<interface new>>
+        +TryRegister(string imei, string frameId, PendingCommand cmd) bool
+        +IsInFlight(string imei, string frameId) bool
+        +CompleteAsync(string imei, string frameId, AnShengMessage resp) Task~PendingCommand~
+        +SweepExpiredAsync() Task~int~
+        +ClearAll() void
+        +Count int
+    }
+
+    class AnShengPendingCommandStore {
+        <<new singleton>>
+        -ConcurrentDictionary~string, PendingCommand~ _entries
+        -TimeSpan _defaultTtl
+        -Key(imei, frameId)$ string
+    }
+
+    class PendingCommand {
+        <<new record>>
+        +long CommandId
+        +string Imei
+        +string FrameId
+        +string Method
+        +DateTime SentAt
+        +DateTime ExpiresAt
+        +bool IsExpired
+    }
+
+    %% ═══════════ T6 新增：持久化模型 ═══════════
+    class AnShengDeviceEvent {
+        <<new entity>>
+        +long Id
+        +string AppCode
+        +string Imei
+        +long DeviceId
+        +string Method
+        +AnShengEventKind Kind
+        +AnShengEventSeverity Severity
+        +int SlotNum
+        +string FrameId
+        +DateTime OccurredAt
+        +DateTime DeviceTimestampUtc
+        +DateTime ReceivedAt
+        +string PayloadJson
+        +string RawJson
+        +bool DispatchedToRules
+        +string DispatchError
+        +DateTime CreatedAt
+    }
+
+    class AnShengEventKind {
+        <<enumeration>>
+        Unknown = 0
+        Connected = 1
+        Close = 2
+        Key = 3
+        Delay = 4
+        Time = 5
+        Recv485 = 6
+        SimCheck = 7
+    }
+
+    class AnShengEventSeverity {
+        <<enumeration>>
+        Info = 0
+        Warning = 1
+        Critical = 2
+    }
+
+    class AnShengEventOptions {
+        <<new options>>
+        +int CloseDebounceSeconds = 30
+        +bool PersistRecv485 = false
+        +bool SuppressLegacyDataBridge = false
+        +int RetentionDays = 90
+        +int PendingTtlSeconds = 30
+    }
+
+    %% ═══════════ 既有：被复用的下游 ═══════════
+    class IDataCollectionService {
+        <<existing>>
+        +ProcessDeviceDataAsync(deviceId, appCode, sensorData, timestamp) Task
+    }
+    class ProtocolConfigService {
+        <<existing modified>>
+        -OnProtocolAdapterDataReceived(e, appCode) Task
+        -ShouldSkipLegacyBridge(e) bool
+    }
+    class DataCollectionService {
+        <<existing modified>>
+        -SensorFieldMappings Dictionary$
+        -TryResolveSensorField(key, out setter)$ bool
+        -SlotFieldRegex Regex$
+    }
+    class IAnShengDeviceProfileService {
+        <<existing modified>>
+        +RefreshAsync(imei, appCode, snapshot, ct) Task~AnShengDeviceProfile~
+    }
+    class IAnShengDiscoveryService {
+        <<existing modified>>
+        +OnDeviceOnlineAsync(imei, model, netType, appCode) Task
+        +OnDeviceOfflineAsync(imei, appCode, ct) Task
+    }
+    class AnShengDeviceProfile {
+        <<existing>>
+        +long Id
+        +string Imei
+        +long DeviceId
+        +AnShengDeviceKind Kind
+        +int SlotAmount
+    }
+    class DeviceDataRecord {
+        <<existing>>
+        +long Id
+        +long DeviceId
+        +string SensorData
+        +double Temperature
+        +double ElectricPower
+        +double ElectricKWh
+    }
+
+    %% ═══════════ 关系 ═══════════
+    AnShengMqttProtocolAdapter ..> AnShengUplinkHub : Publish（Will 判定之前，100% 覆盖）
+    AnShengMqttProtocolAdapter ..> ProtocolConfigService : DataReceived（close 除外）
+    AnShengUplinkHub --> AnShengUplinkEventArgs : 载荷
+    AnShengUplinkEventArgs --> AnShengMessage : 携带
+
+    AnShengUplinkPipeline ..> AnShengUplinkHub : 构造时订阅 Uplink
+    AnShengUplinkPipeline --> AnShengUplinkContext : 组装（补 DeviceId/AppCode/Profile）
+    AnShengUplinkPipeline --> AnShengMessageRouter : RouteAsync
+
+    AnShengMessageRouter --> AnShengRouteResult : 产出
+    AnShengMessageRouter ..> AnShengRouteKind : 判定
+    AnShengMessageRouter ..> AnShengCommandCatalog : 硬事件白名单（6）
+    AnShengMessageRouter --> IAnShengPendingCommandStore : Response 分支
+    AnShengMessageRouter --> AnShengEventDispatcher : Event 分支
+    AnShengMessageRouter ..> IAnShengDeviceProfileService : RefreshAsync（getDevInfo/getDevStatus）
+    AnShengMessageRouter ..> IDataCollectionService : AutoReport 不重复投递（既有通路已承载）
+
+    AnShengEventDispatcher "1" o-- "7" IAnShengEventHandler : 按 Method 分发
+    AnShengEventHandlerBase ..|> IAnShengEventHandler
+    ConnectedEventHandler --|> AnShengEventHandlerBase
+    CloseEventHandler --|> AnShengEventHandlerBase
+    KeyEventHandler --|> AnShengEventHandlerBase
+    DelayEventHandler --|> AnShengEventHandlerBase
+    TimeEventHandler --|> AnShengEventHandlerBase
+    Recv485EventHandler --|> AnShengEventHandlerBase
+    SimCheckEventHandler --|> AnShengEventHandlerBase
+    IAnShengEventHandler --> AnShengEventOutcome : 返回
+
+    AnShengEventHandlerBase --> AnShengDeviceEvent : 出口①写事件表
+    AnShengEventHandlerBase --> IDataCollectionService : 出口②投递 DataRule
+    AnShengEventHandlerBase --> AnShengDataNormalizer : 归一化数据点
+    AnShengEventHandlerBase ..> AnShengEventOptions : 读配置
+
+    ConnectedEventHandler --> AnShengOfflineDebouncer : Cancel（撤销待离线）
+    CloseEventHandler --> AnShengOfflineDebouncer : Arm（30s 后落离线）
+    AnShengOfflineDebouncer ..> IAnShengDiscoveryService : 窗口到期调 OnDeviceOfflineAsync
+
+    AnShengPendingCommandStore ..|> IAnShengPendingCommandStore
+    IAnShengPendingCommandStore ..> PendingCommand : 存取
+
+    AnShengDeviceEvent ..> AnShengEventKind : int 落库
+    AnShengDeviceEvent ..> AnShengEventSeverity : int 落库
+
+    AnShengDataNormalizer ..> AnShengMessage : 输入
+    DataCollectionService ..> DeviceDataRecord : slot{n}_* / signal / temperature 映射
+    ProtocolConfigService --> IDataCollectionService : AutoReport 既有通路（100% 复用）
+    AnShengUplinkContext --> AnShengDeviceProfile : 携带（可为 null）

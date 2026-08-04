@@ -70,6 +70,7 @@ public class AppDbContext : DbContext
     public DbSet<AnShengDeviceConfig> AnShengDeviceConfigs { get; set; }
     public DbSet<DiscoveredAnShengDevice> DiscoveredAnShengDevices { get; set; }
     public DbSet<AnShengDeviceProfile> AnShengDeviceProfiles { get; set; }
+    public DbSet<AnShengDeviceEvent> AnShengDeviceEvents { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -123,6 +124,7 @@ public class AppDbContext : DbContext
         ConfigureAnShengDeviceConfigs(modelBuilder);
         ConfigureDiscoveredAnShengDevices(modelBuilder);
         ConfigureAnShengDeviceProfiles(modelBuilder);
+        ConfigureAnShengDeviceEvents(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -461,6 +463,56 @@ public class AppDbContext : DbContext
             entity.Property(e => e.Kind).HasConversion<int>();
             entity.Property(e => e.KindSource).HasConversion<int>();
             entity.Property(e => e.ProbeStatus).HasConversion<int>();
+        });
+    }
+
+    /// <summary>
+    /// 安圣设备事件溯源表配置（T6）。
+    ///
+    /// 【索引设计理由】
+    ///   · <c>(Imei, OccurredAt)</c>：设备事件时间线，是本表<b>唯一的高频查询场景</b>
+    ///     （运维打开某台设备详情页看「它都发生过什么」）。IMEI 在未认领时也存在，
+    ///     所以它比 DeviceId 更适合做时间线主索引。
+    ///   · <c>(DeviceId, OccurredAt)</c>：从平台设备维度反查（设备详情页已认领分支）。
+    ///   · <c>(AppCode, Kind, OccurredAt)</c>：租户维度按事件类型统计。
+    ///     AppCode 打头是因为 HTTP 侧查询会被全局租户过滤器自动加 <c>WHERE AppCode = ?</c>，
+    ///     不打头则该谓词用不上索引。
+    ///
+    /// 【MySQL 5.7.26 约束】
+    ///   · 枚举列一律 <c>int</c>（<c>HasConversion&lt;int&gt;()</c>），禁原生 ENUM；
+    ///   · <b>不使用降序索引</b>——5.7 会静默忽略 DESC 关键字（只当普通索引建），
+    ///     写了会给人「已按倒序优化」的错觉。倒序扫描由优化器自行处理，普通索引足够；
+    ///   · 不使用 CHECK 约束（5.7 静默忽略）；
+    ///   · <c>PayloadJson</c> / <c>RawJson</c> 显式声明 <c>longtext</c>，只存不查、不进索引；
+    ///   · 时间列由 Pomelo 默认映射为 <c>datetime(6)</c>，存 UTC。
+    ///
+    /// 【不建分区表】5.7 的分区在外键与运维工具上限制颇多，当前也没有分区运维预案。
+    ///   保留期由 <c>AnShengEventOptions.RetentionDays</c> 声明，清理作业见待办 W3。
+    /// </summary>
+    private void ConfigureAnShengDeviceEvents(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengDeviceEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.Imei).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.Method).HasMaxLength(32).IsRequired();
+            entity.Property(e => e.FrameId).HasMaxLength(64);
+            entity.Property(e => e.DispatchError).HasMaxLength(AnShengDeviceEvent.DispatchErrorMaxLength);
+
+            entity.Property(e => e.Kind).HasConversion<int>();
+            entity.Property(e => e.Severity).HasConversion<int>();
+
+            entity.Property(e => e.PayloadJson).HasColumnType("longtext");
+            entity.Property(e => e.RawJson).HasColumnType("longtext");
+
+            entity.HasIndex(e => new { e.Imei, e.OccurredAt })
+                .HasDatabaseName("IX_AnShengDeviceEvents_Imei_OccurredAt");
+            entity.HasIndex(e => new { e.DeviceId, e.OccurredAt })
+                .HasDatabaseName("IX_AnShengDeviceEvents_DeviceId_OccurredAt");
+            entity.HasIndex(e => new { e.AppCode, e.Kind, e.OccurredAt })
+                .HasDatabaseName("IX_AnShengDeviceEvents_AppCode_Kind_OccurredAt");
         });
     }
 

@@ -1,0 +1,168 @@
+%% T6 事件识别与处理管道 —— 程序调用流程时序图
+%% 三条主链路：① keyEvent 事件  ② getDevStatus 自动上报  ③ 带在途 frameId 的 getDevStatus 应答
+%% 附：④ close → 30s 去抖 → connected 撤销（验收 #5）
+
+sequenceDiagram
+    autonumber
+    participant DEV as 安圣设备
+    participant MQ as MQTT Broker
+    participant AD as AnShengMqttProtocolAdapter
+    participant PRS as AnShengMessageParser
+    participant HUB as AnShengUplinkHub<br/>(static)
+    participant PIPE as AnShengUplinkPipeline<br/>(Singleton)
+    participant DB as AppDbContext
+    participant RT as AnShengMessageRouter
+    participant PEND as IAnShengPendingCommandStore
+    participant DISP as AnShengEventDispatcher
+    participant H as KeyEventHandler
+    participant NRM as AnShengDataNormalizer
+    participant PCS as ProtocolConfigService
+    participant DC as IDataCollectionService
+    participant PROF as IAnShengDeviceProfileService
+    participant DBC as AnShengOfflineDebouncer
+    participant DISC as IAnShengDiscoveryService
+
+    %% ══════════════════════════════════════════════════════════
+    rect rgb(232, 245, 233)
+    Note over DEV,DC: ① keyEvent 上行 —— 事件旁路（验收 #1 #4）
+
+    DEV->>MQ: {"method":"keyEvent","imei":"8645…",<br/>"slotNum":2,"slots":[0,1],"timestamp":1745396759}
+    MQ->>AD: OnMessageReceivedAsync(topic, payload)
+    AD->>PRS: Parse(payload)
+    PRS-->>AD: AnShengMessage{Method:"keyEvent", FrameId:null,<br/>TimestampUtc, RawJson}
+    AD->>AD: LearnDeviceKind(imei, msg)
+    AD->>HUB: Publish(imei, "keyEvent", msg, rawPayload)
+
+    HUB->>PIPE: OnUplink(AnShengUplinkEventArgs)
+    Note over PIPE: 同步回调跑在 MQTT 接收线程 ⇒ 立刻 Task.Run 卸载<br/>_inFlight++（供 DrainAsync 等待）
+    PIPE->>PIPE: CreateScope()
+    PIPE->>DB: Devices.FirstOrDefault(SerialNumber == imei)
+    DB-->>PIPE: Device{Id:1001, AppCode:"demo"}
+    PIPE->>DB: AnShengDeviceProfiles.FirstOrDefault(Imei == imei)
+    DB-->>PIPE: profile（可能为 null，全链路容忍）
+    PIPE->>RT: RouteAsync(ctx{Imei, Msg, DeviceId:1001, AppCode:"demo", Profile})
+
+    RT->>RT: Classify(msg, imei)
+    Note over RT: ① 硬事件白名单命中 "keyEvent" ⇒ Event<br/>（白名单优先于 frameId，delayEvent 同理）
+    RT->>DISP: DispatchAsync(ctx)
+    DISP->>DISP: 按 Method 索引命中 KeyEventHandler（O(1)，无 switch）
+    DISP->>H: HandleAsync(ctx)
+
+    H->>NRM: NormalizeEvent(msg)
+    NRM-->>H: {"event":"keyEvent","event_key":1,<br/>"slot_num":2,"slot1_state":0,"slot2_state":1}
+    H-->>H: OnHandleAsync ⇒ Outcome{PersistEvent:true,<br/>DispatchToRules:true, Severity:Info, SlotNum:2}
+
+    Note over H,DB: 出口① —— 统一写事件表
+    H->>DB: Add(AnShengDeviceEvent{DeviceId:1001, Imei, Method:"keyEvent",<br/>Kind:Key, OccurredAt=TimestampUtc, ReceivedAt, PayloadJson, RawJson})
+    H->>DB: SaveChangesAsync()
+    DB-->>H: eventId
+
+    Note over H,DC: 出口② —— 向既有 DataRule 规则引擎投递归一化数据点
+    H->>DC: ProcessDeviceDataAsync(1001, "demo", payloadJson, OccurredAt)
+    DC->>DC: 解析 JSON → 命中 DataRule → 触发告警
+    DC-->>H: ok
+    H->>DB: UPDATE AnShengDeviceEvent SET DispatchedToRules = 1
+    H-->>DISP: Outcome
+    DISP-->>RT: handled = true
+    RT-->>PIPE: RouteResult{Kind: Event}
+    PIPE->>PIPE: _inFlight--
+
+    Note over AD,PCS: 既有通路并存：keyEvent 同样触发 DataReceived，<br/>PCS 照旧落一条原始 DeviceDataRecord（默认不抑制，见决策 B-2）
+    AD->>PCS: DataReceived(DeviceId=0, SerialNumber=imei, Data=rawJson)
+    PCS->>DC: ProcessDeviceDataAsync(1001, "demo", rawJson, ReceivedAt)
+    end
+
+    %% ══════════════════════════════════════════════════════════
+    rect rgb(232, 240, 254)
+    Note over DEV,PROF: ② getDevStatus 自动上报 —— AutoReport 100% 走既有通路（验收 #2 #6）
+
+    DEV->>MQ: {"method":"getDevStatus","imei":"8645…","netType":"4G",<br/>"signal":22,"temperature":32.4,"slots":[0,1,0,0],<br/>"EMdata":[{"v":220.1,"c":0.5,"p":110,"e":3.2}, …]}<br/>（无 frameId）
+    MQ->>AD: OnMessageReceivedAsync
+    AD->>PRS: Parse → msg{Method:"getDevStatus", FrameId:null}
+    AD->>HUB: Publish(imei, "getDevStatus", msg, raw)
+
+    HUB->>PIPE: OnUplink
+    PIPE->>RT: RouteAsync(ctx)
+    RT->>RT: Classify
+    Note over RT: 非事件；FrameId 为空 ⇒ AutoReport
+    RT->>PEND: （跳过，无 frameId 可查）
+    Note over RT,DC: AutoReport 分支在本管道内<b>不落库</b>——<br/>既有 DataReceived 通路已承载，重复投递会写双份记录
+    RT->>PROF: RefreshAsync(imei, appCode, snapshot{NetType,SlotAmount,Version,Iccid,Signal})
+    PROF->>DB: 查 Profile(imei)
+    alt 档案不存在（决策 A）
+        PROF-->>RT: null —— 不建档，未认领设备继续走 discovered 池
+    else 档案存在
+        PROF->>PROF: MergeSnapshot + ResolveKind（Manual 不被覆盖）
+        PROF->>DB: SaveChangesAsync()
+        PROF-->>RT: profile
+    end
+    RT-->>PIPE: RouteResult{Kind: AutoReport}
+
+    Note over AD,DC: —— 既有通路（本次未改结构，只改归一化产物与字段映射表）——
+    AD->>PRS: NormalizeForSensorData(msg, topic)
+    PRS->>NRM: Normalize(msg)   ← T6 新增委托
+    NRM-->>PRS: 扁平字典 {net_type, signal:22, temperature:32.4,<br/>slot1_state:0, slot1_voltage:220.1, slot1_current:0.5,<br/>slot1_power:110, slot1_energy:3.2, …,<br/>total_power, total_energy, avg_voltage, slot_count}
+    PRS-->>AD: 压缩 JSON
+    AD->>PCS: DataReceived(DeviceId=0, SerialNumber=imei, Data=flatJson)
+    PCS->>DB: 按 IMEI 查 Device → DeviceId=1001, AppCode="demo"
+    PCS->>DC: ProcessDeviceDataAsync(1001, "demo", flatJson, ReceivedAt)
+    DC->>DC: TryResolveSensorField 逐键解析<br/>· "temperature" → 精确命中 → Temperature 列<br/>· "signal" → 精确命中（T6 新增）<br/>· "slot1_power" → SlotFieldRegex 命中 → 计入 mappedFields<br/>· "total_power" → ElectricPower 列
+    DC->>DB: Insert DeviceDataRecord{Temperature:32.4, ElectricPower, ElectricKWh,<br/>SensorData: flatJson}
+    DC->>DB: 更新 DeviceSensor.LastValue（含全部 slot{n}_* 键）
+    end
+
+    %% ══════════════════════════════════════════════════════════
+    rect rgb(255, 248, 225)
+    Note over DEV,PEND: ③ 带在途 frameId 的 getDevStatus —— Response（验收 #2）
+
+    Note over PEND: 前置：T7 CommandService 下发时已 TryRegister("8645…", "a1b2…")<br/>（T6 由测试直接登记，生产写入方是 T7）
+    DEV->>MQ: {"method":"getDevStatus","imei":"8645…","result":"ok",<br/>"frameId":"a1b2…","slots":[0,1,0,0]}
+    MQ->>AD: OnMessageReceivedAsync
+    AD->>HUB: Publish(imei, "getDevStatus", msg, raw)
+    HUB->>PIPE: OnUplink
+    PIPE->>RT: RouteAsync(ctx)
+    RT->>RT: Classify：非硬事件 ⇒ 查 frameId
+    RT->>PEND: IsInFlight("8645…", "a1b2…")
+    PEND-->>RT: true（key = "{imei}:{frameId}"，跨设备同号不串扰）
+    Note over RT: ⇒ Response
+    RT->>PEND: CompleteAsync(imei, frameId, msg)
+    PEND-->>RT: PendingCommand{CommandId:8801}
+    Note over RT: T6 到此为止：只摘除在途条目。<br/>更新 AnShengCommandRecord(Status/ResponseJson) 是 T7 的增强点
+    RT->>PROF: RefreshAsync（getDevStatus 应答同样刷档案）
+    RT-->>PIPE: RouteResult{Kind: Response}
+
+    Note over AD,DC: 既有 DataReceived 通路照常落 DeviceDataRecord（应答也是有效状态快照）
+    end
+
+    %% ══════════════════════════════════════════════════════════
+    rect rgb(255, 235, 238)
+    Note over DEV,DISC: ④ close → 30s 去抖 → connected 撤销（验收 #5）
+
+    DEV--x MQ: 断链，Broker 投递遗嘱
+    MQ->>AD: {"method":"close","imei":"8645…"}
+    AD->>HUB: Publish(imei, "close", msg, raw)
+    Note over AD: ★ Publish 在 Will 早退之前 ⇒ close 一定能到管道<br/>★ 之后 HandleWillMessage 早退，close <b>不会</b>触发 DataReceived
+    AD->>AD: HandleWillMessage → DeviceWill 静态事件
+    Note over DISC: T6 摘除 AnShengDiscoveryService 对 DeviceWill 的直连订阅，<br/>否则它会立刻置离线，30s 去抖形同虚设
+
+    HUB->>PIPE: OnUplink("close")
+    PIPE->>RT: RouteAsync
+    RT->>DISP: DispatchAsync（close ∈ 硬事件白名单）
+    DISP->>H: CloseEventHandler.HandleAsync
+    H->>DB: Add(AnShengDeviceEvent{Kind:Close, Severity:Warning})
+    H->>DBC: Arm(imei, appCode) —— 起 30s 定时器
+    DBC-->>H: armed
+
+    alt 30s 内收到 connected（去抖生效）
+        DEV->>MQ: {"method":"connected","imei":"8645…"}
+        MQ->>AD: → HUB → PIPE → RT → DISP → ConnectedEventHandler
+        DISP->>DBC: Cancel(imei)
+        DBC-->>DISP: true（定时器取消，设备<b>不</b>被置离线）
+        DISP->>DISC: OnDeviceOnlineAsync(imei, …)（沿用既有上线通路）
+        DISP->>DB: Add(AnShengDeviceEvent{Kind:Connected, Severity:Info})
+    else 窗口到期无 connected
+        DBC->>DBC: 定时器触发
+        DBC->>DISC: OnDeviceOfflineAsync(imei, appCode)
+        DISC->>DB: Device.Status = "offline"; discovered.LastSeenAt = null
+    end
+    end

@@ -458,15 +458,54 @@ public class AnShengDeviceProfileServiceTests : IDisposable
     // 六、RefreshAsync：上行自学习不得越权
     // ─────────────────────────────────────────────────────────────
 
-    /// <summary>首次上行刷新，来源标 Uplink。</summary>
+    /// <summary>
+    /// 已认领设备的首次上行刷新，来源标 Uplink。
+    ///
+    /// 【T6 决策 A 后的前置条件变化】
+    ///   <c>RefreshAsync</c> 不再隐式建档，因此本用例必须先用 <c>GetOrCreateAsync</c>
+    ///   模拟"认领已完成、档案已存在"的状态，否则拿到的是 null 而不是 Uplink 档案。
+    ///   这不是测试将就实现 —— 未认领设备本来就不该有档案，见
+    ///   <see cref="RefreshAsync_Should_Return_Null_When_Profile_Missing"/>。
+    /// </summary>
     [Fact]
     public async Task RefreshAsync_Should_Mark_Uplink_Source()
+    {
+        // 前置：认领流程已建档（此时 Kind=Unknown、KindSource=Unknown）。
+        await _service.GetOrCreateAsync(Imei, AppCode);
+        await _db.SaveChangesAsync();
+
+        var profile = await _service.RefreshAsync(
+            Imei, AppCode, new AnShengCapabilitySnapshot(NetType: "4G", SlotAmount: 4));
+
+        Assert.NotNull(profile);
+        Assert.Equal(AnShengDeviceKind.Switch4G, profile!.Kind);
+        Assert.Equal(AnShengKindSource.Uplink, profile.KindSource);
+    }
+
+    /// <summary>
+    /// 【T6 决策 A】档案不存在时，<c>RefreshAsync</c> 必须返回 <c>null</c> 且<b>绝不建档</b>。
+    ///
+    /// 【为什么这条是红线】
+    ///   上行报文只带 <c>netType</c>/<c>slotAmount</c>，档案 Kind 只能靠三级前缀猜测。
+    ///   一旦猜错并落库，<c>SyncDeviceKindCache</c> 会把错误品类推进适配器静态字典，
+    ///   <c>AnShengCommandCatalog.GroupSwitchAction</c> 会**确定地**拦掉 10 条下发命令 ——
+    ///   比 <c>Unknown</c>（fail-open 放行一切）严格更糟。
+    ///   因此档案的唯一创建入口收敛为认领流程（强制 getDevInfo + getDevStatus 硬事实）。
+    ///   详见 t5-profile-system-design.md §605-630 与 t6-event-pipeline-design.md §8.1。
+    /// </summary>
+    [Fact]
+    public async Task RefreshAsync_Should_Return_Null_When_Profile_Missing()
     {
         var profile = await _service.RefreshAsync(
             Imei, AppCode, new AnShengCapabilitySnapshot(NetType: "4G", SlotAmount: 4));
 
-        Assert.Equal(AnShengDeviceKind.Switch4G, profile.Kind);
-        Assert.Equal(AnShengKindSource.Uplink, profile.KindSource);
+        Assert.Null(profile);
+
+        // 关键断言：不仅返回 null，连一行"孤儿档案"都不许留下。
+        Assert.Equal(0, await _db.AnShengDeviceProfiles.CountAsync());
+
+        // 连带断言：也不许把猜测出来的品类推进适配器静态字典。
+        Assert.Equal(AnShengDeviceKind.Unknown, AnShengMqttProtocolAdapter.GetDeviceKind(Imei));
     }
 
     /// <summary>
@@ -482,7 +521,8 @@ public class AnShengDeviceProfileServiceTests : IDisposable
         var profile = await _service.RefreshAsync(
             Imei, AppCode, new AnShengCapabilitySnapshot(NetType: "4G", SlotAmount: 4));
 
-        Assert.Equal(AnShengKindSource.Probe, profile.KindSource);
+        Assert.NotNull(profile);
+        Assert.Equal(AnShengKindSource.Probe, profile!.KindSource);
     }
 
     /// <summary>Manual 是最高权威，上行自学习永远改不动它。</summary>
@@ -499,7 +539,8 @@ public class AnShengDeviceProfileServiceTests : IDisposable
         var profile = await _service.RefreshAsync(
             Imei, AppCode, new AnShengCapabilitySnapshot(NetType: "4G", SlotAmount: 4));
 
-        Assert.Equal(AnShengDeviceKind.Speaker4G, profile.Kind);
+        Assert.NotNull(profile);
+        Assert.Equal(AnShengDeviceKind.Speaker4G, profile!.Kind);
         Assert.Equal(AnShengKindSource.Manual, profile.KindSource);
 
         // 能力字段仍如实记录设备自报值 —— 品类是结论，slotAmount 是事实，两者互不干扰。

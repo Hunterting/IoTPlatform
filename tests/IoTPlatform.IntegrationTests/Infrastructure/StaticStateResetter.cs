@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using IoTPlatform.Infrastructure.Protocol.Adapters;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace IoTPlatform.IntegrationTests.Infrastructure;
@@ -10,11 +11,20 @@ namespace IoTPlatform.IntegrationTests.Infrastructure;
 /// 静态状态清理器（架构方案 §3.6）。
 ///
 /// 【为什么必须有】
-///   安圣链路上存在三处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
+///   安圣链路上存在五处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
 ///     1. <c>AnShengMqttProtocolAdapter.DeviceKinds</c>      —— IMEI → 设备型号，影响指令目录校验；
 ///     2. <c>AnShengCommandService.FrameIdCommandIdMap</c>   —— frameId → commandId，影响回包关联；
-///     3. <c>AnShengProbeService</c> 的在途等待表             —— (imei, method) → 等待者，影响探测。
+///     3. <c>AnShengProbeService</c> 的在途等待表             —— (imei, method) → 等待者，影响探测；
+///     4. <c>AnShengOfflineDebouncer</c> 的在途去抖窗口       —— IMEI → CTS，影响 T6 验收 #5（★ 最毒）；
+///     5. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定。
 ///   若不清理，用例 A 注册的设备型号会泄漏给用例 B，制造「单跑绿、连跑红」的幽灵失败。
+///
+/// 【T6 新增的 4 / 5 为什么危险程度高于前三项】
+///   去抖窗口是<b>带定时器的</b>：用例 A 投了 close 却在窗口到期前就结束，
+///   那个 <c>Task.Delay</c> 仍在后台跑，到期后会调 <c>OnDeviceOfflineAsync</c>
+///   把<b>用例 B 刚播种的同 IMEI 设备</b>改成 offline——B 的现场被一个已经结束的用例改写，
+///   症状是「B 单跑绿、跟在 A 后面跑红」，且失败点在 B 里根本看不出成因。
+///   在途命令表同理：A 遗留的 frameId 会让 B 的自动上报被判成 Response，直接改变路由分支。
 ///
 /// 【清理手段】
 ///   · DeviceKinds 已有公开的 <c>ClearDeviceKinds()</c>，直接调用（零反射，最稳）；
@@ -51,6 +61,8 @@ public static class StaticStateResetter
         ClearDeviceKinds();
         ClearFrameIdCommandIdMap();
         ClearProbePending(services);
+        ClearOfflineDebouncer(services);
+        ClearPendingCommands(services);
     }
 
     /// <summary>
@@ -90,6 +102,66 @@ public static class StaticStateResetter
         catch (Exception ex)
         {
             Append($"清理 IAnShengProbeService 在途等待失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 取消并清空全部在途离线去抖窗口（T6 决策 3）。
+    ///
+    /// 【为什么必须清，且必须在播种之前清】
+    ///   <c>AnShengOfflineDebouncer</c> 是 Singleton，窗口靠 <c>Task.Delay</c> 计时。
+    ///   用例 A 投了 <c>close</c> 之后若不等窗口到期就结束，定时器仍在后台运行；
+    ///   等它到期时用例 B 已经开始，<c>OnDeviceOfflineAsync</c> 会把 B 播种的同 IMEI 设备
+    ///   悄悄改成 offline。B 的「设备应在线」断言随即失败，而失败原因在 B 的代码里毫无痕迹。
+    ///   <c>ClearAll()</c> 会 Cancel 每个 CTS，被取消的 <c>ScheduleOfflineAsync</c>
+    ///   走 <c>OperationCanceledException</c> 分支静默退出，不会置离线。
+    /// </summary>
+    /// <param name="services">根服务提供器；为 null 则跳过。</param>
+    private static void ClearOfflineDebouncer(IServiceProvider? services)
+    {
+        if (services == null)
+        {
+            return;
+        }
+
+        try
+        {
+            // GetService 而非 GetRequiredService：T6 未落地的分支上该 Singleton 可能未注册，
+            // 「未注册」等价于「无须清理」，不应让整个测试基类在 InitializeAsync 阶段崩掉。
+            var debouncer = services.GetService<AnShengOfflineDebouncer>();
+            debouncer?.ClearAll();
+        }
+        catch (Exception ex)
+        {
+            Append($"清理 AnShengOfflineDebouncer 在途窗口失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 清空在途命令表（frameId 登记簿）。
+    ///
+    /// 【为什么会改变路由判定】
+    ///   <c>AnShengMessageRouter.Classify</c> 第 3 级用 <c>IsInFlight(imei, frameId)</c>
+    ///   区分「设备自动上报」与「我方下发的应答」。用例 A 下发过命令却没等到回包，
+    ///   条目会一直挂到 TTL 到期；用例 B 若恰好复用同一 frameId（测试里 frameId 常被固定），
+    ///   B 的自动上报会被判成 Response，走完全不同的分支——这类失败极难归因。
+    /// </summary>
+    /// <param name="services">根服务提供器；为 null 则跳过。</param>
+    private static void ClearPendingCommands(IServiceProvider? services)
+    {
+        if (services == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var store = services.GetService<IAnShengPendingCommandStore>();
+            store?.ClearAll();
+        }
+        catch (Exception ex)
+        {
+            Append($"清理 IAnShengPendingCommandStore 在途命令失败：{ex.Message}");
         }
     }
 

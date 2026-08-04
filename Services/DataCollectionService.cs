@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Serilog;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace IoTPlatform.Services;
 
@@ -74,7 +75,61 @@ public class DataCollectionService : IDataCollectionService
         { "total_current",     (r, v) => { /* Current not in schema; stored in SensorData */ } },
         { "avg_voltage",       (r, v) => { /* Voltage not on DeviceDataRecord; stored in SensorData */ } },
         { "energy",            (r, v) => r.ElectricKWh       = v },
+        // signal（4G 信号强度 1-31）在 DeviceDataRecord 上没有专用列，值随 SensorData 落库。
+        // 之所以仍然登记在映射表里，是为了让它<b>计入 mappedFields</b> 并驱动 DeviceSensor.LastValue
+        // ——现场排障最常问的一句话就是「这台设备信号多少」，它必须是可查询的一等字段。
+        { "signal",            (r, v) => { /* Signal not on DeviceDataRecord; stored in SensorData */ } },
     };
+
+    /// <summary>
+    /// 安圣逐位路数据点的字段名模式：<c>slot1_voltage</c> / <c>slot2_state</c> / <c>slot3_energy</c> …
+    ///
+    /// 【为什么用正则而不是穷举映射表】
+    ///   位路数量由设备型号决定（1~n 路，现场见过 16 路），把 n×5 个键写死进字典
+    ///   既写不全也维护不动。位路字段在 <c>DeviceDataRecord</c> 上<b>没有</b>对应列
+    ///   （它们的值随 <c>SensorData</c> JSON 无损落库），正则的唯一职责是
+    ///   「确认这是一个受支持的数据点」——从而计入 <c>mappedFields</c> 并更新
+    ///   <c>DeviceSensor.LastValue</c>，让前端能按位路建传感器。
+    /// </summary>
+    private static readonly Regex SlotFieldRegex = new(
+        @"^slot(\d+)_(state|voltage|current|power|energy|pf)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 统一判定「该 JSON 属性是否为受支持的传感器数据点」。
+    ///
+    /// 判定顺序（与 T6-2 设计 §4.2 一致）：
+    ///   1. 精确表 <see cref="SensorFieldMappings"/> 命中（含环境/能耗/安圣标准化字段，
+    ///      以及 <c>signal</c> 等仅在 SensorData 落库的无列表字段）；
+    ///   2. 位路展平字段兜底：<see cref="SlotFieldRegex"/> 命中
+    ///      （<c>slot1_voltage</c> … <c>slot{n}_pf</c>），其数量由设备型号决定，无法穷举。
+    ///
+    /// 命中即视为「已识别的传感器字段」，由调用方计入 <c>mappedFieldNames</c>
+    /// （驱动结构化日志），其值在 step ③ 原样进入 <c>lastValueUpdates</c>
+    /// （驱动 <c>DeviceSensor.LastValue</c> 更新，前端按位路建传感器）。
+    /// </summary>
+    /// <param name="jsonProp">SensorData JSON 中的单个属性</param>
+    /// <param name="fieldName">命中时输出规范化字段名（即 <paramref name="jsonProp"/> 的 key）</param>
+    /// <returns>是否为受支持的传感器数据点</returns>
+    private static bool TryResolveSensorField(JsonProperty jsonProp, [NotNullWhen(true)] out string? fieldName)
+    {
+        // ① 精确表优先：覆盖 total_power / avg_voltage / signal 等已知键
+        if (SensorFieldMappings.ContainsKey(jsonProp.Name))
+        {
+            fieldName = jsonProp.Name;
+            return true;
+        }
+
+        // ② 位路展平字段兜底：slot{n}_* 不进入精确表（数量未知），用正则识别
+        if (SlotFieldRegex.IsMatch(jsonProp.Name))
+        {
+            fieldName = jsonProp.Name;
+            return true;
+        }
+
+        fieldName = null;
+        return false;
+    }
 
     /// <summary>
     /// 能源类型策略定义
@@ -194,35 +249,42 @@ public class DataCollectionService : IDataCollectionService
 
                     foreach (var jsonProp in jsonDoc.RootElement.EnumerateObject())
                     {
-                        // ① 通用字段映射（环境监测 + 能耗计量）
-                        if (SensorFieldMappings.TryGetValue(jsonProp.Name, out var setter) &&
-                            jsonProp.Value.ValueKind == JsonValueKind.Number)
+                        // ① 通用字段映射（环境监测 + 能耗计量 + 安圣标准化字段 + 位路展平字段）
+                        //    TryResolveSensorField 统一决定「该 key 是否为受支持的传感器数据点」：
+                        //    命中即计入 mappedFieldNames（驱动结构化日志与 LastValue 统计口径）。
+                        if (TryResolveSensorField(jsonProp, out var resolvedField))
                         {
-                            var numValue = jsonProp.Value.GetDouble();
-                            setter(dataRecord, numValue);
-                            mappedFieldNames.Add(jsonProp.Name);
+                            mappedFieldNames.Add(resolvedField);
 
-                            // ② 按 EnergyType 策略做范围校验
-                            foreach (var strategy in activeStrategies)
+                            // ①-a 精确表命中且为数值 → 映射到 DeviceDataRecord 物理量列
+                            if (SensorFieldMappings.TryGetValue(jsonProp.Name, out var setter) &&
+                                jsonProp.Value.ValueKind == JsonValueKind.Number)
                             {
-                                if (strategy.RelevantJsonKeys.Contains(jsonProp.Name, StringComparer.OrdinalIgnoreCase))
+                                var numValue = jsonProp.Value.GetDouble();
+                                setter(dataRecord, numValue);
+
+                                // ② 按 EnergyType 策略做范围校验
+                                foreach (var strategy in activeStrategies)
                                 {
-                                    // 找到对应的属性名做范围检查（需要从 setter 反推或用映射表）
-                                    if (TryGetMappedPropertyName(jsonProp.Name, out var propName) &&
-                                        strategy.ValidRanges.TryGetValue(propName, out var range))
+                                    if (strategy.RelevantJsonKeys.Contains(jsonProp.Name, StringComparer.OrdinalIgnoreCase))
                                     {
-                                        if (numValue < range.Min || numValue > range.Max)
+                                        // 找到对应的属性名做范围检查（需要从 setter 反推或用映射表）
+                                        if (TryGetMappedPropertyName(jsonProp.Name, out var propName) &&
+                                            strategy.ValidRanges.TryGetValue(propName, out var range))
                                         {
-                                            hasOutOfRangeValue = true;
-                                            Log.Warning("Energy data out of range: DeviceId={DeviceId}, Field={Field}, Value={Value}, Range=[{Min}~{Max}], Type={Type}",
-                                                deviceId, jsonProp.Name, numValue, range.Min, range.Max, strategy.DisplayName);
+                                            if (numValue < range.Min || numValue > range.Max)
+                                            {
+                                                hasOutOfRangeValue = true;
+                                                Log.Warning("Energy data out of range: DeviceId={DeviceId}, Field={Field}, Value={Value}, Range=[{Min}~{Max}], Type={Type}",
+                                                    deviceId, jsonProp.Name, numValue, range.Min, range.Max, strategy.DisplayName);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // ③ 收集所有 key-value 用于更新 LastValue
+                        // ③ 收集所有 key-value 用于更新 LastValue（原样透传，含 signal / slot* / 旧键）
                         var valueStr = jsonProp.Value.ValueKind switch
                         {
                             JsonValueKind.Number => jsonProp.Value.GetDouble().ToString("F4"),

@@ -612,6 +612,23 @@ public bool IsSupportedBy(AnShengDeviceKind kind)
 而当前 `RefreshAsync` 实现调用了 `GetOrCreateAsync`（会建档）。T6 接通前必须二选一并更新文档，
 否则任意未认领设备的一条上行就会凭三级猜测生成一份档案 —— 这正是上表要防的场景。
 
+> ### ✅ 已在 T6 解决（决策 A，主理人裁定）
+>
+> **裁定结果**：**严格保留 §4.3 的契约** —— `RefreshAsync` 在档案不存在时**返回 `null`，绝不建档**。
+>
+> **T6 的处理方式**：
+> 1. `IAnShengDeviceProfileService.RefreshAsync` 签名改为 `Task<AnShengDeviceProfile?> RefreshAsync(...)`；
+> 2. `AnShengDeviceProfileService.RefreshAsync` **删除对 `GetOrCreateAsync` 的调用**，改为 `FirstOrDefaultAsync` 纯查询，查不到直接 `return null`；
+> 3. 档案的**唯一创建入口**因此收敛为认领流程（`ClaimAsync` 强制 `getDevInfo` + `getDevStatus`），
+>    未认领设备的上行继续只更新 `DiscoveredAnShengDevice` 发现池，不产生"孤儿档案"，
+>    上表的三级前缀猜测**永远不会**因为一条上行报文而落库；
+> 4. 回归测试：`RefreshAsync_Should_Return_Null_When_Profile_Missing`（单元）+
+>    `Unclaimed_Device_AutoReport_Should_Not_Create_Profile`（集成）。
+>
+> **落地任务**：T6-4「决策 A 落地：`RefreshAsync` 契约修正」，详见
+> `.workbuddy/design/t6-event-pipeline-design.md` §5（任务 T6-4）与 §8.1（决策 A）。
+> **本条偏差自 T6-4 合入后关闭，不再是未决项。**
+
 #### 3.5 报文容错（✏️ F06，对应 N4）
 
 ```csharp

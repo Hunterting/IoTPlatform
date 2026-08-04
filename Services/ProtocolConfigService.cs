@@ -4,8 +4,10 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Infrastructure.Protocol;
 using IoTPlatform.Infrastructure.Protocol.Adapters;
+using IoTPlatform.Configuration;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;
@@ -26,6 +28,7 @@ public class ProtocolConfigService : IProtocolConfigService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IAnShengDiscoveryService? _discoveryService;
     private readonly ILogger<ProtocolConfigService>? _logger;
+    private readonly AnShengEventOptions _eventOptions;
 
     /// <summary>
     /// 活跃的事件订阅字典：configId → 事件处理器（用于停止时反注册）
@@ -38,7 +41,8 @@ public class ProtocolConfigService : IProtocolConfigService
         IProtocolAdapterFactory adapterFactory,
         IServiceScopeFactory scopeFactory,
         IAnShengDiscoveryService? discoveryService = null,
-        ILogger<ProtocolConfigService>? logger = null)
+        ILogger<ProtocolConfigService>? logger = null,
+        IOptions<AnShengEventOptions>? eventOptions = null)
     {
         _protocolConfigRepository = protocolConfigRepository;
         _unitOfWork = unitOfWork;
@@ -46,7 +50,22 @@ public class ProtocolConfigService : IProtocolConfigService
         _scopeFactory = scopeFactory;
         _discoveryService = discoveryService;
         _logger = logger;
+        _eventOptions = eventOptions?.Value ?? new AnShengEventOptions();
     }
+
+    /// <summary>
+    /// 是否抑制既有数据桥（<c>ProtocolConfigService → IDataCollectionService</c>）对事件报文的落库。
+    ///
+    /// 【决策 B-2 逃生开关，默认 false】事件报文会在「事件责任链」与「既有数据桥」两条通路上
+    /// 各写一条 <c>DeviceDataRecord</c>。T6 默认<b>不抑制</b>（D4 §370 并存而非替换）。
+    /// 仅当确认事件表数据可信、且希望消除重复落库时，由配置
+    /// <c>AnSheng:Event:SuppressLegacyDataBridge=true</c> 打开。
+    ///
+    /// ⚠️ 当前为<b>钩子</b>：本服务无法在桥内区分「事件报文」与「自动上报报文」，
+    /// 因此真正生效的去重逻辑留待后续接入（届时需由上行总线携带事件标记透传到本桥）。
+    /// 开启此开关会同时影响自动上报链路，启用前请评估影响面。
+    /// </summary>
+    public bool ShouldSkipLegacyBridge => _eventOptions.SuppressLegacyDataBridge;
 
     /// <summary>
     /// 获取协议配置列表
@@ -518,6 +537,9 @@ public class ProtocolConfigService : IProtocolConfigService
                 e.Data?.Length ?? 0);
 
             // 调用标准数据采集处理流程（复用 P0/P1 已完善的 JSON 解析 + 规则引擎链路）
+            // 决策 B-2 逃生开关锚点：若未来需按事件标记抑制本桥落库，
+            // 在此判断 ShouldSkipLegacyBridge && 本报文来自事件管道，再跳过下方调用。
+            // 当前默认 false，不抑制。
             await dataCollectionService.ProcessDeviceDataAsync(
                 deviceId: deviceId,
                 appCode: appCode,

@@ -204,7 +204,13 @@ public class AnShengDeviceProfileService : IAnShengDeviceProfileService
     }
 
     /// <inheritdoc />
-    public async Task<AnShengDeviceProfile> RefreshAsync(
+    /// <remarks>
+    /// 【决策 A】档案不存在时返回 <c>null</c> 且<b>不建档</b>。调用方（
+    /// <see cref="AnShengMessageRouter"/> 的 AutoReport / Response 分支）据此跳过刷新。
+    /// 不再调用 <c>GetOrCreateAsync</c>——那会把未认领设备的上行误建成「孤儿档案」，
+    /// 污染 <c>KindSource</c> 语义（t5-profile-system-design.md §605-614 已登记，T6 解决）。
+    /// </remarks>
+    public async Task<AnShengDeviceProfile?> RefreshAsync(
         string imei,
         string appCode,
         AnShengCapabilitySnapshot snapshot,
@@ -212,7 +218,17 @@ public class AnShengDeviceProfileService : IAnShengDeviceProfileService
     {
         snapshot ??= AnShengCapabilitySnapshot.Empty;
 
-        var profile = await GetOrCreateAsync(imei, appCode, cancellationToken);
+        // 决策 A：纯查询，查不到直接返回 null，绝不隐式建档。
+        var profile = await _db.AnShengDeviceProfiles
+            .FirstOrDefaultAsync(p => p.Imei == imei, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (profile == null)
+        {
+            _logger?.LogDebug(
+                "安圣设备档案刷新跳过（决策 A：不隐式建档）: IMEI={Imei}", imei);
+            return null;
+        }
 
         var (kind, source) = ResolveKind(profile, snapshot);
 

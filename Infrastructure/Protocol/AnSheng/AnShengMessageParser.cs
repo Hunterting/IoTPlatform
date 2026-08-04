@@ -23,12 +23,25 @@ public class AnShengMessageParser
     private readonly ILogger<AnShengMessageParser>? _logger;
 
     /// <summary>
+    /// 数据点归一化器（T6-2）。
+    ///
+    /// 【为什么是自建实例而不是构造注入】
+    ///   本类被 <c>AnShengMqttProtocolAdapter</c> 与 <c>AnShengProbeService</c> 直接 <c>new</c>，
+    ///   加一个必填构造参数会连带改这两处、并把 DI 依赖泄漏到协议适配层。
+    ///   <see cref="AnShengDataNormalizer"/> 完全无状态，自建一份的成本是一个对象指针，
+    ///   而收益是「Parser 的既有构造签名一行不改」。
+    ///   DI 容器里另有一份 Scoped 实例供事件责任链使用，两者行为完全一致。
+    /// </summary>
+    private readonly AnShengDataNormalizer _normalizer;
+
+    /// <summary>
     /// 创建解析器。
     /// </summary>
     /// <param name="logger">可选日志器。</param>
     public AnShengMessageParser(ILogger<AnShengMessageParser>? logger = null)
     {
         _logger = logger;
+        _normalizer = new AnShengDataNormalizer(this);
     }
 
     /// <summary>
@@ -192,10 +205,15 @@ public class AnShengMessageParser
 
     /// <summary>
     /// 取消息体 JSON：Legacy 报文取 <c>param</c>，二开报文取整条 <c>RawJson</c>。
+    ///
+    /// 【为什么是 public】<see cref="AnShengDataNormalizer"/> 要按顶层字段做展平与透传，
+    /// 必须拿到与本类<b>完全相同</b>的报文体。复制一份同样的判定逻辑过去，
+    /// 就等于给「两套报文形态兼容」这条规则埋了第二个真相来源——迟早漂移。
+    /// 开放读取权限比复制逻辑安全得多（本方法是纯函数，无副作用）。
     /// </summary>
     /// <param name="message">已解析的消息。</param>
     /// <returns>消息体 JSON 字符串，可能为空串。</returns>
-    private static string GetBodyJson(AnShengMessage message)
+    public static string GetBodyJson(AnShengMessage message)
     {
 #pragma warning disable CS0618 // Legacy 充电桩链路仍依赖 param
         if (message.Param.HasValue && message.Param.Value.ValueKind == JsonValueKind.Object)
@@ -274,63 +292,27 @@ public class AnShengMessageParser
         }
     }
 
+    /// <summary>
+    /// <c>getDevStatus</c> 的标准化输出。
+    ///
+    /// 【T6-2 变更】展平逻辑整体迁移到 <see cref="AnShengDataNormalizer"/>，本方法只做
+    /// 「解析 + 委托 + 兜底」。产出在旧键（<c>total_power</c> / <c>total_energy</c> /
+    /// <c>total_current</c> / <c>avg_voltage</c> / <c>em_data</c> / <c>slots</c> / <c>tasks</c>）
+    /// 之上<b>新增</b> <c>slot{n}_state|voltage|current|power|energy</c>，
+    /// 使 <c>DataCollectionService</c> 能把逐路电量映射进 <c>DeviceDataRecord</c>（验收 #6）。
+    /// </summary>
+    /// <param name="message">已解析的消息。</param>
+    /// <returns>标准化 JSON 字符串。</returns>
     private string NormalizeDevStatus(AnShengMessage message)
     {
         var status = ParseDevStatus(message);
         if (status == null)
         {
+            // 状态体解析失败：保持既有兜底行为，原样透传报文体，绝不返回残缺的结构化结果。
             return GetBodyJson(message) is { Length: > 0 } body ? body : "{}";
         }
 
-        var emData = status.EmData;
-        var totalPower = emData?.Sum(e => e.P ?? 0) ?? 0;
-        var totalEnergy = emData?.Sum(e => e.E ?? 0) ?? 0;
-        var totalCurrent = emData?.Sum(e => e.C ?? 0) ?? 0;
-        double? avgVoltage = emData is { Count: > 0 } ? emData.Average(e => e.V ?? 0) : null;
-
-        return JsonSerializer.Serialize(new
-        {
-            method = message.Method,
-            imei = message.Imei,
-            result = message.Result,
-            net_type = status.NetType,
-            iccid = status.Iccid,
-            signal = status.Signal,
-            temperature = status.Temperature,
-            gps = status.Gps,
-            slot_count = status.SlotCount,
-            slots = status.Slots,
-            total_power = totalPower,
-            total_energy = totalEnergy,
-            total_current = totalCurrent,
-            avg_voltage = avgVoltage,
-            em_data = emData?.Select((e, i) => new
-            {
-                slot = i + 1,
-                v = e.V,
-                c = e.C,
-                p = e.P,
-                e_kwh = e.E,
-                pf = e.Pf
-            }),
-            tasks = status.Tasks?.Select(t => new
-            {
-                slot = t.SlotNum,
-                type = t.Type,
-                status = t.Status,
-                time_sec = t.TimeSec,
-                power_kwh = t.PowerKwh,
-                total_sec = t.TotalSec,
-                total_kwh = t.TotalKwh,
-                voltage = t.Voltage,
-                current = t.Current,
-                power = t.Power,
-                close_reason = t.CloseReason,
-                remark = t.Remark
-            }),
-            raw_timestamp = message.RawTimestamp,
-            timestamp_utc = message.TimestampUtc
-        });
+        return AnShengDataNormalizer.ToJson(_normalizer.NormalizeDevStatus(message, status));
     }
 
     private string NormalizeOrder(AnShengMessage message)

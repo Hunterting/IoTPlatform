@@ -80,8 +80,11 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
         _logger.LogInformation("安圣设备发现服务启动，扫描间隔={Interval}min, 离线阈值={Offline}min",
             ScanInterval.TotalMinutes, OfflineThreshold.TotalMinutes);
 
-        // 订阅适配器 Will 事件
-        Infrastructure.Protocol.Adapters.AnShengMqttProtocolAdapter.DeviceWill += OnAdapterDeviceWill;
+        // ⚠️ T6-3 / 决策 3：不再直连订阅适配器的 DeviceWill 事件。
+        // 遗嘱（close）的离线去抖现由 AnShengOfflineDebouncer 统一负责——
+        // 收到 close 起 30s 窗口、窗口内收到 connected 则撤销离线。
+        // 若此处仍立即置离线，30s 去抖（验收 #5）形同虚设。
+        // 离线动作的唯一入口是 CloseEventHandler → AnShengOfflineDebouncer → OnDeviceOfflineAsync。
 
         // 初始延迟，等待适配器就绪
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
@@ -104,29 +107,7 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
             await Task.Delay(ScanInterval, stoppingToken);
         }
 
-        // 反订阅
-        Infrastructure.Protocol.Adapters.AnShengMqttProtocolAdapter.DeviceWill -= OnAdapterDeviceWill;
-
         _logger.LogInformation("安圣设备发现服务已停止");
-    }
-
-    /// <summary>
-    /// 适配器 Will 事件回调（桥接到 OnDeviceOfflineAsync）
-    /// </summary>
-    private void OnAdapterDeviceWill(object? sender, Infrastructure.Protocol.AnSheng.AnShengWillEventArgs e)
-    {
-        // fire-and-forget: 不阻塞适配器的消息处理线程
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await OnDeviceOfflineAsync(e.Imei, e.AppCode);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Will 事件处理异常: IMEI={IMEI}", e.Imei);
-            }
-        });
     }
 
     // ─────────────────────────────────────────────

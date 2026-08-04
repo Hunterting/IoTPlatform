@@ -174,13 +174,17 @@ public interface IAnShengDeviceProfileService
     /// <summary>
     /// 用上行报文自学习到的信息刷新档案（可信度低于探测，不会覆盖 Manual 来源）。
     /// 不调用 SaveChanges。
+    ///
+    /// 【决策 A（主理人裁定，必须采纳）】档案不存在时返回 <c>null</c>，<b>绝不建档</b>。
+    /// 未认领设备继续留在 <c>DiscoveredAnShengDevice</c> 池等认领；
+    /// 认领流程（T5 强制 <c>getDevInfo</c>+<c>getDevStatus</c>）才是档案的唯一创建入口。
     /// </summary>
     /// <param name="imei">设备 IMEI。</param>
     /// <param name="appCode">租户码。</param>
     /// <param name="snapshot">上行得到的能力快照。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>更新后的档案。</returns>
-    Task<AnShengDeviceProfile> RefreshAsync(
+    /// <returns>已存在的档案；不存在返回 <c>null</c>（不隐式创建）。</returns>
+    Task<AnShengDeviceProfile?> RefreshAsync(
         string imei,
         string appCode,
         AnShengCapabilitySnapshot snapshot,
