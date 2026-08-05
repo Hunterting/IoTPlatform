@@ -11,6 +11,13 @@ namespace IoTPlatform.Infrastructure.Protocol.AnSheng;
 ///   1. 二开协议（asopen.md）：业务字段<b>平铺</b>在 JSON 顶层，无 <c>param</c>；
 ///   2. Legacy 充电桩协议：业务字段位于 <c>param</c> 对象内。
 /// 解析时优先读 <c>param</c>（若存在），否则回退到顶层，保证两套链路都能工作。
+///
+/// 【T14 协议族归位后的边界】上行解析<b>不做</b>协议族准入判定，只做形态兼容——
+/// 这与下行相反。下行必须「默认拒绝、显式放行」（见
+/// <see cref="AnShengProtocolFamilyResolver"/>），因为发错报文会打到真实设备上；
+/// 上行则必须尽量把已经收到的报文解出来，对未知 method 兜底为
+/// <see cref="AnShengMessageCategory.CommandResponse"/> 而不是丢弃，
+/// 否则设备固件一升级、平台就开始丢数据。两个方向的严格度不对称是<b>刻意</b>的。
 /// </summary>
 public class AnShengMessageParser
 {
@@ -121,6 +128,15 @@ public class AnShengMessageParser
 
     /// <summary>
     /// 判断消息类别。
+    ///
+    /// 【T14 协议族归位】三个订单类别的 method 名不再硬编码字面量，改为引用
+    /// <see cref="Legacy.AnShengLegacyCommandCatalog"/> 的常量。理由：Legacy 方法名归位后
+    /// 已有唯一出处，解析侧再抄一份字符串就等于给「哪些 method 属于充电桩」这条规则
+    /// 制造第二个真相来源——目录改了而这里没改，报文会被静默归入
+    /// <see cref="AnShengMessageCategory.CommandResponse"/> 兜底分支，且不报任何错。
+    ///
+    /// 注意 <c>close</c> 遗嘱<b>不区分协议族</b>：两族设备离线都发同一个 method，
+    /// 差别只在报文体是否被 <c>param</c> 包裹，而这由 <see cref="GetBodyJson"/> 统一吸收。
     /// </summary>
     /// <param name="message">已解析的消息。</param>
     /// <returns>消息类别。</returns>
@@ -132,9 +148,9 @@ public class AnShengMessageParser
         {
             "getDevStatus" => AnShengMessageCategory.DevStatus,
             "getDevInfo" => AnShengMessageCategory.DevInfo,
-            "orderStart" => AnShengMessageCategory.OrderStart,
-            "orderEnd" => AnShengMessageCategory.OrderEnd,
-            "orderUp" => AnShengMessageCategory.OrderUp,
+            Legacy.AnShengLegacyCommandCatalog.OrderStart => AnShengMessageCategory.OrderStart,
+            Legacy.AnShengLegacyCommandCatalog.OrderEnd => AnShengMessageCategory.OrderEnd,
+            Legacy.AnShengLegacyCommandCatalog.OrderUp => AnShengMessageCategory.OrderUp,
             AnShengCommandCatalog.WillMethod => AnShengMessageCategory.Close,
             "connected" or "keyEvent" or "delayEvent" or "timeEvent" or "recv485"
                 => AnShengMessageCategory.Event,

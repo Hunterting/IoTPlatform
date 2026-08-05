@@ -20,6 +20,7 @@ using IoTPlatform.Data;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Infrastructure.Protocol;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
+using IoTPlatform.Infrastructure.Protocol.AnSheng.Legacy;
 using IoTPlatform.Models;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -151,9 +152,14 @@ public class AnShengCommandService : IAnShengCommandService
                     ct);
             }
 
-            // ── 3. 组装判据：品类降级链 + 固件 + 插槽数（决策 D7）────────────
+            // ── 3. 组装判据：协议族 + 品类降级链 + 固件 + 插槽数（决策 D7 / T14）────
             var profile = await _profiles.GetByDeviceIdAsync(deviceId, ct);
             var (kind, kindFromProfile) = ResolveKind(profile, imei);
+
+            // T14：协议族是<b>显式</b>判定的三态结果（二开 / 充电桩 / 不认识）。
+            // null 表示两份目录都不认识该 method —— Guard 会据此判 RejectedByUnknownMethod
+            // 并零发布；改造前这里是「不在目录里就当 Legacy 真实下发」的兜底放行。
+            var protocolFamily = AnShengProtocolFamilyResolver.Resolve(method);
 
             var context = new AnShengCommandContext
             {
@@ -166,8 +172,7 @@ public class AnShengCommandService : IAnShengCommandService
                 Firmware = profile?.Version,
                 SlotAmount = profile?.SlotAmount,
                 RejectWhenKindUnknown = _options.RejectWhenKindUnknown,
-                AllowLegacyMethod = Infrastructure.Protocol.Adapters.AnShengMqttProtocolAdapter
-                    .IsLegacyMethod(method)
+                AllowLegacyMethod = protocolFamily == AnShengProtocolFamily.ChargingPile
             };
 
             // ── 4. 单点校验 ───────────────────────────────────────────────
@@ -278,15 +283,18 @@ public class AnShengCommandService : IAnShengCommandService
             await _db.SaveChangesAsync(ct);
 
             // ── 8. 用实际下发的 frameId 重建报文回显，保证 Payload 与 FrameId 一致 ──
-            var builder = new AnShengCommandBuilder();
-            var payload = decision.Spec != null
-                ? builder.BuildRaw(imei, method, parameters, kind, frameId).Payload
-                : builder.BuildLegacyCommand(imei, method, parameters, frameId).Payload;
+            //
+            // 【T14】按<b>显式协议族</b>选择报文结构，而不是「decision.Spec 是不是 null」这个
+            // 间接信号 —— 后者与「拒绝时也没有 Spec」共用同一种取值，语义上是个巧合。
+            // 走到这里 Guard 已放行，protocolFamily 必非 null；仍写默认分支以防未来新增族时漏改。
+            var payload = protocolFamily == AnShengProtocolFamily.ChargingPile
+                ? new AnShengLegacyCommandBuilder().BuildCommand(imei, method, parameters, frameId).Payload
+                : new AnShengCommandBuilder().BuildRaw(imei, method, parameters, kind, frameId).Payload;
 
             _logger.LogInformation(
                 "安圣命令已下发: CommandId={CommandId}, DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, "
-                + "Kind={Kind}, KindFromProfile={KindFromProfile}, FrameId={FrameId}, TtlSeconds={Ttl}",
-                effectiveCommandId, deviceId, imei, method, kind, kindFromProfile,
+                + "Family={Family}, Kind={Kind}, KindFromProfile={KindFromProfile}, FrameId={FrameId}, TtlSeconds={Ttl}",
+                effectiveCommandId, deviceId, imei, method, protocolFamily, kind, kindFromProfile,
                 frameId, ttl.TotalSeconds);
 
             return new AnShengCommandResponse

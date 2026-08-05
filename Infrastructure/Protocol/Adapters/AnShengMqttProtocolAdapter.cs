@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
+using IoTPlatform.Infrastructure.Protocol.AnSheng.Legacy;
 
 namespace IoTPlatform.Infrastructure.Protocol.Adapters;
 
@@ -42,6 +43,14 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
     private readonly ILogger<AnShengMqttProtocolAdapter>? _logger;
     private readonly int _configId;
     private readonly AnShengCommandBuilder _commandBuilder;
+
+    /// <summary>
+    /// Legacy 充电桩报文构建器（T14 协议族归位）。
+    /// 与 <see cref="_commandBuilder"/> 并列而非嵌套：两个协议族各有各的构建器，
+    /// 下发分流按 <see cref="AnShengProtocolFamily"/> 显式选择，不再有「兜底走 Legacy」的分支。
+    /// </summary>
+    private readonly AnShengLegacyCommandBuilder _legacyCommandBuilder;
+
     private IMqttClient? _mqttClient;
     private AnShengMqttProtocolOptions? _options;
     private AnShengMessageParser? _parser;
@@ -73,13 +82,16 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
     /// 它们本就不属于任何协议，已在前后端一并删除。
     /// 注：<c>getDevStatus</c> 等方法已登记在 <see cref="AnShengCommandCatalog"/> 中，
     /// 走目录分支，无需重复登记于此。
+    ///
+    /// 【T14 变更】名单内容不再手写在这里，而是<b>投影</b>自
+    /// <see cref="AnShengLegacyCommandCatalog"/>（每条命令都带显式
+    /// <see cref="AnShengProtocolFamily.ChargingPile"/> 标记）。
+    /// 字段本身保留：既有测试（<c>AnShengLegacyWhitelistTests</c>、
+    /// <c>RecordingAnShengAdapter</c>）通过反射读取它做「白名单未被回退」的护栏断言，
+    /// 改名会让护栏静默失效。现在它只是目录的只读镜像，不再是第二份真相。
     /// </summary>
-    private static readonly HashSet<string> LegacyMethodWhitelist = new(StringComparer.Ordinal)
-    {
-        "orderStart",
-        "orderEnd",
-        "orderUp"
-    };
+    private static readonly HashSet<string> LegacyMethodWhitelist =
+        new(AnShengLegacyCommandCatalog.Methods, StringComparer.Ordinal);
 
     /// <summary>
     /// 判断某 method 是否属于 Legacy 充电桩白名单（T7-3 新增的<b>只读</b>查询入口）。
@@ -91,11 +103,15 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
     ///
     /// 【为什么不直接把字段改成 public】字段是<b>可变集合</b>，公开出去等于允许任何人往里塞方法，
     /// 「默认拒绝」的闸门就形同虚设；且既有测试用反射读取该私有字段，改可见性会牵动测试脚手架。
+    ///
+    /// 【T14 变更】判定改为委托 <see cref="AnShengProtocolFamilyResolver"/>：
+    /// 判据是命令规格上的显式 <see cref="AnShengProtocolFamily"/> 字段，
+    /// 而不是「在不在某张私有表里」。行为与改造前完全一致（同一份 3 个方法）。
     /// </summary>
     /// <param name="method">协议方法名，可为 null。</param>
-    /// <returns>命中白名单返回 true。</returns>
+    /// <returns>属于 Legacy 充电桩协议族返回 true。</returns>
     public static bool IsLegacyMethod(string? method)
-        => !string.IsNullOrWhiteSpace(method) && LegacyMethodWhitelist.Contains(method);
+        => AnShengProtocolFamilyResolver.IsChargingPile(method);
 
     /// <summary>
     /// IMEI → 设备品类缓存。
@@ -137,6 +153,7 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
         _configId = configId;
         _logger = logger;
         _commandBuilder = new AnShengCommandBuilder(null);
+        _legacyCommandBuilder = new AnShengLegacyCommandBuilder(null);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -440,10 +457,11 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
     /// 报文构建 + 限流 + 发布的<b>唯一实现</b>，由 <see cref="SendCommandAsync"/>（frameId 自生成）
     /// 与 <see cref="PublishAsync"/>（frameId 外部指定）共用。
     ///
-    /// 报文结构选择遵循「默认拒绝、显式放行」：
-    ///   1. 命中 <see cref="AnShengCommandCatalog"/> → 二开协议报文（参数平铺）；
-    ///   2. 命中 <see cref="LegacyMethodWhitelist"/> → Legacy 充电桩报文（param 包裹）；
-    ///   3. 其余一律抛出 <see cref="NotSupportedException"/>，不得下发协议外报文。
+    /// 报文结构选择遵循「默认拒绝、显式放行」，判据是
+    /// <see cref="AnShengProtocolFamilyResolver"/> 给出的<b>显式协议族</b>（T14）：
+    ///   1. <see cref="AnShengProtocolFamily.OpenProtocol"/> → 二开协议报文（参数平铺）；
+    ///   2. <see cref="AnShengProtocolFamily.ChargingPile"/> → Legacy 充电桩报文（param 包裹）；
+    ///   3. 两族都不认识 → 抛出 <see cref="NotSupportedException"/>，不得下发协议外报文。
     /// </summary>
     /// <param name="deviceId">设备主键（仅用于日志）。</param>
     /// <param name="imei">设备 IMEI。</param>
@@ -471,20 +489,11 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
         string actualFrameId;
         string payloadJson;
 
-        if (AnShengCommandCatalog.Contains(method))
+        // ── T14：按<b>显式协议族</b>分流，不再有「不在目录里就当 Legacy」的兜底放行 ──
+        if (!AnShengProtocolFamilyResolver.TryResolve(method, out var family, out _))
         {
-            // 二开协议：参数平铺、16 位 frameId、仅 4G 注入秒级 timestamp、压缩 JSON
-            (actualFrameId, payloadJson) = _commandBuilder.BuildCommand(imei, method, flatParams, kind, frameId);
-        }
-        else if (LegacyMethodWhitelist.Contains(method))
-        {
-            // Legacy 充电桩协议族（orderStart / orderEnd / orderUp）：保留 param 包裹，行为不变
-            _logger?.LogDebug("方法 {Method} 命中 Legacy 充电桩白名单，按 Legacy 报文结构下发", method);
-            (actualFrameId, payloadJson) = _commandBuilder.BuildLegacyCommand(imei, method, flatParams, frameId);
-        }
-        else
-        {
-            // 默认拒绝：既不在二开协议目录、也不在 Legacy 白名单 → 快速失败，禁止外发协议外报文
+            // 默认拒绝：两份目录都不认识这个 method → 快速失败，禁止外发协议外报文。
+            // 这一条覆盖了拼写错误（orderStrat）与历史伪命令（getSwitchConfig）两类真实事故源。
             _logger?.LogWarning(
                 "拒绝下发协议外命令: DeviceId={DeviceId}, IMEI={IMEI}, Method={Method}, Kind={Kind}。"
                 + "该方法既未登记于 AnShengCommandCatalog，也不在 Legacy 充电桩白名单 [{Whitelist}] 内，已阻止外发。",
@@ -492,6 +501,20 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
 
             throw new NotSupportedException(
                 $"方法 {method} 不属于安圣二开协议目录，也不在 Legacy 充电桩白名单内，禁止下发。");
+        }
+
+        if (family == AnShengProtocolFamily.ChargingPile)
+        {
+            // Legacy 充电桩协议族（orderStart / orderEnd / orderUp）：保留 param 包裹，行为不变
+            _logger?.LogDebug(
+                "方法 {Method} 属于 Legacy 充电桩协议族（ProtocolFamily={Family}），按 Legacy 报文结构下发",
+                method, family);
+            (actualFrameId, payloadJson) = _legacyCommandBuilder.BuildCommand(imei, method, flatParams, frameId);
+        }
+        else
+        {
+            // 二开协议：参数平铺、16 位 frameId、仅 4G 注入秒级 timestamp、压缩 JSON
+            (actualFrameId, payloadJson) = _commandBuilder.BuildCommand(imei, method, flatParams, kind, frameId);
         }
 
         // 协议要求：同一设备多条命令之间间隔 ≥100ms，防止命令粘连

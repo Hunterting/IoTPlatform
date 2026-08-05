@@ -622,8 +622,19 @@ public class AnShengCommandBuilder
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Legacy 充电桩协议族（非二开协议，保留以兼容既有链路）
+    // Legacy 充电桩协议族 —— 兼容外壳（T14 已归位到 Legacy/AnShengLegacyCommandBuilder）
+    //
+    // 【这里为什么只剩转发】
+    //   实现整体迁往 <see cref="Legacy.AnShengLegacyCommandBuilder"/>，本类不再持有
+    //   任何 param 包裹 / 毫秒字符串 timestamp 的构造代码 —— 两套报文结构的边界
+    //   从「同一个类的上下两段」变成了「两个文件」。
+    //   保留这三个转发方法，是因为既有协议层测试（AnShengProtocolTests /
+    //   AnShengProtocolConformanceTests / AnShengDownlinkPortTests）直接调用它们，
+    //   删除等于制造一次与 T14 目标无关的测试回归。
     // ─────────────────────────────────────────────────────────────
+
+    /// <summary>Legacy 充电桩报文构建器（归位后的真正实现）。</summary>
+    private readonly Legacy.AnShengLegacyCommandBuilder _legacyBuilder = new();
 
     /// <summary>
     /// 构建 Legacy 充电桩 <c>orderStart</c> 命令。
@@ -631,6 +642,7 @@ public class AnShengCommandBuilder
     /// <remarks>
     /// 该命令不属于安圣二开协议（asopen.md 中无此方法），仅为兼容既有充电桩链路保留，
     /// 沿用旧的 <c>param</c> 包裹结构，请勿用于二开设备。
+    /// 实现见 <see cref="Legacy.AnShengLegacyCommandBuilder.BuildOrderStart"/>。
     /// </remarks>
     /// <param name="imei">设备 IMEI。</param>
     /// <param name="sn">订单序列号。</param>
@@ -639,101 +651,42 @@ public class AnShengCommandBuilder
     /// <returns>(FrameId, JSON 报文)。</returns>
     [Obsolete("Legacy 充电桩协议族专用，二开设备请使用 BuildCommand/BuildAction 等目录驱动方法")]
     public (string FrameId, string Payload) BuildOrderStart(string imei, string sn, int order = 1, int? limit = null)
-    {
-        var param = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["sn"] = sn,
-            ["order"] = order
-        };
-        if (limit.HasValue) param["limit"] = limit.Value;
-
-        return BuildLegacy(imei, "orderStart", param);
-    }
+        => _legacyBuilder.BuildOrderStart(imei, sn, order, limit);
 
     /// <summary>
     /// 构建 Legacy 充电桩 <c>orderEnd</c> 命令。
     /// </summary>
-    /// <remarks>该命令不属于安圣二开协议，仅为兼容既有充电桩链路保留。</remarks>
+    /// <remarks>
+    /// 该命令不属于安圣二开协议，仅为兼容既有充电桩链路保留。
+    /// 实现见 <see cref="Legacy.AnShengLegacyCommandBuilder.BuildOrderEnd"/>。
+    /// </remarks>
     /// <param name="imei">设备 IMEI。</param>
     /// <param name="sn">订单序列号。</param>
     /// <param name="reason">结束原因（app/manual/auto）。</param>
     /// <returns>(FrameId, JSON 报文)。</returns>
     [Obsolete("Legacy 充电桩协议族专用，二开设备请使用 BuildCommand/BuildAction 等目录驱动方法")]
     public (string FrameId, string Payload) BuildOrderEnd(string imei, string sn, string reason = "app")
-        => BuildLegacy(imei, "orderEnd", new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["sn"] = sn,
-            ["reason"] = reason
-        });
+        => _legacyBuilder.BuildOrderEnd(imei, sn, reason);
 
     /// <summary>
-    /// 构建任意 Legacy（非二开协议）命令，保留 <c>param</c> 包裹与毫秒字符串 timestamp。
+    /// 构建任意 Legacy 充电桩命令，保留 <c>param</c> 包裹与毫秒字符串 timestamp。
     /// </summary>
     /// <remarks>
-    /// 仅供充电桩协议族（<c>orderStart</c>/<c>orderEnd</c>/<c>orderUp</c>/<c>getDevStatus</c> 旧链路）
-    /// 及未收录进 <see cref="AnShengCommandCatalog"/> 的历史命令使用。
+    /// 【T14 变更】<paramref name="method"/> 必须显式登记在
+    /// <c>AnShengLegacyCommandCatalog</c> 中（<c>orderStart</c> / <c>orderEnd</c> / <c>orderUp</c>），
+    /// 否则抛 <see cref="NotSupportedException"/>。
+    /// 改造前这里是无条件兜底构造，任何拼写错误都会被真实发往现网设备。
     /// 安圣二开设备<b>必须</b>改用 <see cref="BuildCommand"/> / <see cref="BuildRaw"/>。
     /// </remarks>
     /// <param name="imei">设备 IMEI。</param>
-    /// <param name="method">方法名。</param>
+    /// <param name="method">Legacy 方法名。</param>
     /// <param name="param">参数对象，可为 null；为 null 或空时不输出 <c>param</c> 字段。</param>
     /// <param name="frameId">指定 frameId；为 null 时自动生成（T7-2 起支持外部预登记）。</param>
     /// <returns>(FrameId, 压缩后的 JSON 报文)。</returns>
     /// <exception cref="ArgumentException"><paramref name="imei"/> 为空。</exception>
+    /// <exception cref="NotSupportedException"><paramref name="method"/> 不属于 Legacy 充电桩协议族。</exception>
     public (string FrameId, string Payload) BuildLegacyCommand(
         string imei, string method, IReadOnlyDictionary<string, object?>? param = null,
         string? frameId = null)
-    {
-        if (string.IsNullOrWhiteSpace(imei))
-        {
-            throw new ArgumentException("IMEI 不能为空", nameof(imei));
-        }
-
-        var copy = new Dictionary<string, object?>(StringComparer.Ordinal);
-        if (param != null)
-        {
-            foreach (var (key, value) in param)
-            {
-                if (string.IsNullOrWhiteSpace(key)) continue;
-                copy[key] = value;
-            }
-        }
-
-        return BuildLegacy(imei, method, copy, frameId);
-    }
-
-    /// <summary>
-    /// Legacy 报文构建：保留 <c>param</c> 包裹与毫秒字符串 timestamp，确保充电桩链路行为不变。
-    /// </summary>
-    /// <param name="imei">设备 IMEI。</param>
-    /// <param name="method">方法名。</param>
-    /// <param name="param">参数对象（会被包裹进 <c>param</c>）。</param>
-    /// <param name="frameId">
-    /// 指定 frameId；为 null 时自动生成。
-    /// T7-2 起下发可走「先登记在途、后发 MQTT」，此时 frameId 由调用方预先生成并登记，
-    /// 这里<b>必须</b>沿用它——若仍自生成，登记的 key 与实际报文对不上，命令必然走到超时兜底。
-    /// </param>
-    /// <returns>(FrameId, JSON 报文)。</returns>
-    private (string FrameId, string Payload) BuildLegacy(
-        string imei, string method, Dictionary<string, object?> param, string? frameId = null)
-    {
-        var actualFrameId = string.IsNullOrWhiteSpace(frameId) ? NewFrameId() : frameId;
-        var command = new Dictionary<string, object?>(StringComparer.Ordinal)
-        {
-            ["method"] = method,
-            ["imei"] = imei,
-            ["frameId"] = actualFrameId,
-            ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
-        };
-
-        if (param.Count > 0)
-        {
-            command["param"] = param;
-        }
-
-        var payload = JsonSerializer.Serialize(command, MinifiedJson);
-        _logger?.LogDebug("构建 Legacy 充电桩命令: Method={Method}, IMEI={IMEI}, FrameId={FrameId}",
-            method, imei, actualFrameId);
-        return (actualFrameId, payload);
-    }
+        => _legacyBuilder.BuildCommand(imei, method, param, frameId);
 }

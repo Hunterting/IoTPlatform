@@ -119,6 +119,12 @@
 - 验收后主理人修正 EnergyStatisticsPage 头部注释(cal-params GET 实走 SEND_DEVICE_COMMANDS, 非 VIEW_DEVICES), QA 重新闭环确认(纯文档改动, 已加防回归静态断言)。
 - 铁律对齐: 信封认 `code` 不认 `success`; T10 有 409+concurrencyConflict 分支, T11 全 200 无 409; 枚举按字符串分支; 权限门控(只读用户进页看只读 UI)。
 
+### T14 协议族隔离（后端 C# + React 前端）✅ 验收 (2026-08-05)
+- 基于 `docs/phase345-audit-2026-08-03.md` §2.10: 充电桩 Legacy 命令归位(原 50% 内联于通用 Builder, 本次补全剩余 50%)。设计文档即权威, 走快速模式/增量开发(跳过 PRD 与独立架构)。
+- 交付: 🆕 `Infrastructure/Protocol/AnSheng/Legacy/AnShengLegacyCommandBuilder.cs`(归位 Legacy 逻辑 + `EnsureChargingPileMethod` 闸门, 非充电桩方法抛 NotSupportedException) + 🆕 `AnShengProtocolFamilyResolver.cs`(三态判定: 认识二开/认识充电桩/不认识即拒绝) + ✏️ `AnShengCommandSpec.cs`(`AnShengProtocolFamily` 枚举 OpenProtocol=0/ChargingPile=1 + ProtocolFamily 字段) + ✏️ `AnShengMessageParser.cs`/`Services/AnShengCommandService.cs`(显式协议族分流) + 🆕 `Web/src/app/components/ansheng/CommandConsole.tsx` + ✏️ `AnShengManagementPage.tsx`(前端协议族分区)。
+- QA 验收: `IoTPlatform.AnSheng.Tests` 727/0 全绿(基线 680 + 新增 47, 含 `AnShengProtocolFamilyTests` 47 例) + 前端 `vite build` EXIT=0。3 条验收全过: ①二开面板结构性不出现 order* ②orderStart 报文结构完全一致 ③close 遗嘱两族正确。
+- **架构价值(铁律级)**: 根除「不在二开目录 ⇒ 按 Legacy 静默下发」的隐式兜底放行(改造前任何拼写错误/协议外 method 曾被当 Legacy 真实外发); 改为 `Resolver.Resolve(method)==ChargingPile` 显式判定 + `Resolve_UnknownMethods_AreRejected`(9 种输入全拒)。验收报告存 `.qa-logs/t14-acceptance-report.md`。
+
 ## 演进规划
 - **P0-P2** ✅ 全部完成（P0: JSON解析+配置键 | P1: 能耗字段+差异化 | P2: 协议集成+时序抽象）
 - **下一阶段**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 完善

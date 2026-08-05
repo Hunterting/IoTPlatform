@@ -94,7 +94,13 @@ public sealed class AnShengCommandContext
     /// 而 T7 是重构，不得改变存量可用性。
     ///
     /// 放行后 <c>Spec</c> 为 null，后续参数/插槽/固件环节<b>全部跳过</b>（无规格可依）；
-    /// 真正的「默认拒绝」仍由适配器的白名单兜底（T4 已实现，抛 <c>NotSupportedException</c>）。
+    /// 真正的「默认拒绝」由适配器在构造报文前完成 —— T14 起改由
+    /// <c>AnShengProtocolFamilyResolver</c> 做三态判定，两族都不认识即抛
+    /// <c>NotSupportedException</c>，零报文出网。
+    ///
+    /// 【本开关该怎么赋值】调用方应写
+    /// <c>AllowLegacyMethod = AnShengProtocolFamilyResolver.Resolve(method) == AnShengProtocolFamily.ChargingPile</c>，
+    /// 即「确认它属于充电桩族」，而不是「它不在二开目录里」—— 后者会把拼写错误一并放行。
     /// </summary>
     public bool AllowLegacyMethod { get; init; }
 
@@ -140,8 +146,13 @@ public sealed class AnShengCommandDecision
     /// 放行后由 <c>AnShengCommandService</c> 复用它（避免再查一次目录）。
     ///
     /// 为 null 有两种情形：① 被拒且没走到目录命中；② <b>Legacy 充电桩方法放行</b>
-    /// （目录里本就没有它们的规格，见 <c>AnShengCommandContext.AllowLegacyMethod</c>）。
-    /// 调用方据此选择报文构建方式：非 null → <c>BuildRaw</c>；null → <c>BuildLegacyCommand</c>。
+    /// （二开目录里本就没有它们的规格，见 <c>AnShengCommandContext.AllowLegacyMethod</c>）。
+    ///
+    /// 【T14 起不得再用本字段推断协议族】历史写法是「<c>Spec</c> 非 null → <c>BuildRaw</c>；
+    /// null → 走 Legacy 构造」。这个推断在「被拒绝」时同样成立（那时 <c>Spec</c> 也是 null），
+    /// 两种语义撞在同一个取值上，纯属巧合可用。协议族现在有<b>显式</b>判据：
+    /// <c>AnShengProtocolFamilyResolver.Resolve(method)</c> —— 请用它选择报文构建方式。
+    /// 本字段只回答「有没有规格可依」，不回答「这条命令属于哪个协议族」。
     /// </summary>
     public AnShengCommandSpec? Spec { get; }
 

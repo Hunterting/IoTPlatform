@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Search, RefreshCw, CheckCircle, XCircle, Clock,
-  Eye, Power, Wrench, RotateCcw, Upload, Terminal,
-  Zap, Radio, RadioTower, Smartphone, Hash,
+  Eye, Power, Wrench, Terminal,
+  Radio, RadioTower, Smartphone, Hash,
   ChevronLeft, ChevronRight, AlertCircle, Loader2,
-  Send, Play, Ban, Plus, Cpu, Activity,
-  Settings, Info, Filter, X, Download,
+  Send, Plus, Cpu, Activity,
+  Filter, X, Download,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS } from '@/app/config/permissions';
@@ -18,134 +18,12 @@ import type {
 } from '@/app/services/api/types/ansheng.types';
 import type { DeviceDto } from '@/app/services/api/types/device.types';
 
-// ── 安圣命令模板 ──────────────────────────────────────────────────
-interface CommandTemplate {
-  method: string;
-  label: string;
-  icon: React.ReactNode;
-  description: string;
-  color: string;
-  params: ParamField[];
-}
-
-interface ParamField {
-  key: string;
-  label: string;
-  type: 'text' | 'number' | 'select';
-  options?: string[];
-  defaultValue?: string;
-  placeholder?: string;
-}
-
-const ANSHENG_COMMAND_TEMPLATES: CommandTemplate[] = [
-  {
-    method: 'getDevStatus',
-    label: '查询设备状态',
-    icon: <Activity className="w-4 h-4" />,
-    description: '获取设备温度、电量计等实时状态',
-    color: 'blue',
-    params: [],
-  },
-  {
-    method: 'getDevInfo',
-    label: '查询设备信息',
-    icon: <Info className="w-4 h-4" />,
-    description: '获取设备型号、网络类型等基础信息',
-    color: 'cyan',
-    params: [],
-  },
-  {
-    method: 'getEMRealtime',
-    label: '实时电量查询',
-    icon: <Zap className="w-4 h-4" />,
-    description: '获取各插槽实时电压、电流、功率',
-    color: 'amber',
-    params: [],
-  },
-  {
-    method: 'orderStart',
-    label: '开始充电',
-    icon: <Play className="w-4 h-4" />,
-    description: '启动指定插槽充电',
-    color: 'green',
-    params: [
-      { key: 'slot', label: '插槽编号', type: 'number', defaultValue: '1', placeholder: '1' },
-    ],
-  },
-  {
-    method: 'orderEnd',
-    label: '停止充电',
-    icon: <Ban className="w-4 h-4" />,
-    description: '停止指定插槽充电',
-    color: 'red',
-    params: [
-      { key: 'slot', label: '插槽编号', type: 'number', defaultValue: '1', placeholder: '1' },
-    ],
-  },
-  {
-    method: 'orderUp',
-    label: '订单推送',
-    icon: <Upload className="w-4 h-4" />,
-    description: '向设备推送完整的充电订单',
-    color: 'purple',
-    params: [
-      { key: 'orderId', label: '订单号', type: 'text', placeholder: '例如：ORD123456' },
-      { key: 'slot', label: '插槽编号', type: 'number', defaultValue: '1', placeholder: '1' },
-      { key: 'durationMin', label: '充电时长(分)', type: 'number', defaultValue: '60', placeholder: '60' },
-    ],
-  },
-  {
-    method: 'setAutoReport',
-    label: '设置自动上报',
-    icon: <Settings className="w-4 h-4" />,
-    description: '配置设备定时上报间隔',
-    color: 'slate',
-    params: [
-      { key: 'getDevStatusSec', label: '状态上报间隔(秒)', type: 'number', defaultValue: '60', placeholder: '60' },
-      { key: 'orderUpSec', label: '订单推送间隔(秒)', type: 'number', defaultValue: '300', placeholder: '300' },
-    ],
-  },
-  {
-    method: 'reboot',
-    label: '重启设备',
-    icon: <RotateCcw className="w-4 h-4" />,
-    description: '远程重启设备',
-    color: 'orange',
-    params: [],
-  },
-];
-
-// ── 二开设备命令模板 ────────────────────────────────────────────────
-// 注意：setSwitch / getSwitchStatus / setSwitchConfig / getSwitchConfig 四个方法
-//      在安圣官方协议（asopen.md）中并不存在，属历史臆造的「伪命令」，
-//      后端对应端点已于 T3 物理删除，此处同步移除，避免向现网设备下发协议外报文。
-//      开关通断请改用官方 action / actions 方法，状态查询请用 getDevStatus(q=slots)。
-const OPEN_DEVICE_COMMAND_TEMPLATES: CommandTemplate[] = [
-  {
-    method: 'reboot',
-    label: '重启设备',
-    icon: <RotateCcw className="w-4 h-4" />,
-    description: '远程重启二开设备',
-    color: 'orange',
-    params: [],
-  },
-  {
-    method: 'getDevInfo',
-    label: '查询设备信息',
-    icon: <Info className="w-4 h-4" />,
-    description: '获取设备型号、网络类型等',
-    color: 'slate',
-    params: [],
-  },
-  {
-    method: 'getDevStatus',
-    label: '查询设备状态',
-    icon: <Activity className="w-4 h-4" />,
-    description: '获取设备实时状态',
-    color: 'purple',
-    params: [],
-  },
-];
+import {
+  CommandTemplatePicker,
+  CHARGING_PILE_CONSOLE_TEMPLATES,
+  OPEN_DEVICE_CONSOLE_TEMPLATES,
+} from '@/app/components/ansheng/CommandConsole';
+import type { CommandTemplate } from '@/app/components/ansheng/CommandConsole';
 
 // ── 状态徽章 ─────────────────────────────────────────────────────
 function getClaimStatusBadge(isClaimed: boolean) {
@@ -226,7 +104,7 @@ export function AnShengManagementPage() {
   const [anshengDevices, setAnshengDevices] = useState<DeviceDto[]>([]);
   const [anshengDevicesLoading, setAnshengDevicesLoading] = useState(false);
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<CommandTemplate>(ANSHENG_COMMAND_TEMPLATES[0]);
+  const [selectedTemplate, setSelectedTemplate] = useState<CommandTemplate>(CHARGING_PILE_CONSOLE_TEMPLATES[0]);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -760,25 +638,14 @@ export function AnShengManagementPage() {
                   <Terminal className="w-4 h-4 text-purple-400" />
                   命令模板
                 </h3>
-                <div className="space-y-1">
-                  {ANSHENG_COMMAND_TEMPLATES.map(tpl => (
-                    <button
-                      key={tpl.method}
-                      onClick={() => selectTemplate(tpl)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all ${
-                        selectedTemplate.method === tpl.method
-                          ? 'bg-purple-600/20 border border-purple-500/30'
-                          : 'border border-transparent hover:bg-slate-700/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`text-${tpl.color}-400`}>{tpl.icon}</span>
-                        <span className="font-medium text-slate-200">{tpl.label}</span>
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5 ml-6">{tpl.description}</div>
-                    </button>
-                  ))}
-                </div>
+                {/* 充电桩控制台：两族命令都放行，用角标标出各自的报文结构（T14） */}
+                <CommandTemplatePicker
+                  templates={CHARGING_PILE_CONSOLE_TEMPLATES}
+                  selectedMethod={selectedTemplate.method}
+                  onSelect={selectTemplate}
+                  variant="pile"
+                  showFamilyBadge
+                />
               </div>
             )}
           </div>
@@ -966,27 +833,14 @@ export function AnShengManagementPage() {
                 <Wrench className="w-4 h-4 text-emerald-400" />
                 <h3 className="text-sm font-semibold text-slate-200">命令模板</h3>
               </div>
-              <div className="space-y-1.5">
-                {OPEN_DEVICE_COMMAND_TEMPLATES.map(tpl => (
-                  <button
-                    key={tpl.method}
-                    onClick={() => { setSelectedTemplate(tpl); setParamValues({}); setSendResult(null); }}
-                    className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                      selectedTemplate.method === tpl.method
-                        ? `bg-${tpl.color}-500/15 border border-${tpl.color}-500/30`
-                        : 'hover:bg-slate-700/20 border border-transparent'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={`text-${tpl.color}-400`}>{tpl.icon}</span>
-                      <div>
-                        <div className="text-sm font-medium text-slate-200">{tpl.label}</div>
-                        <div className="text-xs text-slate-500">{tpl.description}</div>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+              {/* 二开控制台：只放行 OpenProtocol —— orderStart/orderEnd/orderUp
+                  在结构上不可能出现在这里（T14 验收 ①），不再依赖人工不去添加 */}
+              <CommandTemplatePicker
+                templates={OPEN_DEVICE_CONSOLE_TEMPLATES}
+                selectedMethod={selectedTemplate.method}
+                onSelect={(tpl) => { setSelectedTemplate(tpl); setParamValues({}); setSendResult(null); }}
+                variant="open"
+              />
             </div>
           </div>
 

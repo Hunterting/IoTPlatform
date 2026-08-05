@@ -13,10 +13,46 @@ public enum AnShengCommandDirection
 }
 
 /// <summary>
+/// 协议族（T14）。安圣平台同时承载两套<b>报文结构互不兼容</b>的协议，必须显式区分。
+///
+/// 【为什么必须是显式字段，而不是「不在目录里就算 Legacy」】
+///   隐式判定是一条<b>兜底放行</b>策略：任何拼写错误（<c>orderStrat</c>）或协议外方法
+///   （<c>getSwitchConfig</c> 这类历史伪命令）都会被当成 Legacy <b>真实发往现网设备</b>，
+///   而调用方还会收到「成功」。协议族一旦成为规格上的一等字段，
+///   「认识 / 不认识」就变成可枚举的三态（二开 / 充电桩 / 不认识），
+///   第三态只能<b>快速失败</b>，再没有静默外发的缝隙。
+/// </summary>
+public enum AnShengProtocolFamily
+{
+    /// <summary>
+    /// 安圣二开协议（<c>asopen.md</c>）：业务参数<b>平铺</b>在 JSON 顶层，
+    /// <c>timestamp</c> 为秒级 int 且仅 4G 款注入。
+    /// </summary>
+    OpenProtocol = 0,
+
+    /// <summary>
+    /// Legacy 充电桩协议：业务参数位于 <c>param</c> 包裹对象内，
+    /// <c>timestamp</c> 为<b>毫秒字符串</b>。非二开协议，仅为兼容既有充电桩链路保留。
+    /// </summary>
+    ChargingPile = 1
+}
+
+/// <summary>
 /// 安圣二开协议单条命令的规格说明（对应 asopen.md 中一个 <c>##</c> 小节）。
 /// </summary>
 public sealed class AnShengCommandSpec
 {
+    /// <summary>
+    /// 本命令所属协议族（T14）。默认 <see cref="AnShengProtocolFamily.OpenProtocol"/> ——
+    /// <see cref="AnShengCommandCatalog"/> 里的 36 条全部是二开协议，无需逐条声明；
+    /// Legacy 充电桩命令登记在 <c>AnShengLegacyCommandCatalog</c> 中并<b>显式</b>标记为
+    /// <see cref="AnShengProtocolFamily.ChargingPile"/>。
+    ///
+    /// 报文结构、时间戳形态、下发分流均以本字段为唯一判据，
+    /// 详见 <c>AnShengProtocolFamilyResolver</c>。
+    /// </summary>
+    public AnShengProtocolFamily ProtocolFamily { get; init; } = AnShengProtocolFamily.OpenProtocol;
+
     /// <summary>协议方法名，如 <c>getDevInfo</c> / <c>action</c>。</summary>
     public string Method { get; init; } = string.Empty;
 
