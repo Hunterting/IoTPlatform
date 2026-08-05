@@ -469,3 +469,189 @@ public class AnShengDelayTaskResultDto
     /// <summary>乐观镜像快照（立即返回，可能尚未反映本次下发）。</summary>
     public List<AnShengDelayTaskDto>? Tasks { get; set; }
 }
+
+// ─────────────────────────────────────────────────────────────
+// T10 定时任务响应
+// ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 单个定时任务镜像的只读视图（T10 <c>GET /time-tasks</c> 端点）。
+///
+/// <see cref="TaskKind"/> 以字符串出网（<c>"Normal"</c> / <c>"Loop"</c>，全局注册
+/// <c>JsonStringEnumConverter</c>），前端拿到可读值而非魔数。
+/// </summary>
+public class AnShengTimeTaskDto
+{
+    /// <summary>插槽编号，从 1 开始。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>任务类型：普通 / 循环。</summary>
+    public AnShengTimeTaskKind TaskKind { get; set; } = AnShengTimeTaskKind.Normal;
+
+    /// <summary>同插槽同类型内序号，从 1 开始。</summary>
+    public int TaskIndex { get; set; }
+
+    /// <summary>设备分配的任务 id。</summary>
+    public string? TaskId { get; set; }
+
+    /// <summary>是否启用。</summary>
+    public bool Enable { get; set; }
+
+    /// <summary>每周生效的星期几（1-7）。</summary>
+    public IReadOnlyList<int> WeekDays { get; set; } = Array.Empty<int>();
+
+    /// <summary>【普通定时】动作小时（0-23）。</summary>
+    public int Hour { get; set; }
+
+    /// <summary>【普通定时】动作分钟（0-59）。</summary>
+    public int Minute { get; set; }
+
+    /// <summary>【普通定时】动作：<c>on</c> / <c>off</c> / <c>toggle</c>。</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>【普通定时】是否上报。</summary>
+    public bool UploadEnable { get; set; }
+
+    /// <summary>【循环定时】开始小时。</summary>
+    public int SHour { get; set; }
+
+    /// <summary>【循环定时】开始分钟。</summary>
+    public int SMinute { get; set; }
+
+    /// <summary>【循环定时】结束小时。</summary>
+    public int EHour { get; set; }
+
+    /// <summary>【循环定时】结束分钟。</summary>
+    public int EMinute { get; set; }
+
+    /// <summary>【循环定时】打开分钟数。</summary>
+    public int OnMins { get; set; }
+
+    /// <summary>【循环定时】关闭分钟数。</summary>
+    public int OffMins { get; set; }
+
+    /// <summary>镜像最后与设备同步的时刻（UTC）。</summary>
+    public DateTime SyncedAt { get; set; }
+
+    /// <summary>是否陈旧：<c>(UtcNow - SyncedAt) &gt; 24h</c>。</summary>
+    public bool IsStale { get; set; }
+
+    /// <summary>
+    /// 乐观并发令牌。客户端下发前应回传该值；若与服务器当前值不一致返回 409（验收 #5）。
+    /// </summary>
+    public long RowVersion { get; set; }
+}
+
+/// <summary>单插槽定时任务集合只读视图。</summary>
+public class AnShengSlotTimeTaskSetDto
+{
+    /// <summary>插槽编号，从 1 开始。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>普通定时任务列表。</summary>
+    public List<AnShengTimeTaskDto> TimeTasks { get; set; } = new();
+
+    /// <summary>循环定时任务列表。</summary>
+    public List<AnShengTimeTaskDto> LoopTimeTasks { get; set; } = new();
+}
+
+/// <summary>
+/// 定时任务下发结果（T10 <c>setTimeTasks</c> / <c>setSlotTimeTasks</c> 端点）。
+///
+/// <see cref="Slots"/> 为<b>乐观镜像快照</b>——命令一发出立即返回平台已有镜像，真实设备镜像由
+/// 写后回读（getTimeTasks / getSlotTimeTasks 应答经 Router 钩子）异步覆盖并 bump <see cref="AnShengTimeTask.SyncedAt"/>。
+/// </summary>
+public class AnShengTimeTaskResultDto
+{
+    /// <summary>平台是否受理并下发了命令。</summary>
+    public bool Accepted { get; set; }
+
+    /// <summary>平台命令标识（GUID），被拒时为 null。</summary>
+    public string? CommandId { get; set; }
+
+    /// <summary>安圣 FrameId，被拒时为 null。</summary>
+    public string? FrameId { get; set; }
+
+    /// <summary>机器可读拒绝原因；喇叭类设备为 <see cref="AnShengCommandRejectReason.RejectedByKind"/>。</summary>
+    public AnShengCommandRejectReason? RejectReason { get; set; }
+
+    /// <summary>面向人的失败原因。</summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>实际出网 JSON 报文回显（被拒时为 null）。</summary>
+    public string? Payload { get; set; }
+
+    /// <summary>
+    /// 是否因乐观并发冲突被拒（验收 #5）。<c>true</c> 时调用方应刷新镜像后重试；
+    /// 此时 HTTP 状态码为 409（区别于业务拒绝的 200 + Code=400）。
+    /// </summary>
+    public bool ConcurrencyConflict { get; set; }
+
+    /// <summary>乐观镜像快照（立即返回，可能尚未反映本次下发）。</summary>
+    public List<AnShengSlotTimeTaskSetDto>? Slots { get; set; }
+}
+
+// ─────────────────────────────────────────────────────────────
+// T11 电量计（实时 / 统计 / 校准）响应
+// ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 电量计命令下发结果（T11 全部写端点共用）。
+///
+/// 【为什么不带「乐观镜像」】与 T8/T10 不同，电量计是<b>只读采集</b>语义：
+///   平台没有资格替设备猜一个电量值。统计行只在设备应答真的回来时才写
+///   （Router 钩子 → <c>ApplyStatisticsReadbackAsync</c>），因此这里只回下发受理情况。
+///   前端拿到 <see cref="Accepted"/> 后应轮询 <c>GET /energy/statistics</c> 取真值。
+/// </summary>
+public class AnShengEnergyResultDto
+{
+    /// <summary>平台是否受理并下发了命令。</summary>
+    public bool Accepted { get; set; }
+
+    /// <summary>平台命令标识（GUID），被拒时为 null。</summary>
+    public string? CommandId { get; set; }
+
+    /// <summary>安圣 FrameId，被拒时为 null（未出网就没有帧）。</summary>
+    public string? FrameId { get; set; }
+
+    /// <summary>
+    /// 机器可读拒绝原因。喇叭类设备下发校准 / 统计命令时为
+    /// <see cref="AnShengCommandRejectReason.RejectedByKind"/>（验收 #6 的断言点）。
+    /// </summary>
+    public AnShengCommandRejectReason? RejectReason { get; set; }
+
+    /// <summary>面向人的失败原因。</summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>实际出网 JSON 报文回显（被拒时为 null）。</summary>
+    public string? Payload { get; set; }
+}
+
+/// <summary>
+/// 电量计统计聚合行的只读视图（T11 <c>GET /energy/statistics</c>）。
+///
+/// <see cref="Granularity"/> 以字符串出网（<c>"Total"</c> / <c>"HourSum"</c> / <c>"Hour"</c> /
+/// <c>"Day"</c> / <c>"Month"</c>，全局注册 <c>JsonStringEnumConverter</c>）。
+/// </summary>
+public class AnShengEmStatisticDto
+{
+    /// <summary>插槽编号，从 1 开始。</summary>
+    public int SlotNum { get; set; }
+
+    /// <summary>统计粒度。</summary>
+    public AnShengEmGranularity Granularity { get; set; } = AnShengEmGranularity.Total;
+
+    /// <summary>
+    /// 周期键：<c>total</c> / <c>00:00</c>~<c>23:30</c> / <c>yyyyMMddHHmm</c> / <c>yyyyMMdd</c> / <c>yyyyMM</c>。
+    /// </summary>
+    public string PeriodKey { get; set; } = string.Empty;
+
+    /// <summary>累计电量（kWh）。</summary>
+    public double Kwh { get; set; }
+
+    /// <summary>本行最后一次被设备应答刷新的时刻（UTC）。</summary>
+    public DateTime SyncedAt { get; set; }
+
+    /// <summary>是否陈旧：<c>(UtcNow - SyncedAt) &gt; 24h</c>。设备权威 + 平台只累积，超时才标陈旧。</summary>
+    public bool IsStale { get; set; }
+}

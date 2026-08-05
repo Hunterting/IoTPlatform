@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   Users,
   Cpu,
+  Clock,
   BarChart3,
   Eye,
   FolderOpen,
@@ -76,7 +77,9 @@ export type PageType =
   | 'settings-api'
   | 'settings-dictionary'
   | 'ansheng-management'
-  | 'switch-control';
+  | 'switch-control'
+  | 'schedule-editor'
+  | 'energy-statistics';
 
 interface SidebarProps {
   currentPage: PageType;
@@ -154,6 +157,20 @@ const menuItems: MenuItem[] = [
         icon: <Power className="w-4 h-4" />,
         // 与同级「安圣设备」一致：菜单按 view 权限可见，动作按钮的 send 权限门控交给页面自身。
         // 这样「有 VIEW_DEVICES、无 SEND_DEVICE_COMMANDS」的只读用户也能进入页面看只读 UI。
+        requiredPermission: PERMISSIONS.VIEW_DEVICES,
+      },
+      {
+        id: 'schedule-editor',
+        label: '定时任务',
+        icon: <Clock className="w-4 h-4" />,
+        // 与同级「开关控制」同构：菜单按 view 权限可见，页面自身对下发动作做 send 权限门控。
+        requiredPermission: PERMISSIONS.VIEW_DEVICES,
+      },
+      {
+        id: 'energy-statistics',
+        label: '电量统计',
+        icon: <Zap className="w-4 h-4" />,
+        // 与同级「开关控制」同构：菜单按 view 权限可见，页面自身对写类动作做 send 权限门控。
         requiredPermission: PERMISSIONS.VIEW_DEVICES,
       },
     ],

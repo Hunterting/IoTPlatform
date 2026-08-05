@@ -595,4 +595,603 @@ public class AnShengScheduleService : IAnShengScheduleService
     //   2. 镜像回写沿用「IgnoreQueryFilters + ResolveAppCodeAsync」这一对；
     //   3. 写后回读复用 ScheduleReadback 的模式（新作用域 + CancellationToken.None）。
     // ─────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────
+    // T10 定时任务（设备权威镜像 + 写后回读 + 乐观并发）
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>安圣协议方法名：查询所有插槽定时任务（写后回读用）。</summary>
+    private const string MethodGetTimeTasks = "getTimeTasks";
+
+    /// <summary>安圣协议方法名：整表覆盖定时任务。</summary>
+    private const string MethodSetTimeTasks = "setTimeTasks";
+
+    /// <summary>安圣协议方法名：查询单插槽定时任务（写后回读用）。</summary>
+    private const string MethodGetSlotTimeTasks = "getSlotTimeTasks";
+
+    /// <summary>安圣协议方法名：设置单插槽定时任务。</summary>
+    private const string MethodSetSlotTimeTasks = "setSlotTimeTasks";
+
+    /// <inheritdoc />
+    public async Task<List<AnShengSlotTimeTaskSetDto>> GetTimeTasksAsync(
+        long deviceId, CancellationToken ct = default)
+    {
+        // 刻意<b>不</b> IgnoreQueryFilters：本方法只服务 HTTP 作用域（同 GetDelayTasksAsync）。
+        var rows = await _db.Set<AnShengTimeTask>()
+            .AsNoTracking()
+            .Where(t => t.DeviceId == deviceId)
+            .OrderBy(t => t.SlotNum)
+            .ThenBy(t => t.TaskKind)   // Normal(0) 在前，Loop(1) 在后
+            .ThenBy(t => t.TaskIndex)
+            .ToListAsync(ct);
+
+        var now = UtcNow();
+        var threshold = _options.EffectiveMirrorStaleThreshold;
+        return ProjectSlots(rows, now, threshold);
+    }
+
+    /// <inheritdoc />
+    public async Task<AnShengSlotTimeTaskSetDto?> GetSlotTimeTasksAsync(
+        long deviceId, int slotNum, CancellationToken ct = default)
+    {
+        var rows = await _db.Set<AnShengTimeTask>()
+            .AsNoTracking()
+            .Where(t => t.DeviceId == deviceId && t.SlotNum == slotNum)
+            .OrderBy(t => t.TaskKind)
+            .ThenBy(t => t.TaskIndex)
+            .ToListAsync(ct);
+
+        if (rows.Count == 0)
+        {
+            return null;
+        }
+
+        var now = UtcNow();
+        var threshold = _options.EffectiveMirrorStaleThreshold;
+        var list = ProjectSlots(rows, now, threshold);
+        return list.Count > 0 ? list[0] : null;
+    }
+
+    /// <inheritdoc />
+    public async Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+        long? rowVersion = null, CancellationToken ct = default)
+    {
+        if (!confirm)
+        {
+            // 验收 #2：高危操作需二次确认，未确认直接业务拒绝、绝不下发。
+            return BuildTimeRejected(
+                AnShengCommandRejectReason.RejectedByConfirm,
+                "定时任务为高危操作，需要二次确认（confirm=true）后才下发");
+        }
+
+        var parameters = BuildSetTimeTasksParameters(slots);
+        var response = await _cmd.SendCommandAsync(deviceId, MethodSetTimeTasks, parameters, ct);
+        if (!response.Success)
+        {
+            return BuildTimeRejected(response);
+        }
+
+        // 乐观镜像：命令已出网，先按「请求意图」整表覆盖一份（验收 #3）。
+        try
+        {
+            await ReplaceTimeTasksAsync(deviceId, slots, rowVersion, ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.LogWarning(ex, "定时任务整表覆盖并发冲突: DeviceId={DeviceId}", deviceId);
+            return new AnShengTimeTaskResultDto
+            {
+                Accepted = false,
+                ConcurrencyConflict = true,
+                ErrorMessage = "定时任务已被其他操作修改，请刷新后重试"
+            };
+        }
+
+        var current = await ProjectSlotsFromDeviceAsync(deviceId, ct);
+        ScheduleTimeTaskReadback(deviceId, MethodGetTimeTasks, null);
+        return BuildTimeAccepted(response, current);
+    }
+
+    /// <inheritdoc />
+    public async Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+        long deviceId, int slotNum,
+        IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+        IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+        bool confirm, long? rowVersion = null, CancellationToken ct = default)
+    {
+        if (!confirm)
+        {
+            // 验收 #2：同整表覆盖，需二次确认。
+            return BuildTimeRejected(
+                AnShengCommandRejectReason.RejectedByConfirm,
+                "定时任务为高危操作，需要二次确认（confirm=true）后才下发");
+        }
+
+        var set = new AnShengSlotTimeTaskSet
+        {
+            SlotNum = slotNum,
+            TimeTasks = timeTasks,
+            LoopTimeTasks = loopTimeTasks
+        };
+
+        var parameters = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["slotNum"] = slotNum,
+            ["timeTasks"] = timeTasks.Select(ToTimeTaskWire).ToList(),
+            ["loopTimeTasks"] = loopTimeTasks.Select(ToLoopTimeTaskWire).ToList()
+        };
+
+        var response = await _cmd.SendCommandAsync(deviceId, MethodSetSlotTimeTasks, parameters, ct);
+        if (!response.Success)
+        {
+            return BuildTimeRejected(response);
+        }
+
+        try
+        {
+            await ReplaceTimeTasksAsync(deviceId, new[] { set }, rowVersion, ct);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.LogWarning(ex, "单插槽定时任务并发冲突: DeviceId={DeviceId}, SlotNum={SlotNum}", deviceId, slotNum);
+            return new AnShengTimeTaskResultDto
+            {
+                Accepted = false,
+                ConcurrencyConflict = true,
+                ErrorMessage = "定时任务已被其他操作修改，请刷新后重试"
+            };
+        }
+
+        var current = await ProjectSlotsFromDeviceAsync(deviceId, ct);
+        ScheduleTimeTaskReadback(
+            deviceId, MethodGetSlotTimeTasks,
+            new Dictionary<string, object?> { ["slotNum"] = slotNum });
+        return BuildTimeAccepted(response, current);
+    }
+
+    /// <inheritdoc />
+    public async Task ApplyTimeTasksReadbackAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, CancellationToken ct = default)
+    {
+        // 纵深防御：插槽号从 1 开始。任何 SlotNum ≤ 0 的集合都是「定位信息缺失」的产物
+        // （典型如误从不含 slotNum 的 getSlotTimeTasks 应答里取值），写进去就是一行
+        // 谁也查不到的幽灵数据，且会掩盖真正插槽的乐观值未被覆盖这一事实。宁可丢弃并告警。
+        var valid = slots.Where(s => s.SlotNum > 0).ToList();
+        if (valid.Count != slots.Count)
+        {
+            _logger.LogWarning(
+                "定时任务回读写回丢弃了 {Dropped} 个非法插槽集合（SlotNum ≤ 0）: DeviceId={DeviceId}",
+                slots.Count - valid.Count, deviceId);
+        }
+
+        if (valid.Count == 0)
+        {
+            return;
+        }
+
+        // 写后回读没有并发令牌：设备真值是权威，直接覆盖即可（验收 #3）。
+        await ReplaceTimeTasksAsync(deviceId, valid, null, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task ApplyTimeEventAsync(
+        long deviceId, int slotNum, int taskIndex, AnShengTimeEventTask task,
+        IReadOnlyList<int>? slots, CancellationToken ct = default)
+    {
+        if (slotNum <= 0 || taskIndex <= 0)
+        {
+            // 验收 #4：非法定位信息直接跳过，不写镜像、不抛异常。
+            _logger.LogWarning(
+                "timeEvent 携带非法 slot_num/task_index，跳过镜像写回: DeviceId={DeviceId}, SlotNum={SlotNum}, TaskIndex={TaskIndex}",
+                deviceId, slotNum, taskIndex);
+            return;
+        }
+
+        var appCode = await ResolveAppCodeAsync(deviceId, ct);
+        if (appCode == null)
+        {
+            _logger.LogWarning("timeEvent 写回失败：设备不存在或无租户码。DeviceId={DeviceId}", deviceId);
+            return;
+        }
+
+        // 验收 #4：按 (SlotNum, Kind, TaskIndex) 就地更新，不额外发命令。
+        var row = await _db.Set<AnShengTimeTask>()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(
+                t => t.DeviceId == deviceId && t.SlotNum == slotNum
+                     && t.TaskKind == task.Kind && t.TaskIndex == taskIndex, ct);
+
+        if (row == null)
+        {
+            // 设备权威：事件报了但我们镜像里没有这行 → 按事件真值新建（不丢数据）。
+            row = new AnShengTimeTask
+            {
+                AppCode = appCode,
+                DeviceId = deviceId,
+                SlotNum = slotNum,
+                TaskKind = task.Kind,
+                TaskIndex = taskIndex
+            };
+            _db.Set<AnShengTimeTask>().Add(row);
+        }
+
+        row.TaskId = task.Id ?? string.Empty;
+        row.Enable = task.Enable;
+        row.WeekDays = AnShengTimeTask.SerializeWeekDays(task.WeekDays);
+        row.Hour = task.Hour;
+        row.Minute = task.Minute;
+        row.Action = ClampAction(task.Action, string.Empty);
+        row.UploadEnable = task.UploadEnable;
+        row.SHour = task.SHour;
+        row.SMinute = task.SMinute;
+        row.EHour = task.EHour;
+        row.EMinute = task.EMinute;
+        row.OnMins = task.OnMins;
+        row.OffMins = task.OffMins;
+        row.SyncedAt = UtcNow();
+        row.RowVersion = row.RowVersion + 1;
+
+        await _db.SaveChangesAsync(ct);
+
+        // 事件同帧可带 slots[] 快照，顺手刷新档案（与 DelayEventHandler 同策略）。
+        if (slots != null && slots.Count > 0)
+        {
+            await UpdateSlotsSnapshotAsync(deviceId, slots, ct);
+        }
+    }
+
+    /// <summary>
+    /// 把读取到的镜像行投影成按插槽分组的只读 DTO（普通 / 循环两组）。
+    /// </summary>
+    private static List<AnShengSlotTimeTaskSetDto> ProjectSlots(
+        IReadOnlyList<AnShengTimeTask> rows, DateTime now, TimeSpan threshold)
+    {
+        var bySlot = new SortedDictionary<int, AnShengSlotTimeTaskSetDto>();
+        foreach (var t in rows)
+        {
+            if (!bySlot.TryGetValue(t.SlotNum, out var set))
+            {
+                set = new AnShengSlotTimeTaskSetDto { SlotNum = t.SlotNum };
+                bySlot[t.SlotNum] = set;
+            }
+
+            var dto = new AnShengTimeTaskDto
+            {
+                SlotNum = t.SlotNum,
+                TaskKind = t.TaskKind,
+                TaskIndex = t.TaskIndex,
+                TaskId = string.IsNullOrEmpty(t.TaskId) ? null : t.TaskId,
+                Enable = t.Enable,
+                WeekDays = AnShengTimeTask.ParseWeekDays(t.WeekDays),
+                Hour = t.Hour,
+                Minute = t.Minute,
+                Action = t.Action,
+                UploadEnable = t.UploadEnable,
+                SHour = t.SHour,
+                SMinute = t.SMinute,
+                EHour = t.EHour,
+                EMinute = t.EMinute,
+                OnMins = t.OnMins,
+                OffMins = t.OffMins,
+                SyncedAt = t.SyncedAt,
+                IsStale = (now - t.SyncedAt) > threshold,
+                RowVersion = t.RowVersion
+            };
+
+            if (t.TaskKind == AnShengTimeTaskKind.Loop)
+            {
+                set.LoopTimeTasks.Add(dto);
+            }
+            else
+            {
+                set.TimeTasks.Add(dto);
+            }
+        }
+
+        return bySlot.Values.ToList();
+    }
+
+    /// <summary>从数据库读取设备全部定时任务镜像并投影成 DTO（乐观快照用）。</summary>
+    private async Task<List<AnShengSlotTimeTaskSetDto>> ProjectSlotsFromDeviceAsync(
+        long deviceId, CancellationToken ct)
+    {
+        var rows = await _db.Set<AnShengTimeTask>()
+            .AsNoTracking()
+            .Where(t => t.DeviceId == deviceId)
+            .OrderBy(t => t.SlotNum)
+            .ThenBy(t => t.TaskKind)
+            .ThenBy(t => t.TaskIndex)
+            .ToListAsync(ct);
+
+        return ProjectSlots(rows, UtcNow(), _options.EffectiveMirrorStaleThreshold);
+    }
+
+    /// <summary>
+    /// 用设备真值<b>覆盖</b>指定插槽的定时任务镜像（整表 / 单插槽通用）。
+    ///
+    /// 后台作用域调用：全程 <c>IgnoreQueryFilters</c> + 显式 AppCode。删除不在期望集合内的既有行、
+    /// 其余 upsert 并更新 <see cref="AnShengTimeTask.SyncedAt"/>。
+    ///
+    /// <paramref name="expectedRowVersion"/> 非空时，把<b>本次涉及插槽</b>的既有行 OriginalValue 设为该令牌，
+    /// 使 UPDATE/DELETE 带 <c>AND RowVersion = @expected</c>；一旦被他人并发改动即 0 行 →
+    /// <see cref="DbUpdateConcurrencyException"/>（验收 #5）。只对本插槽生效，避免误伤其它插槽的
+    /// 不同 RowVersion 引发假冲突。
+    /// </summary>
+    private async Task ReplaceTimeTasksAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots,
+        long? expectedRowVersion, CancellationToken ct)
+    {
+        var appCode = await ResolveAppCodeAsync(deviceId, ct);
+        if (appCode == null)
+        {
+            _logger.LogWarning("定时任务镜像写回失败：设备不存在或无租户码。DeviceId={DeviceId}", deviceId);
+            return;
+        }
+
+        var existing = await _db.Set<AnShengTimeTask>()
+            .IgnoreQueryFilters()
+            .Where(t => t.DeviceId == deviceId)
+            .ToListAsync(ct);
+
+        // 期望的 (SlotNum, Kind, TaskIndex) → 待写行
+        var desired = new Dictionary<(int, AnShengTimeTaskKind, int), AnShengTimeTask>();
+        foreach (var set in slots)
+        {
+            for (var i = 0; i < set.TimeTasks.Count; i++)
+            {
+                desired[(set.SlotNum, AnShengTimeTaskKind.Normal, i + 1)] =
+                    ToRow(set.SlotNum, AnShengTimeTaskKind.Normal, i + 1, set.TimeTasks[i]);
+            }
+
+            for (var i = 0; i < set.LoopTimeTasks.Count; i++)
+            {
+                desired[(set.SlotNum, AnShengTimeTaskKind.Loop, i + 1)] =
+                    ToRow(set.SlotNum, AnShengTimeTaskKind.Loop, i + 1, set.LoopTimeTasks[i]);
+            }
+        }
+
+        // 并发令牌：仅施加于本次涉及的插槽，避免误伤其它插槽（验收 #5）。
+        if (expectedRowVersion.HasValue)
+        {
+            var touchedSlots = new HashSet<int>(slots.Select(s => s.SlotNum));
+            foreach (var row in existing)
+            {
+                if (touchedSlots.Contains(row.SlotNum))
+                {
+                    _db.Entry(row).Property(r => r.RowVersion).OriginalValue = expectedRowVersion.Value;
+                }
+            }
+        }
+
+        var byKey = new Dictionary<(int, AnShengTimeTaskKind, int), AnShengTimeTask>(existing.Count);
+        foreach (var row in existing)
+        {
+            byKey[(row.SlotNum, row.TaskKind, row.TaskIndex)] = row; // 后写覆盖先写
+        }
+
+        var newVersion = existing.Count > 0 ? existing.Max(r => r.RowVersion) + 1 : 1;
+        var now = UtcNow();
+
+        foreach (var (key, newRow) in desired)
+        {
+            if (byKey.TryGetValue(key, out var old))
+            {
+                CopyRow(old, newRow);
+                old.RowVersion = newVersion;
+                old.SyncedAt = now;
+            }
+            else
+            {
+                newRow.AppCode = appCode;
+                newRow.DeviceId = deviceId;
+                newRow.RowVersion = newVersion;
+                newRow.SyncedAt = now;
+                _db.Set<AnShengTimeTask>().Add(newRow);
+            }
+        }
+
+        // 删除「本次涉及插槽」内、不在期望集合里的既有行：单插槽覆盖只动本插槽
+        // （其余插槽的任务不动），整表覆盖则客户端须下发全部插槽，未下发的插槽其任务
+        // 自然不在 desired 中而被清——两种语义统一于此。
+        var slotsToDelete = new HashSet<int>(slots.Select(s => s.SlotNum));
+        foreach (var row in existing)
+        {
+            if (slotsToDelete.Contains(row.SlotNum)
+                && !desired.ContainsKey((row.SlotNum, row.TaskKind, row.TaskIndex)))
+            {
+                _db.Set<AnShengTimeTask>().Remove(row);
+            }
+        }
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogDebug(
+            "定时任务镜像已覆盖写回: DeviceId={DeviceId}, AppCode={AppCode}, SlotSets={Count}, NewVersion={NewVersion}",
+            deviceId, appCode, slots.Count, newVersion);
+    }
+
+    /// <summary>把整表覆盖请求映射为 setTimeTasks 的下发参数（<c>tasks[]</c> 数组）。</summary>
+    private static Dictionary<string, object?> BuildSetTimeTasksParameters(
+        IReadOnlyList<AnShengSlotTimeTaskSet> slots)
+    {
+        var tasks = new List<Dictionary<string, object?>>(slots.Count);
+        foreach (var set in slots)
+        {
+            tasks.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["timeTasks"] = set.TimeTasks.Select(ToTimeTaskWire).ToList(),
+                ["loopTimeTasks"] = set.LoopTimeTasks.Select(ToLoopTimeTaskWire).ToList()
+            });
+        }
+
+        return new Dictionary<string, object?> { ["tasks"] = tasks };
+    }
+
+    /// <summary>把普通定时任务传输视图映射为下发报文项（平铺字段）。</summary>
+    private static Dictionary<string, object?> ToTimeTaskWire(AnShengTimeTaskItem item)
+        => new(StringComparer.Ordinal)
+        {
+            ["id"] = string.IsNullOrEmpty(item.Id) ? null : item.Id,
+            ["enable"] = item.Enable,
+            ["weekDays"] = item.WeekDays?.ToArray() ?? Array.Empty<int>(),
+            ["hour"] = item.Hour,
+            ["minute"] = item.Minute,
+            ["action"] = item.Action,
+            ["uploadEnable"] = item.UploadEnable
+        };
+
+    /// <summary>把循环定时任务传输视图映射为下发报文项（平铺字段）。</summary>
+    private static Dictionary<string, object?> ToLoopTimeTaskWire(AnShengLoopTimeTaskItem item)
+        => new(StringComparer.Ordinal)
+        {
+            ["id"] = string.IsNullOrEmpty(item.Id) ? null : item.Id,
+            ["enable"] = item.Enable,
+            ["weekDays"] = item.WeekDays?.ToArray() ?? Array.Empty<int>(),
+            ["sHour"] = item.SHour,
+            ["sMinute"] = item.SMinute,
+            ["eHour"] = item.EHour,
+            ["eMinute"] = item.EMinute,
+            ["onMins"] = item.OnMins,
+            ["offMins"] = item.OffMins
+        };
+
+    /// <summary>由传输视图构造一行镜像实体（普通定时）。</summary>
+    private static AnShengTimeTask ToRow(int slotNum, AnShengTimeTaskKind kind, int index, AnShengTimeTaskItem item)
+        => new()
+        {
+            SlotNum = slotNum,
+            TaskKind = kind,
+            TaskIndex = index,
+            TaskId = item.Id ?? string.Empty,
+            Enable = item.Enable,
+            WeekDays = AnShengTimeTask.SerializeWeekDays(item.WeekDays),
+            Hour = item.Hour,
+            Minute = item.Minute,
+            Action = ClampAction(item.Action, "on"),
+            UploadEnable = item.UploadEnable
+        };
+
+    /// <summary>由传输视图构造一行镜像实体（循环定时）。</summary>
+    private static AnShengTimeTask ToRow(int slotNum, AnShengTimeTaskKind kind, int index, AnShengLoopTimeTaskItem item)
+        => new()
+        {
+            SlotNum = slotNum,
+            TaskKind = kind,
+            TaskIndex = index,
+            TaskId = item.Id ?? string.Empty,
+            Enable = item.Enable,
+            WeekDays = AnShengTimeTask.SerializeWeekDays(item.WeekDays),
+            SHour = item.SHour,
+            SMinute = item.SMinute,
+            EHour = item.EHour,
+            EMinute = item.EMinute,
+            OnMins = item.OnMins,
+            OffMins = item.OffMins
+        };
+
+    /// <summary>把源行（已含最新字段）拷入被跟踪的旧行，供 upsert 就地更新。</summary>
+    private static void CopyRow(AnShengTimeTask old, AnShengTimeTask src)
+    {
+        old.TaskId = src.TaskId;
+        old.Enable = src.Enable;
+        old.WeekDays = src.WeekDays;
+        old.Hour = src.Hour;
+        old.Minute = src.Minute;
+        old.Action = src.Action;
+        old.UploadEnable = src.UploadEnable;
+        old.SHour = src.SHour;
+        old.SMinute = src.SMinute;
+        old.EHour = src.EHour;
+        old.EMinute = src.EMinute;
+        old.OnMins = src.OnMins;
+        old.OffMins = src.OffMins;
+    }
+
+    /// <summary>
+    /// 在<b>新作用域</b>里延迟触发一次定时任务写后回读（getTimeTasks / getSlotTimeTasks）。
+    /// 复用 T8 <see cref="ScheduleReadback"/> 的模式：新作用域 + Task.Delay + CancellationToken.None。
+    /// </summary>
+    private void ScheduleTimeTaskReadback(
+        long deviceId, string method, Dictionary<string, object?>? parameters)
+    {
+        var delayMs = _options.EffectiveReadbackDelayMs;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (delayMs > 0)
+                {
+                    await Task.Delay(delayMs).ConfigureAwait(false);
+                }
+
+                using var scope = _scopeFactory.CreateScope();
+                var cmd = scope.ServiceProvider.GetRequiredService<IAnShengCommandService>();
+
+                var response = await cmd
+                    .SendCommandAsync(deviceId, method, parameters, CancellationToken.None)
+                    .ConfigureAwait(false);
+
+                if (response.Success)
+                {
+                    _logger.LogDebug(
+                        "定时任务写后回读已下发: DeviceId={DeviceId}, Method={Method}, CommandId={CommandId}",
+                        deviceId, method, response.CommandId);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "定时任务写后回读未受理（不影响本次下发结果）: DeviceId={DeviceId}, Method={Method}, Reason={Reason}",
+                        deviceId, method, response.RejectReason);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "定时任务写后回读执行失败: DeviceId={DeviceId}, Method={Method}", deviceId, method);
+            }
+        });
+    }
+
+    /// <summary>构造「已受理」定时任务结果（乐观镜像快照）。</summary>
+    private static AnShengTimeTaskResultDto BuildTimeAccepted(
+        AnShengCommandResponse response, List<AnShengSlotTimeTaskSetDto> slots)
+        => new()
+        {
+            Accepted = true,
+            CommandId = response.CommandId,
+            FrameId = response.FrameId,
+            RejectReason = null,
+            ErrorMessage = null,
+            Payload = response.Payload,
+            ConcurrencyConflict = false,
+            Slots = slots
+        };
+
+    /// <summary>构造「未受理」定时任务结果（命令被 Guard 拒收，带 RejectReason）。</summary>
+    private static AnShengTimeTaskResultDto BuildTimeRejected(AnShengCommandResponse response)
+        => new()
+        {
+            Accepted = false,
+            CommandId = response.CommandId,
+            FrameId = response.FrameId,
+            RejectReason = response.RejectReason,
+            ErrorMessage = response.ErrorMessage,
+            ConcurrencyConflict = false,
+            Slots = null
+        };
+
+    /// <summary>构造「未受理」定时任务结果（业务规则拒绝，如缺少二次确认）。</summary>
+    private static AnShengTimeTaskResultDto BuildTimeRejected(
+        AnShengCommandRejectReason reason, string message)
+        => new()
+        {
+            Accepted = false,
+            CommandId = null,
+            FrameId = null,
+            RejectReason = reason,
+            ErrorMessage = message,
+            ConcurrencyConflict = false,
+            Slots = null
+        };
 }

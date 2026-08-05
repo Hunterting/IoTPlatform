@@ -65,4 +65,54 @@ public interface IAnShengScheduleService
     /// <summary>把设备应答的 <c>slots[]</c> 写回 <see cref="AnShengDeviceProfile.SlotsSnapshot"/>。</summary>
     Task UpdateSlotsSnapshotAsync(
         long deviceId, IReadOnlyList<int> slots, CancellationToken ct = default);
+
+    // ─────────────────────────────────────────────────────────────
+    // T10 定时任务（设备权威镜像 + 写后回读 + 乐观并发）
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 读取平台定时任务镜像（按插槽升序，每插槽分普通 / 循环两组），每条带 <see cref="AnShengTimeTaskDto.IsStale"/>。
+    /// 仅服务 HTTP 作用域，刻意不加 <c>IgnoreQueryFilters</c>（跨租户读的最后防线）。
+    /// </summary>
+    Task<List<AnShengSlotTimeTaskSetDto>> GetTimeTasksAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 整表覆盖定时任务（<c>setTimeTasks</c>）。命令出网后即落「乐观镜像」并触发写后回读。
+    /// <paramref name="confirm"/> 为 false 时直接业务拒绝、不下发（验收 #2）；
+    /// <paramref name="rowVersion"/> 与服务器不一致时返回并发冲突（验收 #5，HTTP 409）。
+    /// </summary>
+    Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+        long? rowVersion = null, CancellationToken ct = default);
+
+    /// <summary>读取单个插槽的定时任务镜像（普通 / 循环两组）。</summary>
+    Task<AnShengSlotTimeTaskSetDto?> GetSlotTimeTasksAsync(
+        long deviceId, int slotNum, CancellationToken ct = default);
+
+    /// <summary>
+    /// 单插槽定时任务设置（<c>setSlotTimeTasks</c>）。约束同 <see cref="SetTimeTasksAsync"/>；
+    /// <paramref name="slotNum"/> 由调用方保证合法（控制器已拦截 &lt; 1，Guard 拦截越界）。
+    /// </summary>
+    Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+        long deviceId, int slotNum,
+        IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+        IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+        bool confirm, long? rowVersion = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// getTimeTasks / getSlotTimeTasks 应答镜像回写（由 Router 钩子调用）。
+    /// 用设备真值<b>覆盖</b>对应插槽的镜像并 bump <see cref="AnShengTimeTask.SyncedAt"/>（验收 #3）。
+    /// 后台作用域调用，内部 <c>IgnoreQueryFilters</c> + 显式 AppCode。
+    /// </summary>
+    Task ApplyTimeTasksReadbackAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, CancellationToken ct = default);
+
+    /// <summary>
+    /// timeEvent 镜像就地更新（由 <c>TimeEventHandler</c> 调用，验收 #4）。
+    /// 按 <c>(SlotNum, Kind, TaskIndex)</c> 定位行并覆盖字段，<b>不</b>额外发命令；
+    /// 行不存在时按设备权威新建。后台作用域调用。
+    /// </summary>
+    Task ApplyTimeEventAsync(
+        long deviceId, int slotNum, int taskIndex, AnShengTimeEventTask task,
+        IReadOnlyList<int>? slots, CancellationToken ct = default);
 }

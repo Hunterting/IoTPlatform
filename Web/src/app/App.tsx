@@ -27,6 +27,8 @@ import { ProtocolManagementPage } from '@/app/pages/ProtocolManagementPage';
 import { DeviceControlPage } from '@/app/pages/DeviceControlPage';
 import { AnShengManagementPage } from '@/app/pages/AnShengManagementPage';
 import { SwitchControlPage } from '@/app/pages/SwitchControlPage';
+import { ScheduleEditorPage } from '@/app/pages/ScheduleEditorPage';
+import { EnergyStatisticsPage } from '@/app/pages/EnergyStatisticsPage';
 
 function AppContent() {
   const { user, currentCustomer } = useAuth();
@@ -86,6 +88,10 @@ function AppContent() {
         return <AnShengManagementPage />;
       case 'switch-control':
         return <SwitchControlPage />;
+      case 'schedule-editor':
+        return <ScheduleEditorPage />;
+      case 'energy-statistics':
+        return <EnergyStatisticsPage />;
       case 'alert-center':
         return <AlertCenterPage />;
       case 'data-collection':

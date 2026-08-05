@@ -62,7 +62,8 @@ public sealed class AnShengEventRoutingTests : IDisposable
             _db,
             _parser,
             NullLogger<AnShengMessageRouter>.Instance,
-            new NoopScheduleService());
+            new NoopScheduleService(),
+            new NoopEnergyService());
     }
 
     public void Dispose()
@@ -100,6 +101,85 @@ public sealed class AnShengEventRoutingTests : IDisposable
 
         public Task UpdateSlotsSnapshotAsync(
             long deviceId, IReadOnlyList<int> slots, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        // ── T10 定时任务接口扩张：本桩只服务 T6 路由判定，不触发写后回读/镜像路径，故全 no-op ──
+        public Task<List<AnShengSlotTimeTaskSetDto>> GetTimeTasksAsync(
+            long deviceId, CancellationToken ct = default) =>
+            Task.FromResult(new List<AnShengSlotTimeTaskSetDto>());
+
+        public Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+            long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+            long? rowVersion = null, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengTimeTaskResultDto());
+
+        public Task<AnShengSlotTimeTaskSetDto?> GetSlotTimeTasksAsync(
+            long deviceId, int slotNum, CancellationToken ct = default) =>
+            Task.FromResult<AnShengSlotTimeTaskSetDto?>(null);
+
+        public Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+            long deviceId, int slotNum,
+            IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+            IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+            bool confirm, long? rowVersion = null, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengTimeTaskResultDto());
+
+        public Task ApplyTimeTasksReadbackAsync(
+            long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task ApplyTimeEventAsync(
+            long deviceId, int slotNum, int taskIndex, AnShengTimeEventTask task,
+            IReadOnlyList<int>? slots, CancellationToken ct = default) =>
+            Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// <see cref="IAnShengEnergyService"/> 的最小替身：T6 路由判定测试只关心 <c>Classify</c> 的五级顺序，
+    /// 不触发任何电量计写后回读 / 统计入库路径，因此这里全部走 no-op，仅满足 Router 构造的非空校验。
+    /// </summary>
+    private sealed class NoopEnergyService : IAnShengEnergyService
+    {
+        public Task<AnShengEnergyResultDto> RequestRealtimeAsync(
+            long deviceId, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> RequestStatisticsAsync(
+            long deviceId, string? q = null, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> ClearStatisticsAsync(
+            long deviceId, int? slotNum, bool confirm, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> GetCalParamsAsync(
+            long deviceId, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> SetCalParamsAsync(
+            long deviceId, IReadOnlyDictionary<string, double> calParams, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> ResetCalParamsAsync(
+            long deviceId, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> AutoCalAsync(
+            long deviceId, double power, CancellationToken ct = default) =>
+            Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<List<AnShengEmStatisticDto>> QueryStatisticsAsync(
+            long deviceId, int? slotNum = null, AnShengEmGranularity? granularity = null,
+            CancellationToken ct = default) =>
+            Task.FromResult(new List<AnShengEmStatisticDto>());
+
+        public Task ApplyStatisticsReadbackAsync(
+            long deviceId, AnShengEmStatisticsSnapshot snapshot, CancellationToken ct = default) =>
+            Task.CompletedTask;
+
+        public Task ApplyRealtimeReadbackAsync(
+            long deviceId, IReadOnlyList<AnShengEmRealtimeSlot> slots,
+            DateTime? deviceTimestampUtc = null, CancellationToken ct = default) =>
             Task.CompletedTask;
     }
 

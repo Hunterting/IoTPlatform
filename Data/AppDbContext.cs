@@ -73,6 +73,8 @@ public class AppDbContext : DbContext
     public DbSet<AnShengDeviceEvent> AnShengDeviceEvents { get; set; }
     public DbSet<AnShengCommandRecord> AnShengCommandRecords { get; set; }
     public DbSet<AnShengDelayTask> AnShengDelayTasks { get; set; }
+    public DbSet<AnShengTimeTask> AnShengTimeTasks { get; set; }
+    public DbSet<AnShengEmStatistic> AnShengEmStatistics { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -129,6 +131,8 @@ public class AppDbContext : DbContext
         ConfigureAnShengDeviceEvents(modelBuilder);
         ConfigureAnShengCommandRecords(modelBuilder);
         ConfigureAnShengDelayTasks(modelBuilder);
+        ConfigureAnShengTimeTasks(modelBuilder);
+        ConfigureAnShengEmStatistics(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -501,6 +505,72 @@ public class AppDbContext : DbContext
             entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
             entity.Property(e => e.SAction).HasMaxLength(16).IsRequired();
             entity.Property(e => e.EAction).HasMaxLength(16).IsRequired();
+        });
+    }
+
+    /// <summary>
+    /// 安圣定时任务镜像配置（T10）。
+    ///
+    /// 【索引设计】唯一键 <c>(DeviceId, SlotNum, TaskKind, TaskIndex)</c>：定时任务每插槽挂
+    ///   两个数组（timeTasks / loopTimeTasks），各自多项，故需 (SlotNum, TaskKind, TaskIndex)
+    ///   三者才能唯一定位一行（区别于延时任务的 (DeviceId, SlotNum)）。
+    ///   <c>AppCode</c> 打头索引供后台作用域按租户反查；<c>DeviceId</c> 单索引供 GET 主路径。
+    ///
+    /// 【乐观并发】<see cref="AnShengTimeTask.RowVersion"/> 声明为并发令牌（<c>IsConcurrencyToken</c>），
+    ///   EF 生成的 UPDATE/DELETE 带 <c>AND RowVersion = @original</c>，两名管理员并发整表覆盖同一插槽时
+    ///   后写者影响 0 行 → <c>DbUpdateConcurrencyException</c> → API 返回 409（验收 #5）。
+    ///   该列是平台自增的 bigint，<b>不做</b>任何 <c>HasConversion</c>（默认的 int 映射即可，禁原生 ENUM/CHECK）。
+    ///
+    /// 【MySQL 5.7.26 约束】不使用 CHECK 约束、不使用函数索引；TaskKind 为 int 列（默认映射）。
+    /// </summary>
+    private void ConfigureAnShengTimeTasks(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengTimeTask>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.DeviceId, e.SlotNum, e.TaskKind, e.TaskIndex }).IsUnique();
+            entity.HasIndex(e => new { e.AppCode, e.DeviceId });
+            entity.HasIndex(e => e.DeviceId);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.TaskId).HasMaxLength(32);
+            entity.Property(e => e.Action).HasMaxLength(16);
+            entity.Property(e => e.WeekDays).HasMaxLength(64);
+
+            // 乐观并发令牌：EF 在 UPDATE/DELETE 自动附带 RowVersion 比对（验收 #5）。
+            entity.Property(e => e.RowVersion).IsConcurrencyToken();
+        });
+    }
+
+    /// <summary>
+    /// 安圣电量计统计聚合表配置（T11，设计 D5 Option C）。
+    ///
+    /// 【索引设计理由】
+    ///   · <c>UNIQUE(DeviceId, SlotNum, Granularity, PeriodKey)</c>：这是本表的<b>生命线</b>（验收 #1）。
+    ///     getEMStatistics 是全量快照式返回（dayData 最近 30 / monthData 最近 12），每拉一次就重复一次，
+    ///     有唯一键才能做 UPSERT，没它重复拉取会把表撑成垃圾场。Granularity 单列不足以唯一定位
+    ///     （Total / HourSum / Hour / Day / Month 同插槽可共存），故四元组才是真正的去重键。
+    ///   · <c>(AppCode, DeviceId)</c>：后台作用域（Router 钩子）用 <c>IgnoreQueryFilters</c> 时仍能走索引
+    ///     快速定位；AppCode 打头是因为显式定位查询会带它（见 <see cref="Services.AnShengEnergyService"/>）。
+    ///   · <c>DeviceId</c> 单索引：按设备反查全部聚合行（GET 端点主路径）。
+    ///
+    /// 【MySQL 5.7.26 约束】不使用 CHECK 约束、不使用函数索引；Granularity 为 int 列（默认映射，
+    /// 禁原生 ENUM）；PeriodKey 为 varchar(16) 且<b>非空</b>——唯一索引对 NULL 不去重，一旦允许 NULL，
+    ///   Total 行就会无限重复插入（验收 #1 的杀手）。Kwh 为 double（默认映射）。
+    /// </summary>
+    private void ConfigureAnShengEmStatistics(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengEmStatistic>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.DeviceId, e.SlotNum, e.Granularity, e.PeriodKey }).IsUnique();
+            entity.HasIndex(e => new { e.AppCode, e.DeviceId });
+            entity.HasIndex(e => e.DeviceId);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.PeriodKey).HasMaxLength(AnShengEmStatistic.PeriodKeyMaxLength).IsRequired();
         });
     }
 

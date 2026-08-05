@@ -284,3 +284,351 @@ export interface AnShengDeviceProfileDto {
   /** slots 写入时间（UTC ISO 串）；未写回为 null。 */
   slotsSnapshotAt?: string | null;
 }
+
+// ════════════════════════════════════════════════════════════════
+// T10：安圣定时任务（对应后端 AnShengScheduleController）
+//
+// 【字段名权威来源】
+//   Controllers/AnShengScheduleController.cs
+//   DTOs/Requests/AnShengRequests.cs   （AnShengSetTimeTasksRequest 等）
+//   DTOs/Responses/AnShengResponses.cs （AnShengTimeTaskDto 等）
+//   Models/AnShengTimeTask.cs          （AnShengTimeTaskKind 枚举）
+//
+// 【camelCase 换算】后端 MVC 用 JsonSerializerDefaults.Web，.NET 的 CamelCase 策略
+//   只把**前导连续大写**降格：SHour → sHour、EMinute → eMinute、OnMins → onMins、
+//   RowVersion → rowVersion、TaskKind → taskKind、UploadEnable → uploadEnable。
+//
+// 【铁律②：拒绝走信封】业务拒绝 HTTP 恒 200 + ApiResponse.code=400，
+//   机器可读原因在 data.rejectReason。**唯一例外**是乐观并发冲突：
+//   控制器显式 StatusCode(409, ...)，axios 会抛异常，需在 catch 里判定（见页面注释）。
+//
+// 【铁律④：枚举以字符串原名出网】taskKind 是 "Normal" / "Loop"，不是 0 / 1。
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * 定时任务类型。
+ *
+ * 后端 Models/AnShengTimeTask.cs 的 AnShengTimeTaskKind 枚举，
+ * 因全局注册 JsonStringEnumConverter 而以**字符串成员名**出网。
+ * 前端分支必须用 'Normal' / 'Loop'，绝不能按 0 / 1 判断。
+ */
+export type AnShengTimeTaskKind = 'Normal' | 'Loop';
+
+// ── T10 请求 DTO ────────────────────────────────────────────
+
+/**
+ * 单条普通定时任务请求项。
+ * 对应后端 AnShengTimeTaskItemRequest。到点执行一次 action。
+ */
+export interface AnShengTimeTaskItemRequest {
+  /** 设备分配的任务 id；新建时传 null。 */
+  id?: string | null;
+  /** 是否启用。 */
+  enable: boolean;
+  /** 每周生效的星期几（1-7）；空数组表示仅一次。 */
+  weekDays?: number[] | null;
+  /** 动作小时（0-23）。 */
+  hour: number;
+  /** 动作分钟（0-59）。 */
+  minute: number;
+  /** 动作：on / off / toggle。 */
+  action: AnShengSwitchAction;
+  /** 任务触发时是否上报 timeEvent。 */
+  uploadEnable: boolean;
+}
+
+/**
+ * 单条循环定时任务请求项。
+ * 对应后端 AnShengLoopTimeTaskItemRequest。时间窗内按 onMins / offMins 往复通断。
+ */
+export interface AnShengLoopTimeTaskItemRequest {
+  /** 设备分配的任务 id；新建时传 null。 */
+  id?: string | null;
+  /** 是否启用。 */
+  enable: boolean;
+  /** 每周生效的星期几（1-7）；空数组表示仅一次。 */
+  weekDays?: number[] | null;
+  /** 每天循环开始的小时（0-23）。后端属性 SHour。 */
+  sHour: number;
+  /** 每天循环开始的分钟（0-59）。后端属性 SMinute。 */
+  sMinute: number;
+  /** 每天循环结束的小时（0-23）。后端属性 EHour。 */
+  eHour: number;
+  /** 每天循环结束的分钟（0-59）。后端属性 EMinute。 */
+  eMinute: number;
+  /** 循环中打开的分钟数。 */
+  onMins: number;
+  /** 循环中关闭的分钟数。 */
+  offMins: number;
+}
+
+/**
+ * 单插槽定时任务集合请求体（整表覆盖时的数组元素）。
+ * 对应后端 AnShengSlotTimeTaskSetRequest。
+ */
+export interface AnShengSlotTimeTaskSetRequest {
+  /** 插槽编号，从 1 开始。 */
+  slotNum: number;
+  /** 普通定时任务列表。 */
+  timeTasks: AnShengTimeTaskItemRequest[];
+  /** 循环定时任务列表。 */
+  loopTimeTasks: AnShengLoopTimeTaskItemRequest[];
+}
+
+/**
+ * 整表覆盖定时任务请求。
+ * 对应 POST /ansheng/{deviceId}/time-tasks，后端 DTO：AnShengSetTimeTasksRequest。
+ *
+ * 【整表覆盖语义】未列出的插槽其定时任务将被清空，属高危操作，
+ * 故 confirm 必须为 true，否则后端以 RejectedByConfirm 业务拒绝且命令零出网。
+ */
+export interface AnShengSetTimeTasksRequest {
+  /** 二次确认开关，必须为 true 才下发。 */
+  confirm: boolean;
+  /** 每个插槽的完整定时任务集合（按插槽升序）。 */
+  slots: AnShengSlotTimeTaskSetRequest[];
+  /** 乐观并发令牌，取自 GET /time-tasks 任意行的 rowVersion；不一致返回 HTTP 409。 */
+  rowVersion?: number | null;
+}
+
+/**
+ * 单插槽定时任务请求。
+ * 对应 POST /ansheng/{deviceId}/time-tasks/{slotNum}，后端 DTO：AnShengSetSlotTimeTasksRequest。
+ *
+ * 【slotNum 不在请求体里】它取自路由段，后端在下发前拦截越界值（HTTP 200 + code=400）。
+ */
+export interface AnShengSetSlotTimeTasksRequest {
+  /** 二次确认开关，必须为 true 才下发。 */
+  confirm: boolean;
+  /** 普通定时任务列表。 */
+  timeTasks: AnShengTimeTaskItemRequest[];
+  /** 循环定时任务列表。 */
+  loopTimeTasks: AnShengLoopTimeTaskItemRequest[];
+  /** 乐观并发令牌；不一致返回 HTTP 409。 */
+  rowVersion?: number | null;
+}
+
+// ── T10 响应 DTO ────────────────────────────────────────────
+
+/**
+ * 单条定时任务镜像（普通 / 循环共用同一形状）。
+ * 对应后端 AnShengTimeTaskDto。
+ *
+ * 【字段按 taskKind 分组生效】taskKind='Normal' 时 hour / minute / action / uploadEnable 有意义；
+ * taskKind='Loop' 时 sHour / sMinute / eHour / eMinute / onMins / offMins 有意义。
+ * 另一组字段为默认值 0 / 空串，不代表设备真值，渲染时须按 taskKind 分支。
+ */
+export interface AnShengTimeTaskDto {
+  /** 插槽编号，从 1 开始。 */
+  slotNum: number;
+  /** 任务类型：'Normal'（普通）/ 'Loop'（循环）。字符串枚举。 */
+  taskKind: AnShengTimeTaskKind;
+  /** 同插槽同类型内序号，从 1 开始。 */
+  taskIndex: number;
+  /** 设备分配的任务 id；平台新建尚未回读时为 null。 */
+  taskId?: string | null;
+  /** 是否启用。 */
+  enable: boolean;
+  /** 每周生效的星期几（1-7）；空数组表示仅一次。 */
+  weekDays: number[];
+  /** 【普通定时】动作小时（0-23）。 */
+  hour: number;
+  /** 【普通定时】动作分钟（0-59）。 */
+  minute: number;
+  /** 【普通定时】动作：on / off / toggle。 */
+  action: string;
+  /** 【普通定时】任务触发时是否上报。 */
+  uploadEnable: boolean;
+  /** 【循环定时】开始小时。 */
+  sHour: number;
+  /** 【循环定时】开始分钟。 */
+  sMinute: number;
+  /** 【循环定时】结束小时。 */
+  eHour: number;
+  /** 【循环定时】结束分钟。 */
+  eMinute: number;
+  /** 【循环定时】打开分钟数。 */
+  onMins: number;
+  /** 【循环定时】关闭分钟数。 */
+  offMins: number;
+  /** 镜像最后与设备同步的时刻（UTC ISO 串）；写后回读会 bump 该值。 */
+  syncedAt: string;
+  /** 是否陈旧：(UtcNow - syncedAt) > 24h。 */
+  isStale: boolean;
+  /** 乐观并发令牌；下发前应原样回传，不一致时后端返回 HTTP 409。 */
+  rowVersion: number;
+}
+
+/**
+ * 单插槽定时任务集合只读视图。
+ * 对应后端 AnShengSlotTimeTaskSetDto。GET /time-tasks 返回的是它的**数组**。
+ */
+export interface AnShengSlotTimeTaskSetDto {
+  /** 插槽编号，从 1 开始。 */
+  slotNum: number;
+  /** 普通定时任务列表（每项 taskKind='Normal'）。 */
+  timeTasks: AnShengTimeTaskDto[];
+  /** 循环定时任务列表（每项 taskKind='Loop'）。 */
+  loopTimeTasks: AnShengTimeTaskDto[];
+}
+
+/**
+ * 定时任务下发结果（setTimeTasks / setSlotTimeTasks 端点的 data）。
+ * 对应后端 AnShengTimeTaskResultDto。
+ */
+export interface AnShengTimeTaskResultDto {
+  /** 平台是否受理并下发了命令；被 Guard / confirm / 并发校验拒收时为 false。 */
+  accepted: boolean;
+  /** 平台命令标识（GUID），被拒时为 null。 */
+  commandId?: string | null;
+  /** 安圣 FrameId，被拒（未出网）时为 null。 */
+  frameId?: string | null;
+  /** 机器可读拒绝原因；喇叭类为 "RejectedByKind"，缺 confirm 为 "RejectedByConfirm"。 */
+  rejectReason?: AnShengCommandRejectReason | null;
+  /** 面向人的失败原因，勿用于程序分支判断。 */
+  errorMessage?: string | null;
+  /** 实际出网的 JSON 报文回显；被拒时为 null。 */
+  payload?: string | null;
+  /** 是否因乐观并发冲突被拒；true 时 HTTP 状态码为 409（而非 200）。 */
+  concurrencyConflict: boolean;
+  /** 乐观镜像快照（立即返回，可能尚未反映本次下发）。 */
+  slots?: AnShengSlotTimeTaskSetDto[] | null;
+}
+
+// ════════════════════════════════════════════════════════════════
+// T11：安圣电量计（对应后端 AnShengEnergyController）
+//
+// 【字段名权威来源】
+//   Controllers/AnShengEnergyController.cs
+//   DTOs/Requests/AnShengRequests.cs   （AnShengSetCalParamsRequest 等）
+//   DTOs/Responses/AnShengResponses.cs （AnShengEnergyResultDto / AnShengEmStatisticDto）
+//   Models/AnShengEmStatistic.cs       （AnShengEmGranularity 枚举）
+//
+// 【无 HTTP 409】电量计是只读采集语义，平台不写乐观镜像、没有并发令牌，
+//   八个端点的全部结果都走 HTTP 200：成功 code=200，被拒 code=400 + data.rejectReason。
+//
+// 【camelCase 换算】C# 的 RL 属性经 CamelCase 策略降格为 **rl**（前导连续大写整体小写化），
+//   Q → q，Kwh → kwh，PeriodKey → periodKey，SlotNum → slotNum。
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * 电量计统计粒度。
+ *
+ * 后端 Models/AnShengEmStatistic.cs 的 AnShengEmGranularity 枚举，字符串出网。
+ * · 'Total'   —— 累计电量，每插槽仅一行，periodKey 恒为 'total'；
+ * · 'HourSum' —— 日内半小时分布画像（定长 48 项），periodKey 为 '00:00'~'23:30'；
+ * · 'Hour'    —— 半小时累计，periodKey 为 'yyyyMMddHHmm'；
+ * · 'Day'     —— 日累计，periodKey 为 'yyyyMMdd'；
+ * · 'Month'   —— 月累计，periodKey 为 'yyyyMM'。
+ */
+export type AnShengEmGranularity = 'Total' | 'HourSum' | 'Hour' | 'Day' | 'Month';
+
+// ── T11 请求 DTO ────────────────────────────────────────────
+
+/**
+ * 拉取电量计统计请求。
+ * 对应 POST /ansheng/{deviceId}/energy/statistics/refresh，后端 DTO：AnShengGetEMStatisticsRequest。
+ */
+export interface AnShengGetEMStatisticsRequest {
+  /**
+   * 查询串：all / month / day / hour / hourSum / total，可用逗号组合（如 "total,day,hour"）。
+   * 留空表示不带该参数、由设备返回默认集合。
+   */
+  q?: string | null;
+}
+
+/**
+ * 清空电量计统计请求。
+ * 对应 POST /ansheng/{deviceId}/energy/statistics/clear，后端 DTO：AnShengClearEMStatisticsRequest。
+ *
+ * 【只清设备、不清平台】平台聚合表一行不删，命令出网后仅追加一条 EmCleared 标记事件用于对账。
+ * confirm=false 时后端直接业务拒绝且命令零出网。
+ */
+export interface AnShengClearEMStatisticsRequest {
+  /** 二次确认开关，必须为 true 才下发。 */
+  confirm: boolean;
+  /** 插槽编号，从 1 开始；null 或 0 表示清空所有插槽。 */
+  slotNum?: number | null;
+}
+
+/**
+ * 设置电量计校准参数请求。
+ * 对应 POST /ansheng/{deviceId}/energy/cal-params，后端 DTO：AnShengSetCalParamsRequest。
+ *
+ * 【rl 与 calParams 的关系】后端 MergeCalParams：字典优先；字典里缺 RL 而 rl 有值时自动补入。
+ * 合并后为空字典会被拒（code=400，"至少需要提供 RL"）。
+ */
+export interface AnShengSetCalParamsRequest {
+  /** 校准电阻值 RL（C# 属性 RL，camelCase 后为 rl）。 */
+  rl?: number | null;
+  /** 完整校准参数字典，键名原样出网。 */
+  calParams: Record<string, number>;
+}
+
+/**
+ * 自动校准请求。
+ * 对应 POST /ansheng/{deviceId}/energy/cal-params/auto，后端 DTO：AnShengAutoCalRequest。
+ */
+export interface AnShengAutoCalRequest {
+  /** 已知负载功率（W），必须是真实接在插槽上的负载功率。 */
+  power: number;
+}
+
+/**
+ * 查询平台电量计统计聚合表的 query 参数。
+ * 对应 GET /ansheng/{deviceId}/energy/statistics 的 [FromQuery] 绑定。
+ *
+ * 【granularity 用字符串】ASP.NET 的 query 模型绑定按枚举**成员名**解析（大小写不敏感），
+ * 与出网时的字符串枚举保持同一书写形式，故此处直接复用 AnShengEmGranularity。
+ */
+export interface AnShengEnergyStatisticsQueryParams {
+  /** 按插槽过滤；留空表示全部插槽。必须 ≥ 1。 */
+  slotNum?: number;
+  /** 按粒度过滤；留空表示全部粒度。 */
+  granularity?: AnShengEmGranularity;
+}
+
+// ── T11 响应 DTO ────────────────────────────────────────────
+
+/**
+ * 电量计命令下发结果（T11 全部写端点共用的 data）。
+ * 对应后端 AnShengEnergyResultDto。
+ *
+ * 【为什么不带镜像】电量计是只读采集：统计行只在设备应答真的回来时才由 Router 钩子写库。
+ * 前端拿到 accepted=true 后应延时轮询 GET /energy/statistics 取真值。
+ */
+export interface AnShengEnergyResultDto {
+  /** 平台是否受理并下发了命令。 */
+  accepted: boolean;
+  /** 平台命令标识（GUID），被拒时为 null。 */
+  commandId?: string | null;
+  /** 安圣 FrameId，被拒（未出网）时为 null。 */
+  frameId?: string | null;
+  /** 机器可读拒绝原因；喇叭类下发校准 / 统计命令为 "RejectedByKind"。 */
+  rejectReason?: AnShengCommandRejectReason | null;
+  /** 面向人的失败原因，勿用于程序分支判断。 */
+  errorMessage?: string | null;
+  /** 实际出网的 JSON 报文回显；被拒时为 null。 */
+  payload?: string | null;
+}
+
+/**
+ * 电量计统计聚合行只读视图（GET /energy/statistics 的 data 元素）。
+ * 对应后端 AnShengEmStatisticDto。
+ *
+ * 唯一键为 (deviceId, slotNum, granularity, periodKey)，设备应答幂等 UPSERT，无空洞行。
+ */
+export interface AnShengEmStatisticDto {
+  /** 插槽编号，从 1 开始。 */
+  slotNum: number;
+  /** 统计粒度（字符串枚举）。 */
+  granularity: AnShengEmGranularity;
+  /** 周期键：'total' / '00:00'~'23:30' / 'yyyyMMddHHmm' / 'yyyyMMdd' / 'yyyyMM'。 */
+  periodKey: string;
+  /** 累计电量（kWh）。C# 属性 Kwh。 */
+  kwh: number;
+  /** 本行最后一次被设备应答刷新的时刻（UTC ISO 串）。 */
+  syncedAt: string;
+  /** 是否陈旧：(UtcNow - syncedAt) > 24h。 */
+  isStale: boolean;
+}

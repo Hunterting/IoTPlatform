@@ -4,6 +4,7 @@ using IoTPlatform.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace IoTPlatform.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260804161127_T10TimeTask")]
+    partial class T10TimeTask
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -581,51 +584,6 @@ namespace IoTPlatform.Migrations
                     b.HasIndex("AppCode", "Imei");
 
                     b.ToTable("ansheng_device_profiles");
-                });
-
-            modelBuilder.Entity("IoTPlatform.Models.AnShengEmStatistic", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("AppCode")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("varchar(50)");
-
-                    b.Property<long>("DeviceId")
-                        .HasColumnType("bigint");
-
-                    b.Property<int>("Granularity")
-                        .HasColumnType("int");
-
-                    b.Property<double>("Kwh")
-                        .HasColumnType("double");
-
-                    b.Property<string>("PeriodKey")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("varchar(16)");
-
-                    b.Property<int>("SlotNum")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("SyncedAt")
-                        .HasColumnType("datetime(6)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DeviceId");
-
-                    b.HasIndex("AppCode", "DeviceId");
-
-                    b.HasIndex("DeviceId", "SlotNum", "Granularity", "PeriodKey")
-                        .IsUnique();
-
-                    b.ToTable("ansheng_em_statistics");
                 });
 
             modelBuilder.Entity("IoTPlatform.Models.AnShengTimeTask", b =>

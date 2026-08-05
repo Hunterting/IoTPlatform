@@ -409,6 +409,82 @@ public class AnShengCommandBuilder
         string imei, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
         => BuildCommand(imei, "getDelayTasks", null, kind);
 
+    // ─────────────────────────────────────────────────────────────
+    // G4 定时任务（T10）
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 构建 <c>getTimeTasks</c> — 获取所有插槽的定时任务。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildGetTimeTasks(
+        string imei, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "getTimeTasks", null, kind);
+
+    /// <summary>
+    /// 构建 <c>setTimeTasks</c> — 整表覆盖定时任务。
+    ///
+    /// <paramref name="tasks"/> 为整表数组，每个元素含 <c>timeTasks[]</c> 与 <c>loopTimeTasks[]</c>
+    /// （下标对应插槽，由设备侧按 §7-R9 推导 slotNum）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="tasks">整表定时任务数组（每项为一插槽的普通 + 循环任务）。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildSetTimeTasks(
+        string imei, IReadOnlyList<object?> tasks, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "setTimeTasks", new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["tasks"] = tasks
+        }, kind);
+
+    /// <summary>
+    /// 构建 <c>getSlotTimeTasks</c> — 获取单个插槽的定时任务。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="slotNum">插槽编号，从 1 开始。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildGetSlotTimeTasks(
+        string imei, int slotNum, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "getSlotTimeTasks", new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["slotNum"] = slotNum
+        }, kind);
+
+    /// <summary>
+    /// 构建 <c>setSlotTimeTasks</c> — 设置单个插槽的定时任务。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="slotNum">插槽编号，从 1 开始。</param>
+    /// <param name="timeTasks">普通定时任务数组。</param>
+    /// <param name="loopTimeTasks">循环定时任务数组。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildSetSlotTimeTasks(
+        string imei, int slotNum,
+        IReadOnlyList<object?> timeTasks, IReadOnlyList<object?> loopTimeTasks,
+        AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "setSlotTimeTasks", new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["slotNum"] = slotNum,
+            ["timeTasks"] = timeTasks,
+            ["loopTimeTasks"] = loopTimeTasks
+        }, kind);
+
+    // ─────────────────────────────────────────────────────────────
+    // 电量计：实时 / 统计 / 校准（T11）
+    //
+    // 【品类放行由 Catalog 决定，不在这里判】
+    //   getEMRealtime 与 4 个校准命令声明为 GroupSwitchAction（G3，开关类才有），
+    //   getEMStatistics / clearEMStatistics 声明为 GroupTimeTask（G4，仅 4G 开关）。
+    //   BuildCommand 内部统一做 Catalog 校验 + IsSupportedBy(kind) 品类校验，
+    //   喇叭类走到这里会被<b>结构性</b>拒绝（RejectedByKind），零报文出网（验收 #6）。
+    //   本层<b>不得</b>再写一份品类 if —— 两处判定必然漂移。
+    // ─────────────────────────────────────────────────────────────
+
     /// <summary>
     /// 构建 <c>getEMRealtime</c> — 获取电量计实时信息。
     /// </summary>
@@ -418,6 +494,108 @@ public class AnShengCommandBuilder
     public (string FrameId, string Payload) BuildGetEMRealtime(
         string imei, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
         => BuildCommand(imei, "getEMRealtime", null, kind);
+
+    /// <summary>
+    /// 构建 <c>getEMStatistics</c> — 获取电量计统计信息。
+    ///
+    /// <paramref name="q"/> 为可选查询串（<c>all</c> / <c>month</c> / <c>day</c> / <c>hour</c> /
+    /// <c>hourSum</c> / <c>total</c>，可用逗号组合如 <c>total,day,hour</c>）。
+    /// 传 null / 空白时<b>整个键都不出现在报文里</b>——安圣设备对「显式的空串」与「没有该键」
+    /// 处理不一致，宁可不发也不发空串。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="q">查询串，可为 null。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildGetEMStatistics(
+        string imei, string? q = null, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+    {
+        Dictionary<string, object?>? parameters = null;
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            parameters = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["q"] = q.Trim()
+            };
+        }
+
+        return BuildCommand(imei, "getEMStatistics", parameters, kind);
+    }
+
+    /// <summary>
+    /// 构建 <c>clearEMStatistics</c> — 清空设备侧电量计统计信息。
+    ///
+    /// <paramref name="slotNum"/> 不传或 0 表示清空所有插槽（协议语义）。
+    /// <b>只清设备</b>：平台聚合表按设计 D5 只累积保留，清零仅记一条标记事件（验收 #4）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="slotNum">插槽编号，从 1 开始；null 表示不带该参数（等价清空所有）。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildClearEMStatistics(
+        string imei, int? slotNum = null, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+    {
+        Dictionary<string, object?>? parameters = null;
+
+        if (slotNum.HasValue)
+        {
+            parameters = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["slotNum"] = slotNum.Value
+            };
+        }
+
+        return BuildCommand(imei, "clearEMStatistics", parameters, kind);
+    }
+
+    /// <summary>
+    /// 构建 <c>getCalParams</c> — 获取校准参数（仅开关类，验收 #6）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildGetCalParams(
+        string imei, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "getCalParams", null, kind);
+
+    /// <summary>
+    /// 构建 <c>setCalParams</c> — 设置校准参数（仅开关类，验收 #6）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="calParams">校准参数对象（含 <c>RL</c> 校准电阻值）。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildSetCalParams(
+        string imei, object? calParams, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "setCalParams", new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["calParams"] = calParams
+        }, kind);
+
+    /// <summary>
+    /// 构建 <c>resetCalParams</c> — 重置校准参数（仅开关类，验收 #6）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildResetCalParams(
+        string imei, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "resetCalParams", null, kind);
+
+    /// <summary>
+    /// 构建 <c>autoCal</c> — 按已知负载功率自动校准（仅开关类，验收 #6）。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="power">自动校准的负载功率（W）。</param>
+    /// <param name="kind">设备品类。</param>
+    /// <returns>(FrameId, JSON 报文)。</returns>
+    public (string FrameId, string Payload) BuildAutoCal(
+        string imei, double power, AnShengDeviceKind kind = AnShengDeviceKind.Unknown)
+        => BuildCommand(imei, "autoCal", new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["power"] = power
+        }, kind);
 
     // ─────────────────────────────────────────────────────────────
     // G5 对时

@@ -60,6 +60,18 @@ public sealed class AnShengMessageRouter
     /// </summary>
     private const string MethodGetDelayTasks = "getDelayTasks";
 
+    /// <summary>安圣协议方法名：查询所有插槽定时任务（T10 写后回读）。</summary>
+    private const string MethodGetTimeTasks = "getTimeTasks";
+
+    /// <summary>安圣协议方法名：查询单插槽定时任务（T10 写后回读）。</summary>
+    private const string MethodGetSlotTimeTasks = "getSlotTimeTasks";
+
+    /// <summary>安圣协议方法名：查询电量计统计（T11 写后回读）。</summary>
+    private const string MethodGetEMStatistics = "getEMStatistics";
+
+    /// <summary>安圣协议方法名：查询电量计实时读数（T11 写后回读）。</summary>
+    private const string MethodGetEMRealtime = "getEMRealtime";
+
     /// <summary>
     /// 设备应答缺少 <c>result</c> 字段时写入的错误码（T7-4）。
     ///
@@ -106,6 +118,7 @@ public sealed class AnShengMessageRouter
     private readonly ILogger<AnShengMessageRouter> _logger;
     private readonly AnShengEventDispatcher? _dispatcher;
     private readonly IAnShengScheduleService _schedule;
+    private readonly IAnShengEnergyService _energy;
 
     /// <summary>
     /// 构造路由器。
@@ -120,6 +133,12 @@ public sealed class AnShengMessageRouter
     /// <c>slots[]</c> / <c>tasks[]</c> 快照由它写回平台镜像与档案（设计 D-H）。已注册为 Scoped，
     /// 与路由器同生命周期，由 DI 注入（非可选）。
     /// </param>
+    /// <param name="energy">
+    /// 电量计服务（T11）。命令应答（getEMStatistics / getEMRealtime）携带的统计 / 实时读数由它写回：
+    ///   · getEMStatistics ⇒ <see cref="IAnShengEnergyService.ApplyStatisticsReadbackAsync"/>（聚合表 UPSERT）；
+    ///   · getEMRealtime   ⇒ <see cref="IAnShengEnergyService.ApplyRealtimeReadbackAsync"/>（归一化入 DeviceDataRecord）。
+    /// 已注册为 Scoped，与路由器同生命周期，由 DI 注入（非可选）。
+    /// </param>
     /// <param name="dispatcher">
     /// 事件分发器；<b>可选</b>。
     /// T6-1 阶段 <c>AnShengEventDispatcher</c> 尚未实现/注册，此时为 <c>null</c>，
@@ -133,6 +152,7 @@ public sealed class AnShengMessageRouter
         AnShengMessageParser parser,
         ILogger<AnShengMessageRouter> logger,
         IAnShengScheduleService schedule,
+        IAnShengEnergyService energy,
         AnShengEventDispatcher? dispatcher = null)
     {
         _pendingStore = pendingStore ?? throw new ArgumentNullException(nameof(pendingStore));
@@ -141,6 +161,7 @@ public sealed class AnShengMessageRouter
         _parser = parser ?? throw new ArgumentNullException(nameof(parser));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
+        _energy = energy ?? throw new ArgumentNullException(nameof(energy));
         _dispatcher = dispatcher;
     }
 
@@ -294,9 +315,13 @@ public sealed class AnShengMessageRouter
         AnShengRouteResult result,
         CancellationToken cancellationToken)
     {
+        // 摘除结果要留到镜像写回之后使用：getSlotTimeTasks 的应答不含 slotNum，
+        // 只能靠「我方下发的那条回读命令」（completed.RecordId → RequestJson）反查插槽号。
+        PendingCommand? completed = null;
+
         if (!string.IsNullOrWhiteSpace(result.FrameId))
         {
-            var completed = await _pendingStore
+            completed = await _pendingStore
                 .CompleteAsync(ctx.Imei, result.FrameId!, ctx.Message)
                 .ConfigureAwait(false);
 
@@ -312,7 +337,9 @@ public sealed class AnShengMessageRouter
 
         // T8-5（设计 D-H）：命令应答若携带 slots[] / tasks[] 快照，写回平台镜像与档案。
         // 后台作用域内的写回由 IAnShengScheduleService 内部 IgnoreQueryFilters + 显式 AppCode 定位。
-        await ApplyResponseMirrorAsync(ctx.DeviceId, ctx.Method, ctx.Message, cancellationToken)
+        await ApplyResponseMirrorAsync(
+                ctx.DeviceId, ctx.Imei, ctx.Method, ctx.Message,
+                result.FrameId, completed?.RecordId ?? 0L, cancellationToken)
             .ConfigureAwait(false);
 
         await RefreshProfileAsync(ctx, cancellationToken).ConfigureAwait(false);
@@ -542,26 +569,43 @@ public sealed class AnShengMessageRouter
     /// 【异常一律吞掉】镜像写回失败绝不可冒泡，否则会打断 RefreshProfileAsync 乃至整条上行链路。
     /// </summary>
     /// <param name="deviceId">平台设备主键，可为 null（未认领设备）。</param>
+    /// <param name="imei">设备 IMEI，用于按 (Imei, FrameId) 反查我方下发的请求参数。</param>
     /// <param name="method">应答方法名。</param>
     /// <param name="message">已解析的应答报文。</param>
+    /// <param name="frameId">本次应答关联的帧 ID，可为 null（非应答关联场景）。</param>
+    /// <param name="recordId">
+    /// 在途条目携带的 <c>AnShengCommandRecord</c> 主键；0 表示无库记录（纯内存登记 / 未匹配）。
+    /// </param>
     /// <param name="cancellationToken">取消令牌。</param>
     private async Task ApplyResponseMirrorAsync(
-        long? deviceId, string method, AnShengMessage? message, CancellationToken cancellationToken)
+        long? deviceId, string imei, string method, AnShengMessage? message,
+        string? frameId, long recordId, CancellationToken cancellationToken)
     {
         if (!deviceId.HasValue || message == null || string.IsNullOrWhiteSpace(method))
         {
             return;
         }
 
-        // 只有这四类应答携带可写回的快照 / 镜像数据。getDelayTasks 携带 tasks[]（非 slots[]），
-        // 其余三类携带 slots[]；二者不重叠，避免把 getDelayTasks 的 tasks[] 误当 slots[] 写回档案。
+        // 只有这八类应答携带可写回的快照 / 镜像数据：
+        //   · getDelayTasks 携带 tasks[]（非 slots[]）；
+        //   · getTimeTasks / getSlotTimeTasks 携带 timeTasks[] / loopTimeTasks[]（T10）；
+        //   · action / actions / getDevStatus 携带 slots[]；
+        //   · getEMStatistics 携带 data[]（电量计多粒度统计，T11）；
+        //   · getEMRealtime 携带 data[]（电量计逐插槽实时 v/c/p/e，T11）。
+        // 各载体互不重叠，避免把一类数组误当另一类写回。
+        bool isGetTimeTasks = string.Equals(method, MethodGetTimeTasks, StringComparison.Ordinal);
+        bool isGetSlotTimeTasks = string.Equals(method, MethodGetSlotTimeTasks, StringComparison.Ordinal);
         bool isDelayTasks = string.Equals(method, MethodGetDelayTasks, StringComparison.Ordinal);
-        bool isSlotsCarrier = !isDelayTasks &&
+        bool isGetEMStatistics = string.Equals(method, MethodGetEMStatistics, StringComparison.Ordinal);
+        bool isGetEMRealtime = string.Equals(method, MethodGetEMRealtime, StringComparison.Ordinal);
+        bool isSlotsCarrier = !isGetTimeTasks && !isGetSlotTimeTasks && !isDelayTasks &&
+            !isGetEMStatistics && !isGetEMRealtime &&
             (string.Equals(method, "action", StringComparison.Ordinal) ||
              string.Equals(method, "actions", StringComparison.Ordinal) ||
              string.Equals(method, MethodGetDevStatus, StringComparison.Ordinal));
 
-        if (!isDelayTasks && !isSlotsCarrier)
+        if (!isGetTimeTasks && !isGetSlotTimeTasks && !isDelayTasks && !isGetEMStatistics &&
+            !isGetEMRealtime && !isSlotsCarrier)
         {
             return;
         }
@@ -586,7 +630,7 @@ public sealed class AnShengMessageRouter
                         .ConfigureAwait(false);
                 }
             }
-            else // isDelayTasks
+            else if (isDelayTasks)
             {
                 var tasks = ParseDelayTaskItems(root);
                 if (tasks != null)
@@ -595,11 +639,163 @@ public sealed class AnShengMessageRouter
                         .ConfigureAwait(false);
                 }
             }
+            else if (isGetTimeTasks)
+            {
+                // 整表回读：tasks[] 下标 i 对应插槽 i+1（§7-R9，tasks[] 不含 slotNum）。
+                var sets = AnShengTimeTaskParsing.ParseTimeTaskSets(root);
+                if (sets.Count > 0)
+                {
+                    await _schedule.ApplyTimeTasksReadbackAsync(deviceId.Value, sets, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            else if (isGetSlotTimeTasks)
+            {
+                // 单插槽回读：顶层直接带 timeTasks[] / loopTimeTasks[]，但**应答不含 slotNum**
+                // （协议 asopen.md L3627-3643 的应答参数表只有 method/result/loopTimeTasks/
+                //  timeTasks/imei/frameId/timestamp）。因此插槽号只能从<b>请求侧</b>取 ——
+                // 即我方下发的那条 getSlotTimeTasks 回读命令的 RequestJson.slotNum。
+                var slotNum = await ResolveReadbackSlotNumAsync(imei, frameId, recordId, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (slotNum == null)
+                {
+                    // ★ 绝不回退到 0：写入 SlotNum=0 会造出一行永远查不到的「幽灵插槽」脏数据，
+                    //   同时让被查询插槽的乐观值永远得不到设备真值覆盖。取不到就整条跳过。
+                    _logger.LogWarning(
+                        "[AnShengRouter] getSlotTimeTasks 应答无法定位插槽号（应答本就不含 slotNum，"
+                        + "且未能从请求侧反查到），已跳过镜像写回。imei={Imei} frameId={FrameId} recordId={RecordId}",
+                        imei, frameId ?? "(none)", recordId);
+                    return;
+                }
+
+                var set = AnShengTimeTaskParsing.ParseSlotTimeTaskSet(root, slotNum.Value);
+                if (set != null)
+                {
+                    await _schedule.ApplyTimeTasksReadbackAsync(deviceId.Value, new[] { set }, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            else if (isGetEMStatistics)
+            {
+                // T11 电量计统计写回（验收 #1/#2/#3）：data[] 是多粒度聚合快照，按下标 +1 推导插槽号。
+                // 解析器是纯函数，稀疏日期序列只产出真实存在的点（不产生空洞行），
+                // hourSumData 长度不符时一个小时内画像点都不产出。UPSERT 由服务内部按唯一键完成。
+                var snapshot = AnShengEmParsing.ParseStatistics(root);
+                if (snapshot.DataLength >= 0)
+                {
+                    await _energy.ApplyStatisticsReadbackAsync(
+                        deviceId.Value, snapshot, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else if (isGetEMRealtime)
+            {
+                // T11 电量计实时写回（验收 #5）：data[] 每插槽 v/c/p/e 归一化成 slot{n}_*，
+                // 经既有 IDataCollectionService 落 DeviceDataRecord，零改动复用告警引擎与曲线。
+                var slots = AnShengEmParsing.ParseRealtime(root);
+                if (slots.Count > 0)
+                {
+                    await _energy.ApplyRealtimeReadbackAsync(
+                        deviceId.Value, slots, message?.TimestampUtc, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
                 "[AnShengRouter] 应答镜像写回失败 imei={Imei} method={Method}", message.Imei, method);
+        }
+    }
+
+    /// <summary>
+    /// 反查一次 <c>getSlotTimeTasks</c> 回读命令的目标插槽号（<b>请求侧</b>事实来源）。
+    ///
+    /// 【为什么必须从请求侧取】协议 asopen.md L3627-3643 的 <c>getSlotTimeTasks</c>
+    /// <b>应答参数表根本没有 slotNum 字段</b>。从应答里取必然恒为缺省值，
+    /// 于是设备真值会被写进「插槽 0」这个不存在的幽灵插槽，而真正被查询的插槽
+    /// 永远停留在乐观镜像上 —— 镜像形同虚设。
+    ///
+    /// 【两级反查】
+    ///   1. 优先按在途条目携带的 <c>RecordId</c>（数据库主键）定位——最精确，且天然跨租户安全；
+    ///   2. 主键不可用时（纯内存登记 / 未匹配）退化为按 <c>(Imei, FrameId, Method)</c> 反查，
+    ///      取 Id 最大的一条（同帧重复只可能是重发）。
+    ///
+    /// 【后台作用域】与 <see cref="BackfillCommandRecordAsync"/> 同源的坑：本方法跑在没有
+    /// HTTP 上下文的后台作用域，<c>ITenantContextAccessor.Current</c> 为 null，全局租户过滤器
+    /// 会滤掉所有行。故一律 <c>IgnoreQueryFilters()</c>（铁律①）。
+    ///
+    /// 【取不到就返回 null】调用方据此<b>跳过</b>本次写回，绝不允许回退成 0。
+    /// </summary>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="frameId">应答关联的帧 ID，可为 null。</param>
+    /// <param name="recordId">在途条目携带的命令记录主键；≤0 表示不可用。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>目标插槽号（≥1）；无法确定时为 null。</returns>
+    private async Task<int?> ResolveReadbackSlotNumAsync(
+        string imei, string? frameId, long recordId, CancellationToken cancellationToken)
+    {
+        string? requestJson = null;
+
+        if (recordId > 0)
+        {
+            requestJson = await _db.AnShengCommandRecords
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(r => r.Id == recordId && r.Method == MethodGetSlotTimeTasks)
+                .Select(r => r.RequestJson)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (string.IsNullOrWhiteSpace(requestJson) &&
+            !string.IsNullOrWhiteSpace(imei) &&
+            !string.IsNullOrWhiteSpace(frameId))
+        {
+            requestJson = await _db.AnShengCommandRecords
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(r => r.Imei == imei
+                            && r.FrameId == frameId
+                            && r.Method == MethodGetSlotTimeTasks)
+                .OrderByDescending(r => r.Id)
+                .Select(r => r.RequestJson)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        if (string.IsNullOrWhiteSpace(requestJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(requestJson);
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("slotNum", out var slotEl))
+            {
+                return null;
+            }
+
+            int? parsed = slotEl.ValueKind switch
+            {
+                JsonValueKind.Number when slotEl.TryGetInt32(out var n) => n,
+                JsonValueKind.String when int.TryParse(slotEl.GetString(), out var s) => s,
+                _ => null
+            };
+
+            // 插槽号从 1 开始；0 / 负数一律视为「取不到」，由调用方跳过写回。
+            return parsed is > 0 ? parsed : null;
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex,
+                "[AnShengRouter] 解析回读命令 RequestJson 失败，无法定位插槽号。imei={Imei} frameId={FrameId}",
+                imei, frameId ?? "(none)");
+            return null;
         }
     }
 

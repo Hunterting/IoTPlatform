@@ -38,7 +38,18 @@ public enum AnShengEventKind
     Recv485 = 6,
 
     /// <summary>SIM 卡状态异常（<c>simCheck</c>，无在途 frameId 时按事件处理）。</summary>
-    SimCheck = 7
+    SimCheck = 7,
+
+    /// <summary>
+    /// 电量计统计清零标记（<c>clearEMStatistics</c>，T11 验收 #4）。
+    ///
+    /// 【它不是设备上行事件，而是平台侧的对账标记】设计 D5 明确：设备侧统计会被清空，
+    /// 但平台<b>只累积保留、不跟随清空</b>。于是「设备从此刻起归零」这一事实必须留痕，
+    /// 否则日后对账时会发现平台累计值远大于设备读数却查不出原因。
+    /// 由 <c>AnShengEnergyService.ClearStatisticsAsync</c> 在命令<b>成功出网后</b>写入
+    /// （被 Guard 拒绝则零发布、零事件）。
+    /// </summary>
+    EmCleared = 8
 }
 
 /// <summary>

@@ -100,6 +100,25 @@
 - 契约核查脚本留存 `.qa-logs/t9_contract_check.js`（可复跑，退出码0=全绿）。
 - 前端栈：React18 + Vite + Tailwind + Radix + MUI + lucide-react + axios；`Web` 仓库无 tsconfig.json、全项目 tsc 约 200 错历史债（前端不强制 tsc，靠 vite/esbuild 转译）。
 
+### T10 定时任务（后端）✅ 验收 (2026-08-05)
+- 新增 `AnShengScheduleController`(4端点: GET/POST `/time-tasks` 整表 + GET/POST `/time-tasks/{slotNum}` 单插槽; 类级VIEW_DEVICES, 写端点SEND_DEVICE_COMMANDS) + `AnShengTimeTask` 模型(IHasAppCode+RowVersion+复合唯一键(DeviceId,SlotNum,TaskKind,TaskIndex)) + `TimeEventHandler`(timeEvent就地更新, 不发命令) + `AnShengCommandBuilder` 4方法(getTimeTasks/setTimeTasks/getSlotTimeTasks/setSlotTimeTasks) + 迁移 `20260804161127_T10TimeTask`。
+- 六验收全过: ①仅Switch4G放行(其他品类RejectedByKind+零出网) ②set需confirm=true(RejectedByConfirm) ③保存后自动回读(ScheduleTimeTaskReadback→ApplyTimeTasksReadbackAsync, SyncedAt bump) ④timeEvent就地更新 ⑤RowVersion冲突→409 ⑥SyncedAt>24h→IsStale。
+- QA 第2轮 `AnShengTimeTaskAcceptanceTests` 14/14 通过, 安圣全量 IntegrationTests 35/35 零回归。2 源缺陷闭环: A 单插槽回读写进幽灵插槽0(改从请求侧按RecordId/(Imei,FrameId)反查slotNum, 取不到跳过写回) B 整表并发漏409(补ConcurrencyConflict→StatusCode(409), 与单插槽同构)。
+- `TaskKind` 枚举经 `JsonStringEnumConverter` 字符串出网("Normal"/"Loop")。
+
+### T11 电量计（后端）✅ 验收 (2026-08-05)
+- 新增 `AnShengEnergyController`(8端点: POST `energy/realtime` / `energy/statistics/refresh` / `energy/statistics/clear`, GET `energy/statistics` / `energy/cal-params`, POST `energy/cal-params` / `energy/cal-params/reset` / `energy/cal-params/auto; GET statistics 走 VIEW_DEVICES, GET cal-params 与 realtime/refresh/clear/setCalParams/reset/auto 均走 SEND_DEVICE_COMMANDS) + `AnShengEnergyStatistics`/`AnShengEmStatistic` 模型 + `AnShengEnergyService` + 迁移 T11 电量计表。
+- QA 16/16 通过: ①聚合表唯一键 `(deviceId,slotNum,granularity,periodKey)` 幂等 UPSERT ②`hourSum` 仅当设备回 48 项(`periodKey` 00:00~23:30) ③无空洞行、清零后平台保留 ④实时→DeviceDataRecord ⑤校准仅开关类放行。
+- **电量计无 409, 全部 HTTP 200**; `granularity`/`rejectReason` 枚举经 `JsonStringEnumConverter` 字符串出网("Total"/"HourSum"/"Hour"/"Day"/"Month")。
+
+### T10/T11 前端面板 ✅ 验收 (2026-08-05)
+- T10 前端 `Web/src/app/pages/ScheduleEditorPage.tsx` 消费 T10 4 端点(getTimeTasks/setTimeTasks/getSlotTimeTasks/setSlotTimeTasks); T11 前端 `Web/src/app/pages/EnergyStatisticsPage.tsx` 消费 T11 8 端点(realtime/refresh/clear/getStatistics/getCalParams/setCalParams/reset/auto)。
+- 数据层: `anshengApi.ts` 新增 12 方法 + `ansheng.types.ts` 全部 T10/T11 类型(taskKind/granularity 枚举字符串分支)。
+- 接线: `App.tsx` 路由 `schedule-editor`/`energy-statistics` + `Sidebar.tsx` 菜单子项(定时任务=Clock、电量统计=Zap, 均 VIEW_DEVICES)。
+- QA 验收: 契约核查脚本 `.qa-logs/t10t11_contract_check.js` 74 断言全绿(端点URL/camelCase/枚举/信封/409/权限/命令日志/路由菜单/伪命令), 代码复核无功能性缺陷, vite build EXIT=0。
+- 验收后主理人修正 EnergyStatisticsPage 头部注释(cal-params GET 实走 SEND_DEVICE_COMMANDS, 非 VIEW_DEVICES), QA 重新闭环确认(纯文档改动, 已加防回归静态断言)。
+- 铁律对齐: 信封认 `code` 不认 `success`; T10 有 409+concurrencyConflict 分支, T11 全 200 无 409; 枚举按字符串分支; 权限门控(只读用户进页看只读 UI)。
+
 ## 演进规划
 - **P0-P2** ✅ 全部完成（P0: JSON解析+配置键 | P1: 能耗字段+差异化 | P2: 协议集成+时序抽象）
 - **下一阶段**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 完善
