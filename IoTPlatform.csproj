@@ -54,4 +54,10 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- 测试工程需要直接引用 internal 的 ProtocolJsonOptions，
+         以便对「协议连接配置大小写不敏感绑定」做真实单例级验证（而非复刻一份等价选项自欺欺人）。 -->
+    <InternalsVisibleTo Include="IoTPlatform.AnSheng.Tests" />
+  </ItemGroup>
+
 </Project>

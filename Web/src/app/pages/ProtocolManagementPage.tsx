@@ -15,18 +15,71 @@ import { adaptDateFromBackend, adaptIdFromBackend } from '@/app/services/adapter
 import type { DeviceDto } from '@/app/services/api/types/device.types';
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
-type ProtocolType = 'MQTT' | 'ModbusTCP' | 'ModbusRTU' | 'OpcUA' | 'modbus' | 'mqtt' | 'opcua' | 'http' | 'tcp' | 'bacnet';
+type ProtocolType = 'MQTT' | 'ModbusTCP' | 'ModbusRTU' | 'OpcUA' | 'ANSHENG_MQTT' | 'modbus' | 'mqtt' | 'opcua' | 'http' | 'tcp' | 'bacnet' | 'ansheng_mqtt';
 
 type ConnectionStatus = 'Connected' | 'Disconnected' | 'Connecting' | 'Error' | 'active' | 'inactive';
 
 // ── 常量 ─────────────────────────────────────────────────────────────────────
+/**
+ * 安圣 MQTT 协议类型标识（小写）。
+ * 后端 ProtocolAdapterFactory 会先做 ToUpperInvariant() 归一，
+ * 归一后落到 "ANSHENG_MQTT" 分支，因此前端用小写 value 即可。
+ */
+const ANSHENG_MQTT_TYPE = 'ansheng_mqtt';
+
 const PROTOCOL_OPTIONS: { value: string; label: string; icon: string }[] = [
   { value: 'mqtt', label: 'MQTT', icon: 'M' },
   { value: 'modbus', label: 'Modbus TCP', icon: 'T' },
   { value: 'opcua', label: 'OPC UA', icon: 'O' },
   { value: 'http', label: 'HTTP', icon: 'H' },
   { value: 'tcp', label: 'TCP', icon: 'C' },
+  { value: ANSHENG_MQTT_TYPE, label: '安圣 MQTT', icon: 'A' },
 ];
+
+/**
+ * 安圣 MQTT 配置项默认值。
+ *
+ * ⚠️ 键名必须是 PascalCase：后端 AnShengMqttProtocolAdapter.ConnectAsync 使用
+ * `JsonSerializer.Deserialize<AnShengMqttProtocolOptions>(connectionString)` 且**未传
+ * JsonSerializerOptions**，System.Text.Json 默认大小写敏感（PropertyNameCaseInsensitive=false）；
+ * 而 ProtocolConfigService 保存时直接 `JsonSerializer.Serialize(request.Config)`
+ * （Dictionary 的 key 原样落库，无 DictionaryKeyPolicy）。
+ * 因此只有 PascalCase 键才能正确绑定到 C# 属性。
+ * 参照 appsettings.json:70 与 docs/system_design.md:325 的官方样例。
+ */
+const ANSHENG_DEFAULT_CONFIG: Record<string, unknown> = {
+  Host: '',
+  Port: 1883,
+  // 匿名接入时保持 null（对应 C# string? = null），避免下发空字符串凭据被 Broker 拒绝
+  Username: null,
+  Password: null,
+  ClientIdPrefix: 'iot_platform_ansheng',
+  PublishTopicPattern: '/iot/server/iot-board/+',
+  WillTopicPattern: '/iot/server/iot-board/+',
+  SubscribeTopicTemplate: '/iot/client/iot-board/{imei}',
+  CleanSession: true,
+  QosLevel: 1,
+  TimeoutSeconds: 30,
+  KeepAliveSeconds: 60,
+  CommandMinIntervalMs: 100,
+  AutoConfigureAutoReport: true,
+};
+
+/** 安圣协议详情区展示字段（key 与后端 AnShengMqttProtocolOptions 属性同名） */
+const ANSHENG_DETAIL_FIELDS: { key: string; label: string }[] = [
+  { key: 'Host', label: 'Broker 地址' },
+  { key: 'Port', label: 'Broker 端口' },
+  { key: 'Username', label: '用户名' },
+  { key: 'ClientIdPrefix', label: '客户端 ID 前缀' },
+  { key: 'PublishTopicPattern', label: '上行数据主题' },
+  { key: 'WillTopicPattern', label: 'Will 遗愿主题' },
+  { key: 'SubscribeTopicTemplate', label: '下行命令主题模板' },
+];
+
+/** 判断某个协议类型是否为安圣 MQTT（忽略大小写，兼容后端可能返回的 ANSHENG_MQTT） */
+function isAnShengType(type: string | undefined): boolean {
+  return (type ?? '').toLowerCase() === ANSHENG_MQTT_TYPE;
+}
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────────
 function getStatusFromString(status: string): ConnectionStatus {
@@ -200,13 +253,17 @@ export function ProtocolManagementPage() {
 
   const openEdit = (p: ProtocolConfig) => {
     setEditTarget(p);
+    // 安圣类型：用默认值补齐后端可能缺失的字段（已有值优先）
+    const nextConfig = isAnShengType(p.type)
+      ? { ...ANSHENG_DEFAULT_CONFIG, ...(p.config || {}) }
+      : (p.config || {});
     setForm({
       name: p.name,
       type: p.type,
       description: p.description,
       isActive: p.isActive,
       status: p.status,
-      config: p.config || {},
+      config: nextConfig,
     });
     setShowModal(true);
   };
@@ -282,6 +339,28 @@ export function ProtocolManagementPage() {
     const value = config[key];
     if (value === null || value === undefined) return '';
     return String(value);
+  };
+
+  /** 读取表单 config 中的布尔值（缺省时回落到 fallback） */
+  const getConfigBool = (key: string, fallback: boolean): boolean => {
+    const value = (form.config as Record<string, unknown> | undefined)?.[key];
+    if (value === null || value === undefined) return fallback;
+    return Boolean(value);
+  };
+
+  /** 写入表单 config 的单个字段 */
+  const setConfigValue = (key: string, value: unknown) => {
+    setForm(f => ({ ...f, config: { ...(f.config ?? {}), [key]: value } }));
+  };
+
+  /**
+   * 写入数字型配置字段。
+   * 输入框被清空或非法时回落到 fallback，避免把空字符串写进 int 字段
+   * 导致后端 JsonSerializer.Deserialize 抛 JsonException。
+   */
+  const setNumberConfigValue = (key: string, raw: string, fallback: number) => {
+    const parsed = Number.parseInt(raw, 10);
+    setConfigValue(key, Number.isNaN(parsed) ? fallback : parsed);
   };
 
   // ── 加载关联设备 ────────────────────────────────────────────────────────────
@@ -674,6 +753,17 @@ export function ProtocolManagementPage() {
                                 <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'baudRate')}</span>
                               </div>
                             )}
+                            {/* 安圣 MQTT 专属配置展示（键名为 PascalCase，与后端 AnShengMqttProtocolOptions 一致） */}
+                            {isAnShengType(protocol.type) && ANSHENG_DETAIL_FIELDS.map(field => {
+                              const fieldValue = getConfigValue(protocol.config as Record<string, unknown>, field.key);
+                              if (!fieldValue) return null;
+                              return (
+                                <div key={field.key}>
+                                  <span className="text-slate-400 block text-xs mb-1">{field.label}</span>
+                                  <span className="text-white break-all">{fieldValue}</span>
+                                </div>
+                              );
+                            })}
                           </>
                         )}
                         <div>
@@ -800,7 +890,7 @@ export function ProtocolManagementPage() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl"
+              className="bg-slate-800 border border-slate-700 rounded-2xl p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto shadow-2xl"
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-5">
@@ -832,10 +922,13 @@ export function ProtocolManagementPage() {
                     {PROTOCOL_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
-                        onClick={() => setForm(f => ({ 
-                          ...f, 
+                        onClick={() => setForm(f => ({
+                          ...f,
                           type: opt.value,
-                          config: { ...f.config, protocolType: opt.value }
+                          // 切到安圣类型时补齐默认值（已有值优先，不覆盖用户/后端已填内容）
+                          config: opt.value === ANSHENG_MQTT_TYPE
+                            ? { ...ANSHENG_DEFAULT_CONFIG, ...f.config, protocolType: opt.value }
+                            : { ...f.config, protocolType: opt.value }
                         }))}
                         className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm transition-colors
                           ${form.type === opt.value
@@ -850,48 +943,224 @@ export function ProtocolManagementPage() {
                   </div>
                 </div>
 
-                {/* 连接配置 */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm text-slate-300 mb-1 block">主机地址</label>
-                    <input
-                      value={getConfigValue(form.config as Record<string, unknown> | undefined, 'host')}
-                      onChange={e => setForm(f => ({ 
-                        ...f, 
-                        config: { ...f.config, host: e.target.value }
-                      }))}
-                      placeholder="192.168.1.100"
-                      className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-300 mb-1 block">端口</label>
-                    <input
-                      type="number"
-                      value={getConfigValue(form.config as Record<string, unknown> | undefined, 'port')}
-                      onChange={e => setForm(f => ({ 
-                        ...f, 
-                        config: { ...f.config, port: e.target.value }
-                      }))}
-                      placeholder="1883"
-                      className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
-                  </div>
-                </div>
+                {/* 通用连接配置（安圣类型使用下方专属表单，避免小写 host/port 与 PascalCase 键冲突） */}
+                {!isAnShengType(form.type) && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">主机地址</label>
+                        <input
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'host')}
+                          onChange={e => setConfigValue('host', e.target.value)}
+                          placeholder="192.168.1.100"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">端口</label>
+                        <input
+                          type="number"
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'port')}
+                          onChange={e => setConfigValue('port', e.target.value)}
+                          placeholder="1883"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
 
-                {/* 端点地址 */}
-                <div>
-                  <label className="text-sm text-slate-300 mb-1 block">端点地址</label>
-                  <input
-                    value={getConfigValue(form.config as Record<string, unknown> | undefined, 'endpoint')}
-                    onChange={e => setForm(f => ({ 
-                      ...f, 
-                      config: { ...f.config, endpoint: e.target.value }
-                    }))}
-                    placeholder="opc.tcp://192.168.1.50:4840"
-                    className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                  />
-                </div>
+                    {/* 端点地址 */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">端点地址</label>
+                      <input
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'endpoint')}
+                        onChange={e => setConfigValue('endpoint', e.target.value)}
+                        placeholder="opc.tcp://192.168.1.50:4840"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* ── 安圣 MQTT 专属配置 ─────────────────────────────────────
+                    键名统一 PascalCase，与后端 AnShengMqttProtocolOptions 属性一一对应，
+                    后端反序列化默认大小写敏感，切勿改成小写。 */}
+                {isAnShengType(form.type) && (
+                  <div className="space-y-3 rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
+                    <div className="flex items-center gap-2 text-sm text-blue-300 font-medium">
+                      <Settings className="w-4 h-4" />
+                      安圣 MQTT 连接配置
+                    </div>
+
+                    {/* Broker 地址 / 端口 */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">Broker 地址 *</label>
+                        <input
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Host')}
+                          onChange={e => setConfigValue('Host', e.target.value)}
+                          placeholder="120.79.3.248"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">Broker 端口 *</label>
+                        <input
+                          type="number"
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Port')}
+                          onChange={e => setNumberConfigValue('Port', e.target.value, 1883)}
+                          placeholder="1883"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 用户名 / 密码 */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">用户名</label>
+                        <input
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Username')}
+                          onChange={e => setConfigValue('Username', e.target.value === '' ? null : e.target.value)}
+                          placeholder="admin（留空表示匿名）"
+                          autoComplete="off"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">密码</label>
+                        <input
+                          type="password"
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Password')}
+                          onChange={e => setConfigValue('Password', e.target.value === '' ? null : e.target.value)}
+                          placeholder="留空表示无密码"
+                          autoComplete="new-password"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 客户端 ID 前缀 */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">客户端 ID 前缀</label>
+                      <input
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'ClientIdPrefix')}
+                        onChange={e => setConfigValue('ClientIdPrefix', e.target.value)}
+                        placeholder="iot_platform_ansheng"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    {/* 上行数据主题（平台订阅，含通配符） */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">上行数据主题（平台订阅）</label>
+                      <input
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'PublishTopicPattern')}
+                        onChange={e => setConfigValue('PublishTopicPattern', e.target.value)}
+                        placeholder="/iot/server/iot-board/+"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">设备 publish 的主题通配符，平台据此订阅并从主题中提取 IMEI</p>
+                    </div>
+
+                    {/* Will 遗愿主题 */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">Will 遗愿主题</label>
+                      <input
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'WillTopicPattern')}
+                        onChange={e => setConfigValue('WillTopicPattern', e.target.value)}
+                        placeholder="/iot/server/iot-board/+"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">安圣二开协议与上行主题相同，相同时适配器只订阅一次，避免重复投递</p>
+                    </div>
+
+                    {/* 下行命令主题模板 */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">下行命令主题模板</label>
+                      <input
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'SubscribeTopicTemplate')}
+                        onChange={e => setConfigValue('SubscribeTopicTemplate', e.target.value)}
+                        placeholder="/iot/client/iot-board/{imei}"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">平台下发命令的主题模板，必须包含 {'{imei}'} 占位符</p>
+                    </div>
+
+                    {/* 高级参数 */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">QoS 级别</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={2}
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'QosLevel')}
+                          onChange={e => setNumberConfigValue('QosLevel', e.target.value, 1)}
+                          placeholder="1"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">连接超时(秒)</label>
+                        <input
+                          type="number"
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'TimeoutSeconds')}
+                          onChange={e => setNumberConfigValue('TimeoutSeconds', e.target.value, 30)}
+                          placeholder="30"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">心跳间隔(秒)</label>
+                        <input
+                          type="number"
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'KeepAliveSeconds')}
+                          onChange={e => setNumberConfigValue('KeepAliveSeconds', e.target.value, 60)}
+                          placeholder="60"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 命令最小间隔 */}
+                    <div>
+                      <label className="text-sm text-slate-300 mb-1 block">命令最小间隔(毫秒)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'CommandMinIntervalMs')}
+                        onChange={e => setNumberConfigValue('CommandMinIntervalMs', e.target.value, 100)}
+                        placeholder="100"
+                        className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">协议要求同一 IMEI 两次下发间隔 ≥ 100ms，防止命令粘连</p>
+                    </div>
+
+                    {/* 开关项 */}
+                    <div className="flex items-center gap-6">
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="ansheng-clean-session"
+                          type="checkbox"
+                          checked={getConfigBool('CleanSession', true)}
+                          onChange={e => setConfigValue('CleanSession', e.target.checked)}
+                          className="w-4 h-4 accent-blue-500"
+                        />
+                        <label htmlFor="ansheng-clean-session" className="text-sm text-slate-300">清理会话</label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          id="ansheng-auto-report"
+                          type="checkbox"
+                          checked={getConfigBool('AutoConfigureAutoReport', true)}
+                          onChange={e => setConfigValue('AutoConfigureAutoReport', e.target.checked)}
+                          className="w-4 h-4 accent-blue-500"
+                        />
+                        <label htmlFor="ansheng-auto-report" className="text-sm text-slate-300">上线自动配置上报</label>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* 描述 */}
                 <div>

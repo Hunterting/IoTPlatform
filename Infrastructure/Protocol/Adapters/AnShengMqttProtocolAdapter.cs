@@ -208,7 +208,7 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
                 return true;
             }
 
-            _options = JsonSerializer.Deserialize<AnShengMqttProtocolOptions>(connectionString)
+            _options = JsonSerializer.Deserialize<AnShengMqttProtocolOptions>(connectionString, ProtocolJsonOptions.CaseInsensitive)
                 ?? throw new ArgumentException("无效的安圣 MQTT 连接配置");
 
             _throttle?.Dispose();

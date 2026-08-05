@@ -46,7 +46,7 @@ public class MqttProtocolAdapter : IProtocolAdapter
                 return true;
             }
 
-            _options = JsonSerializer.Deserialize<MqttProtocolOptions>(connectionString)
+            _options = JsonSerializer.Deserialize<MqttProtocolOptions>(connectionString, ProtocolJsonOptions.CaseInsensitive)
                 ?? throw new ArgumentException("无效的 MQTT 连接配置");
 
             var factory = new MqttFactory();
