@@ -45,7 +45,7 @@ public class ModbusRtuAdapter : IProtocolAdapter
                     return true;
                 }
 
-                _options = JsonSerializer.Deserialize<ModbusRtuOptions>(connectionString)
+                _options = JsonSerializer.Deserialize<ModbusRtuOptions>(connectionString, ProtocolJsonOptions.CaseInsensitive)
                     ?? throw new ArgumentException("无效的 Modbus RTU 连接配置");
 
                 ValidateOptions(_options);

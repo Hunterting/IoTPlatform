@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MySqlConnector;
 using System.Collections.Concurrent;
 using System.Text.Json;
 
@@ -34,6 +35,9 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
     /// <summary>AppCode 缺失时的兜底租户码，与既有 <c>ClaimDevice</c> 行为保持一致。</summary>
     private const string FallbackAppCode = "system";
 
+    /// <summary>MySQL 唯一键冲突错误码（<c>ER_DUP_ENTRY</c>）。</summary>
+    private const int MySqlDuplicateKeyErrorNumber = 1062;
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IProtocolAdapterFactory _adapterFactory;
     private readonly IAnShengProbeService _probeService;
@@ -41,6 +45,15 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
 
     /// <summary>线程安全的在线状态缓存（IMEI → 最后在线时间），避免频繁查库</summary>
     private readonly ConcurrentDictionary<string, DateTime> _onlineStatus = new();
+
+    /// <summary>
+    /// 待认领池写入的进程内串行化闸门（IMEI → 信号量）。
+    ///
+    /// 本服务注册为 Singleton（见 Program.cs），字典随服务存活，
+    /// 条目数收敛于「见过的设备数」量级，不做淘汰——淘汰要处理「正有线程在等这把锁」的
+    /// 竞态，代价远高于这点常驻内存。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _discoveryGates = new();
 
     /// <summary>
     /// 扫描间隔（默认 5 分钟）
@@ -268,42 +281,15 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // 查询或创建 discovered device
-            var discovered = await db.Set<DiscoveredAnShengDevice>()
-                .FirstOrDefaultAsync(d => d.Imei == imei, ct);
+            // 查询或创建 discovered device —— 幂等 upsert，并发下不会插出第二行
+            var discovered = await UpsertDiscoveredAsync(db, imei, model, netType, appCode, now, ct);
 
             if (discovered == null)
             {
-                // 首次发现：插入待认领池
-                discovered = new DiscoveredAnShengDevice
-                {
-                    Imei = imei,
-                    AppCode = appCode,
-                    Model = model,
-                    NetType = netType,
-                    DiscoveredAt = now,
-                    LastSeenAt = now,
-                    IsClaimed = false
-                };
-                db.Set<DiscoveredAnShengDevice>().Add(discovered);
-
-                _logger.LogInformation(
-                    "发现新安圣设备: IMEI={IMEI}, Model={Model}, NetType={NetType}, AppCode={AppCode}",
-                    imei, model, netType, appCode);
+                // 唯一键冲突后重查仍未命中（例如同一瞬间被清理/认领）。
+                // 上线通知本身是可丢的周期性信号，下一帧就会再来，这里不升级为异常。
+                return;
             }
-            else
-            {
-                // 更新已有记录
-                discovered.LastSeenAt = now;
-                if (!string.IsNullOrEmpty(model) && string.IsNullOrEmpty(discovered.Model))
-                    discovered.Model = model;
-                if (!string.IsNullOrEmpty(netType) && string.IsNullOrEmpty(discovered.NetType))
-                    discovered.NetType = netType;
-                if (!string.IsNullOrEmpty(appCode) && string.IsNullOrEmpty(discovered.AppCode))
-                    discovered.AppCode = appCode;
-            }
-
-            await db.SaveChangesAsync(ct);
 
             // 如果已认领，同步更新设备在线状态
             if (discovered.IsClaimed && discovered.ClaimedDeviceId != null)
@@ -326,6 +312,219 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
         {
             _logger.LogError(ex, "处理设备上线通知异常: IMEI={IMEI}", imei);
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // 待认领池幂等 upsert（P1 并发重复行修复）
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 幂等登记待认领设备：命中则更新，未命中则插入，撞唯一键则降级为「重查 + 更新」。
+    ///
+    /// 【为什么不能只靠一次 查-插】
+    ///   设备上行是并发的：<c>connected</c> 事件与首帧 <c>getDevStatus</c> 分别从
+    ///   <c>ConnectedEventHandler</c> 和 <c>ProtocolConfigService</c> 两条线路同时调进来，
+    ///   两者都会先查「不存在」再各插一行，池子里就出现同一 IMEI 的两条待认领记录。
+    ///
+    /// 【两道防线，缺一不可】
+    ///   ① 进程内闸门（本方法）：按 IMEI 串行化，单实例下把竞态窗口直接关掉——
+    ///      这道防线不依赖数据库索引，迁移尚未应用时也立即生效。
+    ///   ② 数据库 UNIQUE(Imei, AppCode)：多实例部署时唯一的兜底，撞键后在此降级处理，
+    ///      对外表现为「更新成功」而不是抛异常。
+    /// </summary>
+    /// <param name="db">数据库上下文。</param>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="model">设备型号，可为空。</param>
+    /// <param name="netType">网络类型，可为空。</param>
+    /// <param name="appCode">租户码，可为空。</param>
+    /// <param name="now">本次上报时间（UTC）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>登记后的待认领记录；冲突后重查仍未命中返回 <c>null</c>。</returns>
+    private async Task<DiscoveredAnShengDevice?> UpsertDiscoveredAsync(
+        AppDbContext db,
+        string imei,
+        string? model,
+        string? netType,
+        string? appCode,
+        DateTime now,
+        CancellationToken ct)
+    {
+        // 闸门按 IMEI 而非 (IMEI, AppCode)：两条上行线路解析出的 AppCode 可能不一致
+        // （Pipeline 有「设备→档案→池子→默认租户→空串」五级兜底，ProtocolConfigService
+        // 则取协议配置上的 AppCode），按租户分桶会让两条线各持一把锁，竞态照旧。
+        var gate = _discoveryGates.GetOrAdd(imei, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct);
+
+        try
+        {
+            var discovered = await FindDiscoveredForUpsertAsync(db, imei, appCode, ct);
+
+            if (discovered != null)
+            {
+                ApplyOnlineFields(discovered, model, netType, appCode, now);
+
+                try
+                {
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (DbUpdateException ex) when (IsDuplicateKeyViolation(ex))
+                {
+                    // 命中的是一行「尚未归属租户」的历史记录，回填 AppCode 时撞上了
+                    // 同租户的既有行。放弃回填，只推进 LastSeenAt——租户归属交给认领流程去定。
+                    await db.Entry(discovered).ReloadAsync(ct);
+                    discovered.LastSeenAt = now;
+                    await db.SaveChangesAsync(ct);
+
+                    _logger.LogWarning(
+                        "回填待认领设备 AppCode 撞唯一键，已跳过回填仅更新在线时间: IMEI={IMEI}, AppCode={AppCode}",
+                        imei, appCode);
+                }
+
+                return discovered;
+            }
+
+            // 首次发现：插入待认领池
+            discovered = new DiscoveredAnShengDevice
+            {
+                Imei = imei,
+                AppCode = appCode,
+                Model = model,
+                NetType = netType,
+                DiscoveredAt = now,
+                LastSeenAt = now,
+                IsClaimed = false
+            };
+            db.Set<DiscoveredAnShengDevice>().Add(discovered);
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+
+                _logger.LogInformation(
+                    "发现新安圣设备: IMEI={IMEI}, Model={Model}, NetType={NetType}, AppCode={AppCode}",
+                    imei, model, netType, appCode);
+
+                return discovered;
+            }
+            catch (DbUpdateException ex) when (IsDuplicateKeyViolation(ex))
+            {
+                // 另一实例抢先插入了同一 (IMEI, AppCode)。把插入失败的实体摘出跟踪，
+                // 否则后续 SaveChanges 会带着它再撞一次。
+                db.Entry(discovered).State = EntityState.Detached;
+
+                var existing = await FindDiscoveredForUpsertAsync(db, imei, appCode, ct);
+                if (existing == null)
+                {
+                    _logger.LogWarning(
+                        "待认领设备撞唯一键后重查未命中（可能已被认领或清理）: IMEI={IMEI}, AppCode={AppCode}",
+                        imei, appCode);
+                    return null;
+                }
+
+                ApplyOnlineFields(existing, model, netType, appCode, now);
+                await db.SaveChangesAsync(ct);
+
+                _logger.LogInformation(
+                    "待认领设备已由并发写入建立，本次降级为更新: IMEI={IMEI}, AppCode={AppCode}, Id={Id}",
+                    imei, appCode, existing.Id);
+
+                return existing;
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// 按租户维度定位待认领记录。
+    ///
+    /// 命中顺序：同租户精确命中 → 尚未归属租户的历史行。
+    /// 【为什么不能只按 IMEI 查】原实现 <c>d.Imei == imei</c> 不带租户维度，
+    /// A 租户的上报会命中并改写 B 租户的行（跨租户串写）。
+    /// </summary>
+    /// <param name="db">数据库上下文。</param>
+    /// <param name="imei">设备 IMEI。</param>
+    /// <param name="appCode">本次上报解析出的租户码，可为空。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>待认领记录；未命中返回 <c>null</c>。</returns>
+    private static async Task<DiscoveredAnShengDevice?> FindDiscoveredForUpsertAsync(
+        AppDbContext db,
+        string imei,
+        string? appCode,
+        CancellationToken ct)
+    {
+        var set = db.Set<DiscoveredAnShengDevice>();
+
+        // 「尚未归属任何租户」的历史行：沿用既有的 AppCode 回填语义
+        // （原实现按 IMEI 单条件命中后回填），避免同一设备因租户码迟到而落出第二行。
+        Task<DiscoveredAnShengDevice?> QueryUnassignedAsync() => set
+            .OrderBy(d => d.Id)
+            .FirstOrDefaultAsync(
+                d => d.Imei == imei && (d.AppCode == null || d.AppCode == ""), ct);
+
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            // 同租户精确命中优先；没有就退回未归属行做回填；再没有则返回 null 走新增。
+            var exact = await set
+                .OrderBy(d => d.Id)
+                .FirstOrDefaultAsync(d => d.Imei == imei && d.AppCode == appCode, ct);
+
+            return exact ?? await QueryUnassignedAsync();
+        }
+
+        // 本次上报没解析出租户码：不能新建一行无租户记录去和已有行重复，
+        // 沿用任意既有行推进在线时间即可
+        //（AppCode 为空时 ApplyOnlineFields 不会写租户字段，故不存在跨租户改写）。
+        return await QueryUnassignedAsync()
+               ?? await set.OrderBy(d => d.Id).FirstOrDefaultAsync(d => d.Imei == imei, ct);
+    }
+
+    /// <summary>
+    /// 把本次上报的信息合并到待认领记录上。
+    /// 沿用原有语义：<c>LastSeenAt</c> 每次推进，其余字段仅在「本次有值且原值为空」时补写，
+    /// 不拿中间态覆盖已探到的权威值。
+    /// </summary>
+    /// <param name="discovered">待认领记录。</param>
+    /// <param name="model">设备型号，可为空。</param>
+    /// <param name="netType">网络类型，可为空。</param>
+    /// <param name="appCode">租户码，可为空。</param>
+    /// <param name="now">本次上报时间（UTC）。</param>
+    private static void ApplyOnlineFields(
+        DiscoveredAnShengDevice discovered,
+        string? model,
+        string? netType,
+        string? appCode,
+        DateTime now)
+    {
+        discovered.LastSeenAt = now;
+
+        if (!string.IsNullOrEmpty(model) && string.IsNullOrEmpty(discovered.Model))
+            discovered.Model = model;
+        if (!string.IsNullOrEmpty(netType) && string.IsNullOrEmpty(discovered.NetType))
+            discovered.NetType = netType;
+        if (!string.IsNullOrEmpty(appCode) && string.IsNullOrEmpty(discovered.AppCode))
+            discovered.AppCode = appCode;
+    }
+
+    /// <summary>
+    /// 判断异常链上是否存在 MySQL 唯一键冲突（错误码 1062）。
+    /// 逐层下钻而非只看 <c>InnerException</c>：EF 的重试执行策略会再包一层。
+    /// </summary>
+    /// <param name="ex">EF 抛出的保存异常。</param>
+    /// <returns>是唯一键冲突返回 <c>true</c>。</returns>
+    private static bool IsDuplicateKeyViolation(DbUpdateException ex)
+    {
+        for (Exception? inner = ex.InnerException; inner != null; inner = inner.InnerException)
+        {
+            if (inner is MySqlException mysql && mysql.Number == MySqlDuplicateKeyErrorNumber)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ─────────────────────────────────────────────

@@ -27,14 +27,45 @@ type ConnectionStatus = 'Connected' | 'Disconnected' | 'Connecting' | 'Error' | 
  */
 const ANSHENG_MQTT_TYPE = 'ansheng_mqtt';
 
+/**
+ * Modbus RTU 协议类型标识（小写）。
+ * 后端 ProtocolAdapterFactory.CreateAdapter 先做 ToUpperInvariant()，
+ * 归一后落到 "MODBUSRTU" or "MODBUS_RTU" 分支，因此前端用小写 value 即可。
+ * 选用无下划线写法，可与后端 ModbusRtuAdapter.ProtocolType（"ModbusRTU"）
+ * 回传值 toLowerCase() 后完全一致，保证图标/名称查表命中。
+ */
+const MODBUS_RTU_TYPE = 'modbusrtu';
+
+/** Modbus RTU 类型的等价写法（统一转小写后比对），兼容历史配置里的下划线形式 */
+const MODBUS_RTU_TYPE_ALIASES: string[] = [MODBUS_RTU_TYPE, 'modbus_rtu'];
+
 const PROTOCOL_OPTIONS: { value: string; label: string; icon: string }[] = [
   { value: 'mqtt', label: 'MQTT', icon: 'M' },
   { value: 'modbus', label: 'Modbus TCP', icon: 'T' },
+  { value: MODBUS_RTU_TYPE, label: 'Modbus RTU', icon: 'R' },
   { value: 'opcua', label: 'OPC UA', icon: 'O' },
   { value: 'http', label: 'HTTP', icon: 'H' },
   { value: 'tcp', label: 'TCP', icon: 'C' },
   { value: ANSHENG_MQTT_TYPE, label: '安圣 MQTT', icon: 'A' },
 ];
+
+/**
+ * Modbus RTU 波特率候选值。
+ * 与后端 ModbusRtuAdapter.ValidateOptions 的白名单严格一致，
+ * 用下拉框而非自由输入，避免用户填出会被后端拒绝的波特率。
+ */
+const MODBUS_RTU_BAUD_RATES: number[] = [
+  1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
+];
+
+/** Modbus RTU 数据位候选值（后端校验区间 5~8） */
+const MODBUS_RTU_DATA_BITS: number[] = [5, 6, 7, 8];
+
+/** Modbus RTU 停止位候选值（后端 ConvertStopBits 支持 1 / 1.5 / 2） */
+const MODBUS_RTU_STOP_BITS: string[] = ['1', '1.5', '2'];
+
+/** Modbus RTU 校验位候选值（后端 ConvertParity 支持 None / Odd / Even / Mark / Space） */
+const MODBUS_RTU_PARITIES: string[] = ['None', 'Odd', 'Even', 'Mark', 'Space'];
 
 /**
  * 安圣 MQTT 配置项默认值。
@@ -79,6 +110,289 @@ const ANSHENG_DETAIL_FIELDS: { key: string; label: string }[] = [
 /** 判断某个协议类型是否为安圣 MQTT（忽略大小写，兼容后端可能返回的 ANSHENG_MQTT） */
 function isAnShengType(type: string | undefined): boolean {
   return (type ?? '').toLowerCase() === ANSHENG_MQTT_TYPE;
+}
+
+/**
+ * 判断某个协议类型是否为 Modbus RTU（忽略大小写）。
+ * 兼容后端 / 历史配置可能返回的 ModbusRTU、MODBUSRTU、MODBUS_RTU 等写法。
+ */
+function isModbusRtuType(type: string | undefined): boolean {
+  return MODBUS_RTU_TYPE_ALIASES.includes((type ?? '').toLowerCase());
+}
+
+// ── 存量配置键名归一化 ────────────────────────────────────────────────────────
+/**
+ * 单个协议的属性名表：DTO 规范属性名 + 历史别名映射。
+ */
+interface ProtocolConfigSchema {
+  /** 规范属性名集合（精确 PascalCase） */
+  canonicalNames: Set<string>;
+  /** 小写属性名 → 规范属性名 */
+  canonicalByLowerName: Map<string, string>;
+  /** 小写历史别名 → 规范属性名 */
+  legacyAliases: Record<string, string>;
+}
+
+/**
+ * 构建单个协议的属性名表（把 canonical 列表展开成精确集合 + 小写索引）。
+ *
+ * @param canonicalNames DTO 上的规范（PascalCase）属性名
+ * @param legacyAliases 历史别名（键必须全小写）→ 规范属性名
+ * @returns 可供 {@link normalizeLegacyConfigKeys} 直接查表的属性名表
+ */
+function buildProtocolConfigSchema(
+  canonicalNames: string[],
+  legacyAliases: Record<string, string>
+): ProtocolConfigSchema {
+  const exact = new Set<string>();
+  const byLower = new Map<string, string>();
+  for (const name of canonicalNames) {
+    exact.add(name);
+    byLower.set(name.toLowerCase(), name);
+  }
+  return { canonicalNames: exact, canonicalByLowerName: byLower, legacyAliases };
+}
+
+/**
+ * 需要「字符串 → 数字」类型矫正的属性名集合（小写索引，比对时统一转小写）。
+ *
+ * ⚠️ 与后端 `Data/ProtocolConfigNormalizer.cs` 的 `NumericProperties` 保持同步，改一处必须改两处。
+ *
+ * 注意 `StopBits` / `Parity` 后端是 **string** 类型（默认 "1" / "None"），
+ * 故意不在此集合内，绝不可做数字化。
+ */
+const NUMERIC_CONFIG_PROPERTIES: ReadonlySet<string> = new Set([
+  'port',
+  'baudrate',
+  'timeoutms',
+  'pollintervalms',
+  'qoslevel',
+  'databits',
+  'timeoutseconds',
+  'keepaliveseconds',
+  'commandminintervalms',
+]);
+
+/**
+ * 合法整数文本的判定式。
+ *
+ * 必须用正则而不能直接信 `Number.parseInt`：后者会把 `"5000.5"` 截断成 `5000`、
+ * 把 `"502abc"` 解析成 `502`，属于「猜测」，与后端 `long.TryParse(NumberStyles.Integer)`
+ * 的语义不符。后端对这类值是**保持原样**交给人工处理，前端必须一致。
+ */
+const INTEGER_TEXT_PATTERN = /^[+-]?\d+$/;
+
+/**
+ * 各协议的「规范属性名 + 历史别名」表，键为归一化后的协议标识
+ * （剔除非字母数字字符后转小写：`MODBUS_TCP` / `Modbus-TCP` / `modbustcp` → `modbustcp`）。
+ *
+ * ⚠️⚠️ 与后端 `Data/ProtocolConfigNormalizer.cs` 的 `BuildSchemas()` 保持同步，改一处必须改两处。⚠️⚠️
+ * 规范属性名严格取自 `Infrastructure/Protocol/Adapters/` 下的 `XxxOptions` 类定义；
+ * 两侧规则若漂移，会出现「前端弹窗显示的键名」与「后端实际反序列化的键名」不一致的静默错配。
+ *
+ * 与后端的**唯一有意差异**：本表不含 `anshengmqtt`。安圣类型在 `openEdit` 里走
+ * `ANSHENG_DEFAULT_CONFIG` 兜底分支，不经过本归一化函数（详见 `openEdit` 注释）。
+ */
+const MODBUS_TCP_CONFIG_SCHEMA: ProtocolConfigSchema = buildProtocolConfigSchema(
+  ['Host', 'Port', 'TimeoutMs', 'PollIntervalMs', 'Devices', 'AppCode'],
+  { host: 'Host', port: 'Port' }
+);
+
+const LEGACY_CONFIG_KEY_MAP: Readonly<Record<string, ProtocolConfigSchema>> = {
+  // ── MQTT（MqttProtocolOptions）──────────────────────────────────
+  mqtt: buildProtocolConfigSchema(
+    [
+      'Host', 'Port', 'Username', 'Password', 'ClientIdPrefix', 'CleanSession',
+      'TimeoutSeconds', 'KeepAliveSeconds', 'SubscribeTopics', 'CommandTopicTemplate',
+      'CommandResponseTopic', 'ReadTopicTemplate', 'QosLevel',
+    ],
+    {
+      host: 'Host',
+      port: 'Port',
+      // 注意：MqttProtocolOptions 并没有 EndpointUrl 属性，归一后它仍是 DTO 的未知成员
+      // （System.Text.Json 会忽略，不抛异常）。保留该别名只为让存量键名形态统一。
+      endpoint: 'EndpointUrl',
+      username: 'Username',
+      password: 'Password',
+      clientidprefix: 'ClientIdPrefix',
+      cleansession: 'CleanSession',
+      qoslevel: 'QosLevel',
+    }
+  ),
+
+  // ── Modbus TCP（ModbusTcpOptions）──────────────────────────────
+  modbustcp: MODBUS_TCP_CONFIG_SCHEMA,
+
+  // 历史上只写 "modbus" 的行按 TCP 处理：别名表只涉及 host/port；
+  // 若该行其实是 RTU，其 serialPort 等键会作为「未知键」被原样保留，不会被改坏。
+  // 与后端 BuildSchemas() 中 ["modbus"] = modbusTcp 的取舍一致。
+  modbus: MODBUS_TCP_CONFIG_SCHEMA,
+
+  // ── Modbus RTU（ModbusRtuOptions）──────────────────────────────
+  // 刻意**不设** port 别名：RTU 侧的 port 语义是串口名而非 TCP 端口，
+  // 若映射到 PortName 会把 "502" 之类的存量脏值当串口名用；后端同样不映射。
+  modbusrtu: buildProtocolConfigSchema(
+    [
+      'PortName', 'BaudRate', 'DataBits', 'StopBits', 'Parity',
+      'TimeoutMs', 'PollIntervalMs', 'Devices', 'AppCode',
+    ],
+    { serialport: 'PortName', baudrate: 'BaudRate' }
+  ),
+
+  // ── OPC UA（OpcUaOptions）──────────────────────────────────────
+  opcua: buildProtocolConfigSchema(
+    [
+      'EndpointUrl', 'TimeoutMs', 'PollIntervalMs', 'UsePollingMode', 'SecurityPolicy',
+      'SecurityMode', 'CertificatePath', 'Username', 'Password', 'Nodes', 'AppCode',
+    ],
+    { endpoint: 'EndpointUrl' }
+  ),
+};
+
+/**
+ * 把外部传入的协议类型字符串归一成内部协议标识：剔除所有非字母数字字符后转小写。
+ *
+ * @param type 协议类型，允许大小写混写与 `_` / `-` / 空格分隔
+ * @returns 归一化后的协议标识；入参为空时返回空串
+ */
+function normalizeProtocolTypeKey(type: string | undefined): string {
+  return (type ?? '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+}
+
+/**
+ * 解析某个原始键应该被归一成什么键名。
+ *
+ * @param originalKey 原始 config 键名
+ * @param schema 协议对应的属性名表
+ * @returns 规范键名；未识别时返回原始键名
+ */
+function resolveTargetConfigKey(originalKey: string, schema: ProtocolConfigSchema): string {
+  const lower = originalKey.toLowerCase();
+
+  // 1) 大小写不敏感命中规范属性名：port / PORT / Port → Port
+  const canonical = schema.canonicalByLowerName.get(lower);
+  if (canonical !== undefined) return canonical;
+
+  // 2) 历史别名：serialPort → PortName、endpoint → EndpointUrl
+  const aliased = schema.legacyAliases[lower];
+  if (aliased !== undefined) return aliased;
+
+  // 3) 未知键：原样保留（不猜、不丢），保证不破坏任何自定义扩展字段
+  return originalKey;
+}
+
+/**
+ * 把存量小写/字符串型 config 归一为 PascalCase + 正确类型，供编辑弹窗回填。
+ *
+ * 【为什么需要它】旧版表单用裸小写键写入配置，产出 `{"host":"1.2.3.4","port":"502"}`；
+ * 而修复后的输入框读的是 `getConfigValue(form.config, 'Host')`（只认 PascalCase、无兜底）。
+ * 不归一就会出现「打开编辑弹窗后 Host/Port 全空白 → 用户以为配置丢了 → 随手一存把好数据覆盖掉」。
+ *
+ * 【规则】与后端 `Data/ProtocolConfigNormalizer.cs` 逐条对齐：
+ * 0. **值为 null / undefined → 删除该键**（全属性适用，不限数值属性）。
+ *    JSON null 绑定到任何非空 DTO 属性都拿不到有效值，删键让 C# 默认值生效更干净。
+ * 1. 规范键优先：旧键要改名成一个「已精确存在**且值非 null**」的规范键时，丢弃旧键。
+ *    「值非 null」这个限定至关重要 —— 它让 `{host:'x', Host:null}` 能把 `'x'` **救回来**：
+ *    若不加限定，`Host:null` 会先把 `host:'x'` 挤掉，自己再被规则 0 删掉，最终两份数据全丢。
+ * 2. 键名：先大小写不敏感匹配规范名，再查历史别名，仍未命中则原样保留。
+ * 3. 先出现者胜：同一目标键被多个旧键命中时取第一个。
+ *    注意被规则 0 删掉的键**不占坑**（不写入 result），后续同目标键仍可补位。
+ * 4. 数值矫正：仅对 {@link NUMERIC_CONFIG_PROPERTIES} 内的目标键生效 ——
+ *    空白串删除该键（让后端 DTO 默认值生效），
+ *    合法整数文本转 number，其他字符串保持原值不猜。
+ * 5. 未知协议类型（http / tcp / 空）→ 原样返回入参，把爆炸半径压到最小。
+ * 6. 幂等：已是 PascalCase + 正确类型的输入，再跑一遍结果等价。
+ *
+ * 注意 `Host` / `EndpointUrl` 不在数值集合内，故规则 4 的「空白串删键」对其**不适用** ——
+ * `Host:''` 会被原样保留。这是**刻意**的：删键会让后端回落 `localhost` /
+ * `opc.tcp://localhost:4840` 造成「静默连错目标」，而留下空串会让连接立刻失败并留下日志，
+ * 是更响亮、更易排查的故障形态。
+ * 规则 0 只处理 null / undefined，**不碰空串**，两者不可混为一谈。
+ *
+ * @param type 协议类型（大小写不敏感，允许 `modbus_tcp` / `MODBUS-TCP` / `ModbusTcp` 等写法）
+ * @param config 存量配置对象
+ * @returns 归一化后的新对象；协议类型无法识别时原样返回入参
+ */
+export function normalizeLegacyConfigKeys(
+  type: string | undefined,
+  config: Record<string, unknown>
+): Record<string, unknown> {
+  const schema = LEGACY_CONFIG_KEY_MAP[normalizeProtocolTypeKey(type)];
+  if (schema === undefined) {
+    // 未知协议类型（http / tcp / bacnet / 空等）：不认识就不动。
+    return config;
+  }
+
+  const originalKeys = Object.keys(config);
+
+  // 预扫描：哪些「精确 PascalCase 规范键」已经存在**且值非 null**。它们的值优先级最高
+  // （规范键是修复后的前端写入的，视为更新的值）。
+  //
+  // 规则 1 的「值非 null」限定：值为 null/undefined 的规范键会被规则 0 删掉，
+  // 因此它没有资格把同目标的旧键挤掉，否则 `{host:'x', Host:null}` 会两份数据全丢。
+  const exactCanonicalKeys = new Set<string>();
+  for (const key of originalKeys) {
+    const value = config[key];
+    if (value === null || value === undefined) {
+      continue;
+    }
+    if (schema.canonicalNames.has(key)) {
+      exactCanonicalKeys.add(key);
+    }
+  }
+
+  const result: Record<string, unknown> = {};
+
+  for (const originalKey of originalKeys) {
+    const targetKey = resolveTargetConfigKey(originalKey, schema);
+    const isRenamed = targetKey !== originalKey;
+
+    // 规则 1：旧键要改名成一个「已经精确存在且值非 null」的规范键 → 丢弃旧键，保留规范键的值。
+    if (isRenamed && exactCanonicalKeys.has(targetKey)) {
+      continue;
+    }
+
+    // 规则 3：同一目标键被多个旧键命中（如 serialport / serialPort 并存）→ 先出现者胜。
+    if (Object.prototype.hasOwnProperty.call(result, targetKey)) {
+      continue;
+    }
+
+    const value = config[originalKey];
+
+    // 规则 0：null / undefined 一律删键（全属性适用，不限数值属性）。
+    // {"Port":null} 绑定到非空 int 会抛 JsonException；{"Host":null} 同样拿不到有效值。
+    // 这里直接 continue 而不写 result，因此该目标键**不占坑** ——
+    // `{Host:null, host:'x'}` 里后到的 'x' 仍能补位（rescue，与规则 1 的限定配套）。
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    // 规则 4：数值矫正（null/undefined 已由规则 0 拦下，此处只处理字符串形态）
+    if (NUMERIC_CONFIG_PROPERTIES.has(targetKey.toLowerCase())) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.length === 0) {
+          // {"Port":""} 同样会抛异常 → 删除该键。
+          continue;
+        }
+
+        if (INTEGER_TEXT_PATTERN.test(trimmed)) {
+          const parsed = Number.parseInt(trimmed, 10);
+          // 超出 IEEE754 安全整数范围的值转 number 会丢精度，宁可保持原样交人工处理。
+          if (Number.isSafeInteger(parsed)) {
+            result[targetKey] = parsed;
+            continue;
+          }
+        }
+
+        // 非整数格式（如 "COM3"、"5000.5"）：不猜测，保持原值落到下面的通用分支。
+      }
+    }
+
+    result[targetKey] = value;
+  }
+
+  return result;
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────────
@@ -253,10 +567,14 @@ export function ProtocolManagementPage() {
 
   const openEdit = (p: ProtocolConfig) => {
     setEditTarget(p);
-    // 安圣类型：用默认值补齐后端可能缺失的字段（已有值优先）
+    // 安圣类型：用默认值补齐后端可能缺失的字段（已有值优先）。
+    // 非安圣类型：先把存量小写/字符串型键归一为 PascalCase + 正确类型，
+    // 否则 `{"host":"1.2.3.4","port":"502"}` 这类旧配置在弹窗里会全部显示为空白
+    // （输入框读的是 getConfigValue(form.config, 'Host')，只认 PascalCase），
+    // 用户误以为配置丢失，随手保存就会把好数据覆盖成空。
     const nextConfig = isAnShengType(p.type)
       ? { ...ANSHENG_DEFAULT_CONFIG, ...(p.config || {}) }
-      : (p.config || {});
+      : normalizeLegacyConfigKeys(p.type, p.config || {});
     setForm({
       name: p.name,
       type: p.type,
@@ -341,6 +659,23 @@ export function ProtocolManagementPage() {
     return String(value);
   };
 
+  /**
+   * 读取配置值（命名风格兼容）。
+   *
+   * 表单写入统一使用与后端 Options 属性一致的 PascalCase 键（Host / Port / EndpointUrl / PortName），
+   * 但协议库中可能存在历史遗留的小写或 camelCase 键（host / port / endpoint / serialPort）。
+   * 此处优先读 PascalCase，未命中时回退到 legacyKey，保证旧配置在详情区不会显示为空白。
+   *
+   * @param config    协议配置对象
+   * @param key       后端属性名（PascalCase）
+   * @param legacyKey 历史遗留键名（小写 / camelCase）
+   */
+  const getConfigValueCompat = (
+    config: Record<string, unknown> | undefined,
+    key: string,
+    legacyKey: string
+  ): string => getConfigValue(config, key) || getConfigValue(config, legacyKey);
+
   /** 读取表单 config 中的布尔值（缺省时回落到 fallback） */
   const getConfigBool = (key: string, fallback: boolean): boolean => {
     const value = (form.config as Record<string, unknown> | undefined)?.[key];
@@ -361,6 +696,30 @@ export function ProtocolManagementPage() {
   const setNumberConfigValue = (key: string, raw: string, fallback: number) => {
     const parsed = Number.parseInt(raw, 10);
     setConfigValue(key, Number.isNaN(parsed) ? fallback : parsed);
+  };
+
+  /**
+   * 写入数字型配置字段，但不预设兜底值。
+   *
+   * 用于通用连接配置区块：该区块横跨 MQTT(1883) / ModbusTcp(502) / OpcUa(不使用 Port)，
+   * 不存在一个对所有协议都正确的前端兜底常量，因此输入为空/非法时**移除该键**，
+   * 交由后端各 Options 类的 C# 默认值生效。
+   *
+   * 注意：必须写入 number 而非 string。后端反序列化仅开启了 PropertyNameCaseInsensitive
+   * （放宽键名大小写），未开启 NumberHandling.AllowReadingFromString，
+   * 因此 int 字段收到 JSON 字符串（如 "5502"）会抛 JsonException 导致连接失败。
+   */
+  const setOptionalNumberConfigValue = (key: string, raw: string) => {
+    const parsed = Number.parseInt(raw, 10);
+    if (raw === '' || Number.isNaN(parsed)) {
+      setForm(f => {
+        const nextConfig = { ...((f.config ?? {}) as Record<string, unknown>) };
+        delete nextConfig[key];
+        return { ...f, config: nextConfig };
+      });
+      return;
+    }
+    setConfigValue(key, parsed);
   };
 
   // ── 加载关联设备 ────────────────────────────────────────────────────────────
@@ -723,34 +1082,53 @@ export function ProtocolManagementPage() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         {protocol.config && (
                           <>
-                            {getConfigValue(protocol.config as Record<string, unknown>, 'host') && (
+                            {/* 通用连接信息：优先读后端属性名（PascalCase），回退历史小写键以兼容旧配置 */}
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'Host', 'host') && (
                               <div>
                                 <span className="text-slate-400 block text-xs mb-1">主机地址</span>
-                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'host')}</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'Host', 'host')}</span>
                               </div>
                             )}
-                            {getConfigValue(protocol.config as Record<string, unknown>, 'port') && (
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'Port', 'port') && (
                               <div>
                                 <span className="text-slate-400 block text-xs mb-1">端口</span>
-                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'port')}</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'Port', 'port')}</span>
                               </div>
                             )}
-                            {getConfigValue(protocol.config as Record<string, unknown>, 'endpoint') && (
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'EndpointUrl', 'endpoint') && (
                               <div>
                                 <span className="text-slate-400 block text-xs mb-1">端点地址</span>
-                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'endpoint')}</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'EndpointUrl', 'endpoint')}</span>
                               </div>
                             )}
-                            {getConfigValue(protocol.config as Record<string, unknown>, 'serialPort') && (
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'PortName', 'serialPort') && (
                               <div>
                                 <span className="text-slate-400 block text-xs mb-1">串口</span>
-                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'serialPort')}</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'PortName', 'serialPort')}</span>
                               </div>
                             )}
-                            {getConfigValue(protocol.config as Record<string, unknown>, 'baudRate') && (
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'BaudRate', 'baudRate') && (
                               <div>
                                 <span className="text-slate-400 block text-xs mb-1">波特率</span>
-                                <span className="text-white">{getConfigValue(protocol.config as Record<string, unknown>, 'baudRate')}</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'BaudRate', 'baudRate')}</span>
+                              </div>
+                            )}
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'DataBits', 'dataBits') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">数据位</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'DataBits', 'dataBits')}</span>
+                              </div>
+                            )}
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'StopBits', 'stopBits') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">停止位</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'StopBits', 'stopBits')}</span>
+                              </div>
+                            )}
+                            {getConfigValueCompat(protocol.config as Record<string, unknown>, 'Parity', 'parity') && (
+                              <div>
+                                <span className="text-slate-400 block text-xs mb-1">校验位</span>
+                                <span className="text-white">{getConfigValueCompat(protocol.config as Record<string, unknown>, 'Parity', 'parity')}</span>
                               </div>
                             )}
                             {/* 安圣 MQTT 专属配置展示（键名为 PascalCase，与后端 AnShengMqttProtocolOptions 一致） */}
@@ -943,15 +1321,21 @@ export function ProtocolManagementPage() {
                   </div>
                 </div>
 
-                {/* 通用连接配置（安圣类型使用下方专属表单，避免小写 host/port 与 PascalCase 键冲突） */}
-                {!isAnShengType(form.type) && (
+                {/* ── 通用连接配置 ───────────────────────────────────────────
+                    键名统一 PascalCase，与后端各协议 Options 属性一一对应：
+                      Host / Port        → MqttProtocolOptions、ModbusTcpOptions
+                      EndpointUrl        → OpcUaOptions
+                    安圣类型使用下方专属表单，避免两套命名风格冲突。
+                    Modbus RTU 走串口（ModbusRtuOptions.PortName/BaudRate/...），
+                    完全不使用 Host/Port/EndpointUrl，故与下方 RTU 区块互斥渲染。 */}
+                {!isAnShengType(form.type) && !isModbusRtuType(form.type) && (
                   <>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-sm text-slate-300 mb-1 block">主机地址</label>
                         <input
-                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'host')}
-                          onChange={e => setConfigValue('host', e.target.value)}
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Host')}
+                          onChange={e => setConfigValue('Host', e.target.value)}
                           placeholder="192.168.1.100"
                           className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                         />
@@ -960,25 +1344,116 @@ export function ProtocolManagementPage() {
                         <label className="text-sm text-slate-300 mb-1 block">端口</label>
                         <input
                           type="number"
-                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'port')}
-                          onChange={e => setConfigValue('port', e.target.value)}
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Port')}
+                          onChange={e => setOptionalNumberConfigValue('Port', e.target.value)}
                           placeholder="1883"
                           className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                         />
                       </div>
                     </div>
 
-                    {/* 端点地址 */}
+                    {/* 端点地址（OpcUaOptions.EndpointUrl） */}
                     <div>
                       <label className="text-sm text-slate-300 mb-1 block">端点地址</label>
                       <input
-                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'endpoint')}
-                        onChange={e => setConfigValue('endpoint', e.target.value)}
+                        value={getConfigValue(form.config as Record<string, unknown> | undefined, 'EndpointUrl')}
+                        onChange={e => setConfigValue('EndpointUrl', e.target.value)}
                         placeholder="opc.tcp://192.168.1.50:4840"
                         className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                       />
                     </div>
                   </>
+                )}
+
+                {/* ── Modbus RTU 串口配置 ────────────────────────────────────
+                    键名统一 PascalCase，与后端 ModbusRtuOptions 属性一一对应：
+                      PortName / BaudRate / DataBits / StopBits / Parity
+                    BaudRate、DataBits 为 C# int，必须写入 number 而非字符串
+                    （后端未开启 NumberHandling.AllowReadingFromString），
+                    因此统一走 setOptionalNumberConfigValue：留空即删键，
+                    由后端 ModbusRtuOptions 的默认值（9600 / 8）兜底。 */}
+                {isModbusRtuType(form.type) && (
+                  <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                    <div className="flex items-center gap-2 text-sm text-amber-300 font-medium">
+                      <Settings className="w-4 h-4" />
+                      Modbus RTU 串口配置
+                    </div>
+
+                    {/* 串口名称 / 波特率 */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">串口名称 *</label>
+                        <input
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'PortName')}
+                          onChange={e => setConfigValue('PortName', e.target.value)}
+                          placeholder="COM1 或 /dev/ttyUSB0"
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                        <p className="text-xs text-slate-500 mt-1">留空时后端回落到默认串口 COM1</p>
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">波特率</label>
+                        <select
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'BaudRate')}
+                          onChange={e => setOptionalNumberConfigValue('BaudRate', e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">默认（9600）</option>
+                          {MODBUS_RTU_BAUD_RATES.map(rate => (
+                            <option key={rate} value={rate}>{rate}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* 数据位 / 停止位 / 校验位 */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">数据位</label>
+                        <select
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'DataBits')}
+                          onChange={e => setOptionalNumberConfigValue('DataBits', e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">默认（8）</option>
+                          {MODBUS_RTU_DATA_BITS.map(bits => (
+                            <option key={bits} value={bits}>{bits}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">停止位</label>
+                        <select
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'StopBits')}
+                          onChange={e => setConfigValue('StopBits', e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">默认（1）</option>
+                          {MODBUS_RTU_STOP_BITS.map(stopBits => (
+                            <option key={stopBits} value={stopBits}>{stopBits}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-300 mb-1 block">校验位</label>
+                        <select
+                          value={getConfigValue(form.config as Record<string, unknown> | undefined, 'Parity')}
+                          onChange={e => setConfigValue('Parity', e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">默认（None）</option>
+                          {MODBUS_RTU_PARITIES.map(parity => (
+                            <option key={parity} value={parity}>{parity}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-500">
+                      波特率与数据位取值范围来自后端 ModbusRtuAdapter.ValidateOptions 校验白名单，
+                      填入白名单之外的值会导致连接时抛出参数异常。
+                    </p>
+                  </div>
                 )}
 
                 {/* ── 安圣 MQTT 专属配置 ─────────────────────────────────────

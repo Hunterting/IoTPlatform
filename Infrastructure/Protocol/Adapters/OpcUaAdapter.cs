@@ -50,7 +50,7 @@ public class OpcUaAdapter : IProtocolAdapter
                     return true;
                 }
 
-                _options = JsonSerializer.Deserialize<OpcUaOptions>(connectionString)
+                _options = JsonSerializer.Deserialize<OpcUaOptions>(connectionString, ProtocolJsonOptions.CaseInsensitive)
                     ?? throw new ArgumentException("无效的 OPC UA 连接配置");
 
                 ValidateOptions(_options);

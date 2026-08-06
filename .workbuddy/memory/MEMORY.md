@@ -20,6 +20,10 @@
   - 反模式警示：勿因 "ASP.NET Core Web 默认 camelCase" 误写小写 key。现有 mqtt 前端写小写 `host/port` 同样绑不进 `MqttProtocolOptions`（**疑似存量隐患，待核查现网数据**）。
   - 前端协议选项 value 用 `ansheng_mqtt` 即可：工厂 `ProtocolAdapterFactory.CreateAdapter` 内部 `protocolType.ToUpperInvariant()` 归一 → `ANSHENG_MQTT`。
 - **前端信封判定**：统一认 `response.code === 200` 判定成功，不读 `response.data.success`。
+- **协议配置派生字段铁律**（2026-08-06 P0 血泪）：`ProtocolConfig.Type`（如 `ansheng_mqtt`）必须 `.ToUpperInvariant()` 派生同步写入 `ProtocolType`；`Status`(active/inactive) 必须与 `IsActive` 同步。消费方（发现扫描 / `ResolveProtocolConfigIdAsync` / 下发）一律按 `IsActive && ProtocolType == "ANSHENG_MQTT"` 筛选，任一字段没写就永远 `AdapterUnavailable`。`ProtocolConfigService` 已用 `DeriveProtocolType` / `ReconcileDerivedFields` 在 Create/Update/Start/Stop 四路径幂等补齐（存量脏数据下次 start/stop/update 自愈）。注意 `ProtocolConfig.IsActive` 实体默认值是 **`= true`**。
+- **登录用 Email 不是用户名**：`POST /api/v1/auth/login` body `{email,password}`，超管 `admin@system.com` / `admin123`。
+- **联调时构建/测试被后端进程锁 bin**（MSB3027）→ 用 `dotnet test -o /tmp/xxx` / `dotnet build -o /tmp/xxx` 重定向，**不要 kill 联调进程**。
+- **开发环境每次启动清空全库（铁律级环境事实，2026-08-06 踩坑）**：`Data/SeedData/DataSeeder.cs:113` 由 `Program.cs:424` 的 `app.Environment.IsDevelopment()` 触发，启动时 `SET FOREIGN_KEY_CHECKS=0` + 逐表 `DELETE FROM` 再灌种子。**任何联调现场数据（协议配置/设备/档案/待认领池/命令流水）活不过一次后端重启**；要保留现场必须切非 Development 环境。（`DELETE FROM areas` 会因自引用外键 `FK_areas_areas_ParentId` 失败，被 catch 成 WRN，不阻断启动。这也解释了"业务数据总是全空"的现象。）
 
 ## 已交付里程碑（详记见各 dated 日志）
 | 模块 | 内容 | 状态 | 关键日志 |
@@ -33,6 +37,8 @@
 | T10/T11 前端面板 | ScheduleEditorPage + EnergyStatisticsPage | ✅ 验收 2026-08-05 | 2026-08-04.md |
 | T14 协议族隔离 | Legacy 归位 + 三态 Resolver + 前端分区 | ✅ 验收 2026-08-05 | 2026-08-03.md |
 | T12-BugFix | 协议配置页补 `ansheng_mqtt` 选项 + 安圣专属表单（PascalCase 14 字段） | ✅ 验收 2026-08-05 | 2026-08-05.md |
+| 安圣真机联调 | 发现→认领→开关下发→SlotsSnapshot 回写全链路真机打通；修 P0(创建/启动不写 ProtocolType/IsActive) + P1(待认领池并发重复插入) | ✅ 验收 2026-08-06（854 测试全绿） | 2026-08-06.md |
+| 唯一索引迁移 + 冒烟复验 | 迁移 `20260806033128` 已 apply（`IX_discovered_ansheng_devices_Imei_AppCode` unique 已建）；真机冒烟：connected 瞬间仅 1 条发现日志、两次快照均 1 行 0 重复、LastSeenAt 正常推进、零 ERR/WRN/1062 | ✅ 验收 2026-08-06 | 2026-08-06.md |
 
 ## 待办 / 技术债 / 下一阶段
 - **待核查（存量隐患）**：现有 mqtt 协议配置是否因前端小写 `host/port` 静默连 localhost:1883（影响现网数据，建议单开核查单）

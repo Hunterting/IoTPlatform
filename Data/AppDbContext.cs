@@ -433,6 +433,21 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.IsClaimed);
             entity.HasIndex(e => e.AppCode);
 
+            // UNIQUE(Imei, AppCode)：待认领池的并发兜底。
+            //
+            // 【为什么必须有】设备发现走的是 check-then-act（查不到才插），而上行是并发的：
+            //   connected 事件与首帧 getDevStatus 常落在同一毫秒级窗口，两条线程同时判定
+            //   「不存在」后各插一行，同一设备在池子里出现两条待认领记录。
+            //   （现场实证：IMEI=863434084755211 落出 Id=8/9 两行，DiscoveredAt 相差约 10ms。）
+            //   应用层串行化只在单进程内有效，多实例部署时唯一键才是真正的最后一道防线。
+            //
+            // 【为什么带 AppCode】待认领池按租户隔离，同一 IMEI 在不同租户下各有一行是合法状态，
+            //   唯一性只能约束到「租户内」。
+            //
+            // ⚠️ MySQL 语义提醒：唯一索引不约束 NULL —— AppCode 为 NULL 的行之间仍可重复。
+            //   这一段由 AnShengDiscoveryService 内按 IMEI 的进程内串行化闸门补上。
+            entity.HasIndex(e => new { e.Imei, e.AppCode }).IsUnique();
+
             // T5：枚举一律以 int 落库。
             // MySQL 5.7.26 下不用原生 ENUM——增枚举值就得 ALTER TABLE 锁表，
             // 且 Pomelo 对 ENUM 的映射在跨版本升级时并不稳定。

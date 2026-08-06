@@ -46,7 +46,7 @@ public class ModbusTcpAdapter : IProtocolAdapter
                     return true;
                 }
 
-                _options = JsonSerializer.Deserialize<ModbusTcpOptions>(connectionString)
+                _options = JsonSerializer.Deserialize<ModbusTcpOptions>(connectionString, ProtocolJsonOptions.CaseInsensitive)
                     ?? throw new ArgumentException("无效的 Modbus TCP 连接配置");
 
                 _tcpClient = new TcpClient();

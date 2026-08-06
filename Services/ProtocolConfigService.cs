@@ -67,6 +67,81 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     public bool ShouldSkipLegacyBridge => _eventOptions.SuppressLegacyDataBridge;
 
+    #region ── 协议标识 / 生命周期字段派生 ──
+
+    /// <summary>
+    /// 从 <see cref="ProtocolConfig.Type"/> 派生 <see cref="ProtocolConfig.ProtocolType"/>。
+    /// </summary>
+    /// <remarks>
+    /// 【为什么要在服务层派生，而不是让前端多传一个字段】
+    /// <c>ProtocolType</c> 是消费侧唯一的协议筛选字段（安圣发现扫描、认领时解析适配器、命令下发共三处），
+    /// 但它既不在 <see cref="CreateProtocolConfigRequest"/> 中，前端也从不提交，
+    /// 于是经 API 建的配置该列恒为 NULL，等值筛选永远为空 —— 安圣设备无法被发现、认领、下发，
+    /// 只能手工改库绕过。从已有的 <c>Type</c> 派生可在不改动前端契约的前提下闭合这条链路。
+    ///
+    /// 【归一规则为什么只做 ToUpperInvariant】
+    /// <see cref="StartProtocolAsync"/> 传给 <see cref="IProtocolAdapterFactory.CreateAdapter"/> 的正是
+    /// <c>config.Type.ToUpperInvariant()</c>，工厂内部再按同样规则匹配 switch 分支。
+    /// 这里沿用同一条规则，保证「能创建出适配器的配置」与「消费侧能筛到的配置」严格是同一批：
+    /// <c>ansheng_mqtt</c> → <c>ANSHENG_MQTT</c>，与 <c>AnShengDiscoveryService.AnShengProtocolType</c> 逐字相等。
+    /// 刻意<b>不做</b> Trim 或分隔符归一 —— 一旦这里比工厂更宽容，就会造出
+    /// 「ProtocolType 筛得到、适配器却建不出来」的假活跃配置，比当前缺陷更难定位。
+    ///
+    /// 【为什么非安圣协议也一并派生】
+    /// 代码实证：全仓 <c>ProtocolConfig.ProtocolType</c> 的运行期消费方只有三处，且都是
+    /// <c>== "ANSHENG_MQTT"</c> 的等值筛选，无任何一处读取非安圣取值，也没有判空（<c>== null</c>）筛选。
+    /// 故统一派生对存量 mqtt / modbus / opcua / http / tcp / bacnet 的行为零影响；
+    /// 同时与集成测试 <c>SeedData</c>「Type 与 ProtocolType 同值」的既有约定、
+    /// 以及 <c>docs/system_design.md</c>「ProtocolType 由后端自动设置」一致。
+    /// 只给安圣族派生反而会留下一个需要长期解释、且新增协议族时必然再次踩到的特例。
+    /// </remarks>
+    /// <param name="type">协议类型原始值（如 <c>ansheng_mqtt</c> / <c>mqtt</c> / <c>modbus</c>）。</param>
+    /// <returns>归一化后的协议标识；输入为空或纯空白时返回 <c>null</c>，避免写入无意义的空串。</returns>
+    public static string? DeriveProtocolType(string? type)
+        => string.IsNullOrWhiteSpace(type) ? null : type.ToUpperInvariant();
+
+    /// <summary>
+    /// 判定生命周期状态字面量是否表示「运行中」。
+    /// </summary>
+    /// <param name="status">状态字面量（<c>active</c> / <c>inactive</c>）。</param>
+    /// <returns>表示运行中返回 <c>true</c>。</returns>
+    private static bool IsRunningStatus(string? status)
+        => string.Equals(status, "active", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 幂等地把 <see cref="ProtocolConfig.ProtocolType"/>、<see cref="ProtocolConfig.IsActive"/>
+    /// 补齐到与权威字段 <see cref="ProtocolConfig.Type"/>、<see cref="ProtocolConfig.Status"/> 一致。
+    /// </summary>
+    /// <remarks>
+    /// 抽成一个方法是为了让创建、更新、启动、停止四条路径共用同一份派生规则，
+    /// 避免任何一条路径漏改后再次产生「筛不到」的配置。
+    /// 返回值用于让调用方仅在真的发生变更时才落库，避免无谓的 UPDATE 与 UpdatedAt 抖动。
+    /// </remarks>
+    /// <param name="config">待补齐的协议配置实体。</param>
+    /// <returns>发生了字段变更返回 <c>true</c>。</returns>
+    private static bool ReconcileDerivedFields(ProtocolConfig config)
+    {
+        var changed = false;
+
+        var expectedProtocolType = DeriveProtocolType(config.Type);
+        if (!string.Equals(config.ProtocolType, expectedProtocolType, StringComparison.Ordinal))
+        {
+            config.ProtocolType = expectedProtocolType;
+            changed = true;
+        }
+
+        var expectedIsActive = IsRunningStatus(config.Status);
+        if (config.IsActive != expectedIsActive)
+        {
+            config.IsActive = expectedIsActive;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    #endregion
+
     /// <summary>
     /// 获取协议配置列表
     /// </summary>
@@ -177,7 +252,14 @@ public class ProtocolConfigService : IProtocolConfigService
         {
             Name = request.Name,
             Type = request.Type,
+            // 由 Type 派生：前端与 CreateProtocolConfigRequest 都不带该字段，
+            // 不在这里补齐，安圣发现/认领/下发三处 ProtocolType 等值筛选就永远命不中本行。
+            ProtocolType = DeriveProtocolType(request.Type),
             Status = "inactive",
+            // 必须显式置 false：ProtocolConfig.IsActive 的属性初始化器是 true，
+            // 不写就会落库成「Status=inactive 但 IsActive=true」的自相矛盾行，
+            // 让所有按 IsActive 的筛选把一个尚未启动的配置当成活跃配置。
+            IsActive = false,
             Description = request.Description,
             AppCode = request.AppCode,
             DeviceIds = request.DeviceIds != null
@@ -203,6 +285,9 @@ public class ProtocolConfigService : IProtocolConfigService
             Config = request.Config,
             Description = config.Description,
             AppCode = config.AppCode,
+            // 回填真实落库值：DTO 里漏了这个字段会让调用方看到 default(false)，
+            // 与列表接口（GetProtocolConfigsAsync 有映射）自相矛盾。
+            IsActive = config.IsActive,
             CreatedAt = config.CreatedAt,
             UpdatedAt = config.UpdatedAt
         };
@@ -226,16 +311,28 @@ public class ProtocolConfigService : IProtocolConfigService
         }
 
         config.Name = request.Name;
-        config.Status = request.Status;
+
+        // Status 是生命周期的权威字段（Start/Stop/Delete 都据它判断）。
+        // 请求未携带时保持库中原值：UpdateProtocolConfigRequest.Status 没有 [Required]、默认是空串，
+        // 原先无条件赋值会把一个正在运行的配置的 Status 抹成 ""，状态语义直接丢失。
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            config.Status = request.Status;
+        }
+
         config.Description = request.Description ?? config.Description;
-        config.AppCode = config.AppCode;
-        config.IsActive = request.IsActive;
         config.DeviceIds = request.DeviceIds != null
             ? JsonSerializer.Serialize(request.DeviceIds)
             : config.DeviceIds;
         config.Config = request.Config != null
             ? JsonSerializer.Serialize(request.Config)
             : config.Config;
+
+        // IsActive / ProtocolType 一律由 Status / Type 派生，刻意不采信 request.IsActive：
+        // 前端编辑弹窗把列表读到的 isActive 原样回填再提交（ProtocolManagementPage.tsx 第 582/600 行），
+        // 只要库里存在历史不一致值，用户编辑一次就会把它写回去，本次 P0 会反复复发。
+        // 保留 DTO 上的 IsActive 字段是为了不破坏前端契约，但它已降级为只读语义。
+        ReconcileDerivedFields(config);
         config.UpdatedAt = DateTime.UtcNow;
 
         await _protocolConfigRepository.UpdateAsync(config);
@@ -251,6 +348,8 @@ public class ProtocolConfigService : IProtocolConfigService
             Config = request.Config,
             Description = config.Description,
             AppCode = config.AppCode,
+            // 回填派生后的真实值，避免调用方拿到与库中不一致的 IsActive。
+            IsActive = config.IsActive,
             CreatedAt = config.CreatedAt,
             UpdatedAt = config.UpdatedAt
         };
@@ -306,6 +405,21 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new UnauthorizedAccessException("无权启动该协议配置");
         }
 
+        // 存量一致性补齐 —— 必须放在下面 Status=="active" 的短路之前。
+        // 「Status=active 但 ProtocolType=NULL / IsActive 不匹配」的历史行一旦走到短路就原样返回，
+        // 用户点多少次「启动」都修不好，只能手工改库；这正是本次 P0 的放大器。
+        // 本调用是幂等的：字段本就一致时不产生任何写操作。
+        if (ReconcileDerivedFields(config))
+        {
+            config.UpdatedAt = DateTime.UtcNow;
+            await _protocolConfigRepository.UpdateAsync(config);
+            await _unitOfWork.SaveChangesAsync();
+
+            _logger?.LogInformation(
+                "已补齐协议配置派生字段: Id={Id}, Type={Type}, ProtocolType={ProtocolType}, IsActive={IsActive}",
+                config.Id, config.Type, config.ProtocolType, config.IsActive);
+        }
+
         // 如果已经激活，直接返回
         if (config.Status == "active")
         {
@@ -344,8 +458,12 @@ public class ProtocolConfigService : IProtocolConfigService
                 throw new InvalidOperationException($"协议连接失败: {config.Name}");
             }
 
-            // 更新状态
+            // 更新状态：Status 与 IsActive 是同一生命周期状态的两种表示，必须同步落库。
+            // 消费侧（AnShengDiscoveryService 扫描/认领、AnShengCommandService 下发）筛的是
+            // IsActive + ProtocolType，只改 Status 等于没启动。
             config.Status = "active";
+            config.IsActive = true;
+            config.ProtocolType = DeriveProtocolType(config.Type);
             config.UpdatedAt = DateTime.UtcNow;
             await _protocolConfigRepository.UpdateAsync(config);
             await _unitOfWork.SaveChangesAsync();
@@ -379,6 +497,20 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new UnauthorizedAccessException("无权停止该协议配置");
         }
 
+        // 与 StartProtocolAsync 对称：先补齐再短路。
+        // 否则「Status=inactive 但 IsActive=true」的残留行会被短路挡住，
+        // 一个已停止的配置会被消费侧当作活跃适配器持续选中。
+        if (ReconcileDerivedFields(config))
+        {
+            config.UpdatedAt = DateTime.UtcNow;
+            await _protocolConfigRepository.UpdateAsync(config);
+            await _unitOfWork.SaveChangesAsync();
+
+            _logger?.LogInformation(
+                "已补齐协议配置派生字段: Id={Id}, Type={Type}, ProtocolType={ProtocolType}, IsActive={IsActive}",
+                config.Id, config.Type, config.ProtocolType, config.IsActive);
+        }
+
         // 如果已经停止，直接返回
         if (config.Status == "inactive")
         {
@@ -394,8 +526,11 @@ public class ProtocolConfigService : IProtocolConfigService
             _adapterFactory.ReleaseAdapter((int)config.Id);
             _logger?.LogInformation("协议已停止: {Name}, Type={Type}", config.Name, config.Type);
 
-            // 更新状态
+            // 更新状态：与启动路径对称，Status 与 IsActive 同步回落，
+            // 顺带再派生一次 ProtocolType，保证停止动作也具备自愈能力。
             config.Status = "inactive";
+            config.IsActive = false;
+            config.ProtocolType = DeriveProtocolType(config.Type);
             config.UpdatedAt = DateTime.UtcNow;
             await _protocolConfigRepository.UpdateAsync(config);
             await _unitOfWork.SaveChangesAsync();
