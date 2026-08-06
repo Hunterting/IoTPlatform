@@ -24,6 +24,8 @@
 - **登录用 Email 不是用户名**：`POST /api/v1/auth/login` body `{email,password}`，超管 `admin@system.com` / `admin123`。
 - **联调时构建/测试被后端进程锁 bin**（MSB3027）→ 用 `dotnet test -o /tmp/xxx` / `dotnet build -o /tmp/xxx` 重定向，**不要 kill 联调进程**。⚠️ 集成测试用 `-o` 重定向时**必须同时显式设 `IOT_TEST_MYSQL` 环境变量**——`TestConnectionStringResolver.FindRepositoryRoot()` 从 `AppContext.BaseDirectory` 向上找 `IoTPlatform.csproj` 定仓库根，`-o` 把 BaseDirectory 挪走会断链导致 65 条全红「无法确定测试 MySQL 连接串」。
 - **开发环境每次启动清空全库（铁律级环境事实，2026-08-06 踩坑）**：`Data/SeedData/DataSeeder.cs:113` 由 `Program.cs:424` 的 `app.Environment.IsDevelopment()` 触发，启动时 `SET FOREIGN_KEY_CHECKS=0` + 逐表 `DELETE FROM` 再灌种子。**任何联调现场数据（协议配置/设备/档案/待认领池/命令流水）活不过一次后端重启**；要保留现场必须切非 Development 环境。（`DELETE FROM areas` 会因自引用外键 `FK_areas_areas_ParentId` 失败，被 catch 成 WRN，不阻断启动。这也解释了"业务数据总是全空"的现象。）
+- **【用户 2026-08-06 明令·铁律】起后端若"不希望清库"，一律 direct-DLL + Staging，禁用 `dotnet run`**。`dotnet run` 会读 `Properties/launchSettings.json` 的 `environmentVariables` → **强制 `ASPNETCORE_ENVIRONMENT=Development`**，命令行 `--environment Staging` 或 `ASPNETCORE_ENVIRONMENT=Staging` 均被覆盖，故 `dotnet run` 永远触发清库。正确起法：`dotnet bin/Debug/net8.0/IoTPlatform.dll` + `ASPNETCORE_ENVIRONMENT=Staging`（不读 launchSettings，环境变量才生效）。无 `appsettings.Staging.json`/`appsettings.Production.json` → 任何非 Dev 环境回退 `appsettings.json` 同一连接串（192.168.3.7:3306/iot_platform），仅跳过清库。
+- **【用户 2026-08-06 明令·铁律】查日志一律以 Serilog 文件槽为准（`logs/log-YYYYMMDD.txt`），别只 grep 单实例 stdout 重定向**。`Program.cs:25-30` 用 `ReadFrom.Configuration` 但 appsettings 无 `Serilog` 节 → 最小级别回退 Information，且同时写 Console 与 `logs/log-YYYYMMDD.txt`（每实例从同一 CWD 写同一文件）。单实例 stdout 重定向未必含全部行，易误判"日志没打"。
 
 - **DI 生命周期错配铁律（2026-08-06 协议加固踩出）**：`ProtocolAdapterFactory` = **Singleton**（`Program.cs:47`），`ProtocolConfigService` = **Scoped**（`Program.cs:120`）。任何追踪"进程内适配器实例"的状态（如订阅登记表）**必须是 static**，绝不能是 Scoped 实例字段——否则每 HTTP 请求拿到空表，防重逻辑恒失效、每次 `/start` 重复挂 handler。若新增进程级静态状态，须一并纳入 `StaticStateResetter.ResetAll`（目前它只认识 4 处，本次 `_activeSubscriptions` 是第 5 处，未纳入，脆弱）。
 
@@ -43,6 +45,7 @@
 | 唯一索引迁移 + 冒烟复验 | 迁移 `20260806033128` 已 apply（`IX_discovered_ansheng_devices_Imei_AppCode` unique 已建）；真机冒烟：connected 瞬间仅 1 条发现日志、两次快照均 1 行 0 重复、LastSeenAt 正常推进、零 ERR/WRN/1062 | ✅ 验收 2026-08-06 | 2026-08-06.md |
 | 协议启停短路判活加固 | `ProtocolConfigService` 启停短路加进程内判活（防重启吞启动）+ 修复重复订阅炸弹（static 订阅表+真幂等三分支）；919/919 集成+单元全绿 | ✅ 验收 2026-08-06（QA NoOne） | 2026-08-06.md |
 | 协议启停判活 — 测试覆盖闭环 | 测试基建增强：`FakeProtocolAdapterFactory` 加进程重启开关 + `StaticStateResetter` 纳入第5静态态 + 新增 6 测试覆盖 A/B/C（含证伪对照），925/925 全绿，变异测试反证生产逻辑正确 | ✅ 验收 2026-08-06（QA NoOne） | 2026-08-06.md |
+| 协议启停判活 — 真机复验 | 真机复验 PASS：进程重启后 DB active/内存无适配器时 /start 不再静默短路（首 392-568ms 完整启动 vs 次 53ms 短路）；Serilog 文件槽确证 [WRN] 失配告警 + 适配器真连真 broker(120.79.3.248:18883) 重新订阅 | ✅ 验收 2026-08-06 | 2026-08-06.md |
 
 ## 待办 / 技术债 / 下一阶段
 - **待核查（存量隐患）**：现有 mqtt 协议配置是否因前端小写 `host/port` 静默连 localhost:1883（影响现网数据，建议单开核查单）
