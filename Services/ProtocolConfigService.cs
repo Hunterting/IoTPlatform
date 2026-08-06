@@ -31,9 +31,50 @@ public class ProtocolConfigService : IProtocolConfigService
     private readonly AnShengEventOptions _eventOptions;
 
     /// <summary>
-    /// 活跃的事件订阅字典：configId → 事件处理器（用于停止时反注册）
+    /// 一条已建立的 <see cref="IProtocolAdapter.DataReceived"/> 订阅登记项。
     /// </summary>
-    private readonly Dictionary<int, EventHandler<DeviceDataReceivedEventArgs>> _activeSubscriptions = new();
+    /// <remarks>
+    /// 必须同时记住<b>适配器实例引用</b>而不只是 handler：反注册时不能依赖
+    /// <see cref="IProtocolAdapterFactory.GetAdapter"/> 重新取一次 —— 适配器可能已被释放（返回 null）
+    /// 或已被重建（返回的是另一个实例），那样 <c>-=</c> 就会作用在错误的对象上，
+    /// 旧实例的 handler 永远摘不掉，成为「幽灵订阅」继续处理数据。
+    /// </remarks>
+    /// <param name="Adapter">建立订阅时所针对的适配器实例。</param>
+    /// <param name="Handler">注册到 <c>DataReceived</c> 上的委托实例（<c>-=</c> 必须用同一个）。</param>
+    private sealed record AdapterSubscription(
+        IProtocolAdapter Adapter,
+        EventHandler<DeviceDataReceivedEventArgs> Handler);
+
+    /// <summary>
+    /// 活跃的事件订阅登记表：configId → <see cref="AdapterSubscription"/>（用于去重与停止时反注册）。
+    /// </summary>
+    /// <remarks>
+    /// 【为什么必须是 static —— 这是本次加固的核心修正】
+    /// 本服务在 <c>Program.cs:120</c> 注册为 <b>Scoped</b>，而适配器由
+    /// <c>Program.cs:47</c> 注册的 <b>Singleton</b> <see cref="ProtocolAdapterFactory"/> 持有，
+    /// 存活于整个进程。原先该字段是实例字段，于是每个 HTTP 请求都拿到一张<b>空表</b>，
+    /// <see cref="SubscribeAdapterDataReceived"/> 里「已有订阅先反注册」的防重判断<b>从来没有生效过</b>：
+    /// 每调一次 <c>/start</c> 就往同一个单例适配器的 <c>DataReceived</c> 上再挂一个 handler，
+    /// 同一份报文被处理 N 次（N 次入库 + N 次 <c>OnDeviceOnlineAsync</c>）。
+    ///
+    /// 这个缺陷此前被 <see cref="StartProtocolAsync"/> 的 <c>Status=="active"</c> 短路意外掩盖住了
+    /// —— 第二次启动直接返回，走不到订阅那一行。本次放宽短路条件后该路径会被真实触发，
+    /// 因此登记表的生命周期必须与它所追踪的对象（单例工厂里的适配器）对齐，即进程级。
+    ///
+    /// 【为什么不新增一个 Singleton 注册到 DI】
+    /// 那需要改 <c>Program.cs</c> 与两处测试替身工厂的接线，超出本次最小变更范围；
+    /// 而按 configId 做键的进程级字典，与 <c>ProtocolAdapterFactory._adapters</c> 的键完全同构，
+    /// 语义上就是那张字典的伴生表。若后续要做启动自动恢复，建议连同本表一起提为独立单例组件。
+    ///
+    /// 【并发】控制面操作（启停协议）频次极低，用一把 <see cref="_subscriptionLock"/> 粗锁保证
+    /// 「查—摘—挂—记」四步原子，比 ConcurrentDictionary 的多次 CAS 更易证明正确性。
+    /// </remarks>
+    private static readonly Dictionary<int, AdapterSubscription> _activeSubscriptions = new();
+
+    /// <summary>
+    /// 保护 <see cref="_activeSubscriptions"/> 的锁；订阅与反注册必须在同一把锁下完成。
+    /// </summary>
+    private static readonly object _subscriptionLock = new();
 
     public ProtocolConfigService(
         IProtocolConfigRepository protocolConfigRepository,
@@ -420,10 +461,28 @@ public class ProtocolConfigService : IProtocolConfigService
                 config.Id, config.Type, config.ProtocolType, config.IsActive);
         }
 
-        // 如果已经激活，直接返回
+        // ── 短路判活：DB 状态 + 进程内适配器「双条件」才允许短路 ──
+        //
+        // config.Status 是<b>数据库持久化状态</b>，而适配器实例活在单例 ProtocolAdapterFactory 的
+        // 进程内字典里（ProtocolAdapterFactory.cs:45）。进程一重启，字典清空、DB 仍是 active，
+        // 两者失配 —— 原先只看 Status 的短路会把真正的启动动作整个吞掉：
+        // 接口返回 200，适配器却压根没起来，broker 上一条报文都收不到，
+        // 运维只能先 /stop 再 /start 才能绕过（真机联调实测复现）。
+        //
+        // 所以只有「DB 说活 且 内存里确实有适配器」才是真·已启动，可以短路；
+        // 否则必须走完整启动流程把适配器真正拉起来，即状态失配时的自愈。
+        var runningAdapter = _adapterFactory.GetAdapter((int)config.Id);
         if (config.Status == "active")
         {
-            return;
+            if (runningAdapter != null)
+            {
+                return;
+            }
+
+            _logger?.LogWarning(
+                "检测到协议配置状态与进程内适配器失配（DB 已 active，但适配器不在内存，通常因进程重启），" +
+                "将执行恢复启动: Id={Id}, Name={Name}, Type={Type}, Status={Status}",
+                config.Id, config.Name, config.Type, config.Status);
         }
 
         try
@@ -511,10 +570,27 @@ public class ProtocolConfigService : IProtocolConfigService
                 config.Id, config.Type, config.ProtocolType, config.IsActive);
         }
 
-        // 如果已经停止，直接返回
+        // ── 短路判活：与 StartProtocolAsync 对称的「双条件」判断 ──
+        //
+        // 只看 Status=="inactive" 就短路，会在「DB 说停、适配器却还留在内存」时把停止请求吞掉
+        // （成因：启动中途抛异常导致 Status 没落到 active、或外部直接改库）。
+        // 结果是适配器泄漏在进程里继续连着 broker 收数据、继续往采集管道灌，
+        // 而管理界面显示它已经停止 —— 一个查不出来源的「幽灵数据源」。
+        //
+        // 所以只有「DB 说停 且 内存里确实没有适配器」才允许短路；
+        // 否则走完整停止流程，把残留适配器连同其事件订阅一并释放。
+        var residualAdapter = _adapterFactory.GetAdapter((int)config.Id);
         if (config.Status == "inactive")
         {
-            return;
+            if (residualAdapter == null)
+            {
+                return;
+            }
+
+            _logger?.LogWarning(
+                "检测到协议配置状态与进程内适配器失配（DB 已 inactive，但适配器仍在内存），" +
+                "将执行残留适配器清理: Id={Id}, Name={Name}, Type={Type}, Status={Status}",
+                config.Id, config.Name, config.Type, config.Status);
         }
 
         try
@@ -555,40 +631,117 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     private void SubscribeAdapterDataReceived(IProtocolAdapter adapter, int configId, string? appCode)
     {
-        // 如果已有订阅，先反注册（防止重复）
-        if (_activeSubscriptions.ContainsKey(configId))
+        lock (_subscriptionLock)
         {
-            UnsubscribeAdapterDataReceived(configId);
+            if (_activeSubscriptions.TryGetValue(configId, out var existing))
+            {
+                // ① 同一个适配器实例上已有订阅 —— 真正的重复调用，直接返回。
+                //    放宽 Start 短路后，「Status 已是 active 再走一遍完整启动流程」会真实发生，
+                //    这里若不拦住，同一份报文会被处理两次：DeviceDataRecord 重复落库，
+                //    且 OnProtocolAdapterDataReceived 中的 OnDeviceOnlineAsync（第 649 行 await /
+                //    第 665 行 fire-and-forget）会被重复触发，直接加剧安圣设备已知的并发来源。
+                if (ReferenceEquals(existing.Adapter, adapter))
+                {
+                    _logger?.LogDebug(
+                        "协议适配器数据事件已订阅，跳过重复订阅: ConfigId={ConfigId}, ProtocolType={ProtocolType}",
+                        configId, adapter.ProtocolType);
+                    return;
+                }
+
+                // ② 登记的是<b>旧适配器实例</b>（适配器被释放后重建，如进程内 stop→start）。
+                //    必须从旧实例上摘掉 handler 再挂到新实例，否则旧实例若仍被其他引用持有，
+                //    它的 handler 会继续往采集管道灌数据。
+                existing.Adapter.DataReceived -= existing.Handler;
+                _activeSubscriptions.Remove(configId);
+
+                _logger?.LogInformation(
+                    "检测到协议适配器实例已重建，已解绑旧实例事件订阅: ConfigId={ConfigId}", configId);
+            }
+
+            EventHandler<DeviceDataReceivedEventArgs> handler = async (sender, e) =>
+            {
+                await OnProtocolAdapterDataReceived(e, appCode);
+            };
+
+            adapter.DataReceived += handler;
+            _activeSubscriptions[configId] = new AdapterSubscription(adapter, handler);
+
+            _logger?.LogInformation(
+                "已订阅协议适配器数据事件: ConfigId={ConfigId}, ProtocolType={ProtocolType}",
+                configId, adapter.ProtocolType);
         }
-
-        EventHandler<DeviceDataReceivedEventArgs> handler = async (sender, e) =>
-        {
-            await OnProtocolAdapterDataReceived(e, appCode);
-        };
-
-        adapter.DataReceived += handler;
-        _activeSubscriptions[configId] = handler;
-
-        _logger?.LogInformation(
-            "已订阅协议适配器数据事件: ConfigId={ConfigId}, ProtocolType={ProtocolType}",
-            configId, adapter.ProtocolType);
     }
 
     /// <summary>
-    /// 取消指定协议配置的事件订阅
+    /// 取消指定协议配置的事件订阅。
     /// </summary>
+    /// <remarks>
+    /// 对「本来就没有订阅」的 configId 调用是安全的无操作（<c>TryGetValue</c> 落空即返回），
+    /// 因此停止流程中无需先判存在性。
+    /// </remarks>
+    /// <param name="configId">协议配置 Id。</param>
     private void UnsubscribeAdapterDataReceived(int configId)
     {
-        if (_activeSubscriptions.TryGetValue(configId, out var handler))
+        lock (_subscriptionLock)
         {
-            var adapter = _adapterFactory.GetAdapter(configId);
-            if (adapter != null)
+            if (!_activeSubscriptions.TryGetValue(configId, out var subscription))
             {
-                adapter.DataReceived -= handler;
+                return;
             }
+
+            // 用登记时保存的适配器引用反注册，而不是 GetAdapter(configId) 重新取：
+            // 走到这里时适配器可能已被释放（取回 null，handler 就永远摘不掉）
+            // 或已被重建（取回另一个实例，-= 作用在错误对象上，静默无效）。
+            subscription.Adapter.DataReceived -= subscription.Handler;
             _activeSubscriptions.Remove(configId);
 
             _logger?.LogInformation("已取消协议适配器数据事件订阅: ConfigId={ConfigId}", configId);
+        }
+    }
+
+    /// <summary>
+    /// 【测试专用】解绑并清空 <see cref="_activeSubscriptions"/>，把这块进程级静态状态复位到「进程刚启动」。
+    /// </summary>
+    /// <remarks>
+    /// 【为什么生产代码里要开这个口子】
+    /// <see cref="_activeSubscriptions"/> 是 <c>static</c>（理由见其自身注释：必须与单例工厂里的
+    /// 适配器同生命周期）。代价是它<b>不随 DI 作用域、也不随 TestServer 重建而清空</b>，
+    /// 于是集成测试里它成了第 5 处跨用例存活的进程级状态：
+    /// 用例 A 启过协议后登记表里就留着 <c>configId → (DefaultAdapter, handlerA)</c>，
+    /// 用例 B 再启同一个 configId 时命中「① 同实例跳过」分支，B 想验证的挂载动作根本没发生 ——
+    /// 症状是「B 单跑绿、跟在 A 后面跑红」，且失败点在 B 里看不出成因。
+    /// 测试侧无法用反射稳妥地摘 handler（记的是私有 record 的字段），故由生产代码提供入口，
+    /// 与 <c>AnShengMqttProtocolAdapter.ClearDeviceKinds()</c> 的既有做法保持一致。
+    ///
+    /// 【为什么必须先解绑再清表，不能只 Clear()】
+    /// 集成测试的录制适配器是 TestServer 级单例（<c>FakeProtocolAdapterFactory.DefaultAdapter</c>），
+    /// 它的 <c>DataReceived</c> 调用列表不会随用例结束而清空。
+    /// 若这里只 <c>Clear()</c> 登记表而不 <c>-=</c>，handlerA 会永远挂在那个适配器上；
+    /// 下个用例再启动时因表已空而走「③ 无登记挂载」分支又挂一个 handlerB，
+    /// 一条报文被处理 N 次 —— 恰好是本次加固要消灭的「幽灵订阅」，反倒被清理器亲手制造出来。
+    /// 所以清理的语义必须是「反注册 + 清表」，与 <see cref="UnsubscribeAdapterDataReceived"/> 一致。
+    ///
+    /// 【为什么单条失败不抛】
+    /// 适配器可能已被释放/替换，个别 <c>-=</c> 失败不应让剩余条目漏清，
+    /// 否则一次异常就把「清干净」退化成「清了一半」，比不清更难排查。
+    /// </remarks>
+    internal static void ResetActiveSubscriptions()
+    {
+        lock (_subscriptionLock)
+        {
+            foreach (var subscription in _activeSubscriptions.Values)
+            {
+                try
+                {
+                    subscription.Adapter.DataReceived -= subscription.Handler;
+                }
+                catch (Exception)
+                {
+                    // 失败开放：继续清理其余条目，保证登记表最终一定被清空。
+                }
+            }
+
+            _activeSubscriptions.Clear();
         }
     }
 

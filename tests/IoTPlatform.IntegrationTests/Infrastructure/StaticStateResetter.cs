@@ -9,11 +9,12 @@ namespace IoTPlatform.IntegrationTests.Infrastructure;
 /// 静态状态清理器（架构方案 §3.6）。
 ///
 /// 【为什么必须有】
-///   安圣链路上存在四处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
+///   安圣链路上存在五处跨用例存活的状态，它们不随 DI 作用域、也不随 TestServer 重建而清空：
 ///     1. <c>AnShengMqttProtocolAdapter.DeviceKinds</c>      —— IMEI → 设备型号，影响指令目录校验；
 ///     2. <c>AnShengProbeService</c> 的在途等待表             —— (imei, method) → 等待者，影响探测；
 ///     3. <c>AnShengOfflineDebouncer</c> 的在途去抖窗口       —— IMEI → CTS，影响 T6 验收 #5（★ 最毒）；
-///     4. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定。
+///     4. <c>IAnShengPendingCommandStore</c> 的在途命令表     —— (imei, frameId)，影响三分支路由判定；
+///     5. <c>ProtocolConfigService._activeSubscriptions</c>  —— configId → (适配器, handler)，影响启停订阅去重。
 ///   若不清理，用例 A 注册的设备型号会泄漏给用例 B，制造「单跑绿、连跑红」的幽灵失败。
 ///
 /// 【T7-3 变更：原第 2 项已消失】
@@ -66,6 +67,7 @@ public static class StaticStateResetter
         ClearProbePending(services);
         ClearOfflineDebouncer(services);
         ClearPendingCommands(services);
+        ClearProtocolSubscriptions();
     }
 
     /// <summary>
@@ -165,6 +167,38 @@ public static class StaticStateResetter
         catch (Exception ex)
         {
             Append($"清理 IAnShengPendingCommandStore 在途命令失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 解绑并清空协议启停的订阅登记表（第 5 处静态状态）。
+    ///
+    /// 【为什么它比前四项更隐蔽】
+    ///   <c>ProtocolConfigService._activeSubscriptions</c> 是 <c>static</c>，
+    ///   而服务本身注册为 <b>Scoped</b> —— 看代码时很容易以为「每个请求一张表」，
+    ///   实际它跨用例、跨 TestServer 全程只有一份。
+    ///   用例 A 调过 <c>StartProtocolAsync</c> 之后表里就留着
+    ///   <c>configId → (Fixture.Adapter, handlerA)</c>；用例 B 再启同一个 configId 时，
+    ///   去重逻辑判定「同一适配器实例已订阅」直接跳过，B 想验证的挂载动作根本没发生。
+    ///   更糟的是这掩盖了真实缺陷：B 断言「数据能落库」会因为 A 遗留的 handlerA 仍然有效而通过，
+    ///   看起来是绿的，测到的却不是 B 自己建立的订阅。
+    ///
+    /// 【为什么调生产入口而不是反射】
+    ///   登记项是 <c>ProtocolConfigService</c> 内部的 <c>private sealed record</c>，
+    ///   反射取字段再 <c>-=</c> 需要复刻委托类型，字段一改名就静默退化成「没清」。
+    ///   生产侧已提供 <c>internal static ResetActiveSubscriptions()</c>（含解绑），
+    ///   经 <c>InternalsVisibleTo("IoTPlatform.IntegrationTests")</c> 直接调用，
+    ///   与第 1 项用 <c>ClearDeviceKinds()</c> 的思路完全一致：零反射，最稳。
+    /// </summary>
+    private static void ClearProtocolSubscriptions()
+    {
+        try
+        {
+            ProtocolConfigService.ResetActiveSubscriptions();
+        }
+        catch (Exception ex)
+        {
+            Append($"清理 ProtocolConfigService 活跃订阅登记失败：{ex.Message}");
         }
     }
 

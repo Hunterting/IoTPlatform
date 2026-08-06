@@ -58,6 +58,10 @@
     <!-- 测试工程需要直接引用 internal 的 ProtocolJsonOptions，
          以便对「协议连接配置大小写不敏感绑定」做真实单例级验证（而非复刻一份等价选项自欺欺人）。 -->
     <InternalsVisibleTo Include="IoTPlatform.AnSheng.Tests" />
+    <!-- 集成测试的 StaticStateResetter 需要调用 internal 的
+         ProtocolConfigService.ResetActiveSubscriptions()，清理进程级订阅登记表。
+         该入口刻意不做成 public：它是测试隔离设施，不属于生产可调用的服务契约。 -->
+    <InternalsVisibleTo Include="IoTPlatform.IntegrationTests" />
   </ItemGroup>
 
 </Project>

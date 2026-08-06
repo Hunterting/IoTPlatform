@@ -22,8 +22,10 @@
 - **前端信封判定**：统一认 `response.code === 200` 判定成功，不读 `response.data.success`。
 - **协议配置派生字段铁律**（2026-08-06 P0 血泪）：`ProtocolConfig.Type`（如 `ansheng_mqtt`）必须 `.ToUpperInvariant()` 派生同步写入 `ProtocolType`；`Status`(active/inactive) 必须与 `IsActive` 同步。消费方（发现扫描 / `ResolveProtocolConfigIdAsync` / 下发）一律按 `IsActive && ProtocolType == "ANSHENG_MQTT"` 筛选，任一字段没写就永远 `AdapterUnavailable`。`ProtocolConfigService` 已用 `DeriveProtocolType` / `ReconcileDerivedFields` 在 Create/Update/Start/Stop 四路径幂等补齐（存量脏数据下次 start/stop/update 自愈）。注意 `ProtocolConfig.IsActive` 实体默认值是 **`= true`**。
 - **登录用 Email 不是用户名**：`POST /api/v1/auth/login` body `{email,password}`，超管 `admin@system.com` / `admin123`。
-- **联调时构建/测试被后端进程锁 bin**（MSB3027）→ 用 `dotnet test -o /tmp/xxx` / `dotnet build -o /tmp/xxx` 重定向，**不要 kill 联调进程**。
+- **联调时构建/测试被后端进程锁 bin**（MSB3027）→ 用 `dotnet test -o /tmp/xxx` / `dotnet build -o /tmp/xxx` 重定向，**不要 kill 联调进程**。⚠️ 集成测试用 `-o` 重定向时**必须同时显式设 `IOT_TEST_MYSQL` 环境变量**——`TestConnectionStringResolver.FindRepositoryRoot()` 从 `AppContext.BaseDirectory` 向上找 `IoTPlatform.csproj` 定仓库根，`-o` 把 BaseDirectory 挪走会断链导致 65 条全红「无法确定测试 MySQL 连接串」。
 - **开发环境每次启动清空全库（铁律级环境事实，2026-08-06 踩坑）**：`Data/SeedData/DataSeeder.cs:113` 由 `Program.cs:424` 的 `app.Environment.IsDevelopment()` 触发，启动时 `SET FOREIGN_KEY_CHECKS=0` + 逐表 `DELETE FROM` 再灌种子。**任何联调现场数据（协议配置/设备/档案/待认领池/命令流水）活不过一次后端重启**；要保留现场必须切非 Development 环境。（`DELETE FROM areas` 会因自引用外键 `FK_areas_areas_ParentId` 失败，被 catch 成 WRN，不阻断启动。这也解释了"业务数据总是全空"的现象。）
+
+- **DI 生命周期错配铁律（2026-08-06 协议加固踩出）**：`ProtocolAdapterFactory` = **Singleton**（`Program.cs:47`），`ProtocolConfigService` = **Scoped**（`Program.cs:120`）。任何追踪"进程内适配器实例"的状态（如订阅登记表）**必须是 static**，绝不能是 Scoped 实例字段——否则每 HTTP 请求拿到空表，防重逻辑恒失效、每次 `/start` 重复挂 handler。若新增进程级静态状态，须一并纳入 `StaticStateResetter.ResetAll`（目前它只认识 4 处，本次 `_activeSubscriptions` 是第 5 处，未纳入，脆弱）。
 
 ## 已交付里程碑（详记见各 dated 日志）
 | 模块 | 内容 | 状态 | 关键日志 |
@@ -39,6 +41,8 @@
 | T12-BugFix | 协议配置页补 `ansheng_mqtt` 选项 + 安圣专属表单（PascalCase 14 字段） | ✅ 验收 2026-08-05 | 2026-08-05.md |
 | 安圣真机联调 | 发现→认领→开关下发→SlotsSnapshot 回写全链路真机打通；修 P0(创建/启动不写 ProtocolType/IsActive) + P1(待认领池并发重复插入) | ✅ 验收 2026-08-06（854 测试全绿） | 2026-08-06.md |
 | 唯一索引迁移 + 冒烟复验 | 迁移 `20260806033128` 已 apply（`IX_discovered_ansheng_devices_Imei_AppCode` unique 已建）；真机冒烟：connected 瞬间仅 1 条发现日志、两次快照均 1 行 0 重复、LastSeenAt 正常推进、零 ERR/WRN/1062 | ✅ 验收 2026-08-06 | 2026-08-06.md |
+| 协议启停短路判活加固 | `ProtocolConfigService` 启停短路加进程内判活（防重启吞启动）+ 修复重复订阅炸弹（static 订阅表+真幂等三分支）；919/919 集成+单元全绿 | ✅ 验收 2026-08-06（QA NoOne） | 2026-08-06.md |
+| 协议启停判活 — 测试覆盖闭环 | 测试基建增强：`FakeProtocolAdapterFactory` 加进程重启开关 + `StaticStateResetter` 纳入第5静态态 + 新增 6 测试覆盖 A/B/C（含证伪对照），925/925 全绿，变异测试反证生产逻辑正确 | ✅ 验收 2026-08-06（QA NoOne） | 2026-08-06.md |
 
 ## 待办 / 技术债 / 下一阶段
 - **待核查（存量隐患）**：现有 mqtt 协议配置是否因前端小写 `host/port` 静默连 localhost:1883（影响现网数据，建议单开核查单）

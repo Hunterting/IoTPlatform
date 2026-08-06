@@ -46,7 +46,7 @@ dotnet test tests/IoTPlatform.IntegrationTests/
 
       [用例级 IntegrationTestBase]  ← 每个 [Fact] 各一次
         ① Respawn 清数据（保表结构）
-        ② StaticStateResetter 清进程级静态字典
+        ② StaticStateResetter 清 5 处进程级静态状态（含协议订阅登记表）
         ③ FakeProtocolAdapterFactory.Reset() 清录制（含 GetOrCreateFor 登记的分身）
         ④ SeedData 播种 6 条基线记录
         ⑤ CreateClient()
@@ -171,8 +171,27 @@ public sealed class MyFeatureTests : IntegrationTestBase
 **MQTT 的接缝是 `IProtocolAdapterFactory`，不是 `IMqttClient`。**
 MQTTnet 的客户端从未进入 DI 容器，无从替换；而 `AnShengCommandService` 正是通过
 `IProtocolAdapterFactory.GetAdapter(configId)` 取适配器——这是唯一稳定的注入点。
-另注意：`FakeProtocolAdapterFactory.GetAdapter` **对任意 configId 都返回非 null**，
+另注意：`FakeProtocolAdapterFactory.GetAdapter` **默认对任意 configId 都返回非 null**，
 与生产实现（未命中返回 `null`）不同，这是为了让用例不必预知自增 Id。
+
+### 7.0 模拟进程重启：构造「状态失配」现场
+
+`ProtocolConfigService` 的启停短路已从「只看 DB 的 Status」改为
+「DB 状态 **+** 进程内适配器」双条件判活，新增的两条分支只有在失配时才走到。
+而替身默认恒返回非 null，**物理上构造不出失配现场**，故提供下列开关：
+
+| 开关 | 效果 | 覆盖的分支 |
+|---|---|---|
+| `SimulateAdapterAbsent(configId)` | 该 configId 的 `GetAdapter` 返回 `null` | 启动恢复（`active` 但适配器不在内存）／停止短路 |
+| `SimulateAdapterPresent(configId)` | 撤销上一条 | —— |
+| `SimulateAdapterRebuilt(configId)` | 换成**新实例**并返回它，旧实例保留不销毁 | 订阅去重「② 旧实例 → 解绑重挂」 |
+| `IsSimulatedAbsent(configId)` | 查询是否已标记缺席 | 前置条件自检 |
+| `PeekAdapter(configId)` | 按当前开关解析，强类型返回，缺席为 `null` | 断言辅助 |
+| `WasReleased(configId)` / `ReleasedConfigIds` | `ReleaseAdapter` 调用留痕 | 停止清理确实释放了适配器 |
+
+全部默认关闭，不调用时行为与既有用例逐字相同；`Reset()` 会一并复位，不跨用例泄漏。
+注意 `CreateAdapter` 会自动撤销 absent 标记（与生产工厂「创建即入缓存」对齐），
+否则「刚恢复启动成功、`GetAdapter` 却仍说没有」会让紧随其后的 `StopProtocolAsync` 被短路吞掉。
 
 ### 7.1 替身必须复刻生产的「默认拒绝」护栏
 
