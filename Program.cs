@@ -133,6 +133,10 @@ builder.Services.Configure<IoTPlatform.Configuration.EzvizOptions>(
     builder.Configuration.GetSection(IoTPlatform.Configuration.EzvizOptions.SectionName));
 builder.Services.AddHttpClient("Ezviz");
 builder.Services.AddScoped<IoTPlatform.Services.IEzvizService, IoTPlatform.Services.EzvizService>();
+
+// ── 设备授权（按设备逐台授权 + 到期提醒） ──
+builder.Services.AddScoped<IoTPlatform.Services.IDeviceAuthorizationService, IoTPlatform.Services.DeviceAuthorizationService>();
+builder.Services.AddHostedService<IoTPlatform.Services.DeviceAuthorizationReminderHostedService>();
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.ITimeSeriesStore, IoTPlatform.Services.MySqlTimeSeriesStore>();
 builder.Services.AddSingleton<IoTPlatform.Services.IMqttClientService, IoTPlatform.Services.MqttClientService>();
 builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();

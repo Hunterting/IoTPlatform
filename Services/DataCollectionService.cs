@@ -21,6 +21,7 @@ public class DataCollectionService : IDataCollectionService
     private readonly IRepository<DeviceSensor> _deviceSensorRepository;
     private readonly IRepository<Device> _deviceRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDeviceAuthorizationService? _deviceAuthorizationService;
 
     /// <summary>
     /// 传感器 JSON key → DeviceDataRecord 物理量字段映射表
@@ -185,7 +186,8 @@ public class DataCollectionService : IDataCollectionService
         IAlertService alertService,
         IRepository<DeviceSensor> deviceSensorRepository,
         IRepository<Device> deviceRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IDeviceAuthorizationService? deviceAuthorizationService = null)
     {
         _dataRecordRepository = dataRecordRepository;
         _dataRuleRepository = dataRuleRepository;
@@ -195,6 +197,7 @@ public class DataCollectionService : IDataCollectionService
         _deviceSensorRepository = deviceSensorRepository;
         _deviceRepository = deviceRepository;
         _unitOfWork = unitOfWork;
+        _deviceAuthorizationService = deviceAuthorizationService;
     }
 
     /// <summary>
@@ -296,6 +299,17 @@ public class DataCollectionService : IDataCollectionService
     {
         try
         {
+            // ── 设备授权过期禁用闸门 ──
+            // 仅当设备「显式授权过且已过期」时丢弃上行数据；无授权记录(pending)/未到期/已撤销
+            // 一律放行。这条边界保证新表上线不打断存量设备与真机联调。
+            // _deviceAuthorizationService 为可选注入（默认 null），保证既有测试构造零侵入。
+            if (_deviceAuthorizationService != null &&
+                await _deviceAuthorizationService.IsDeviceDisabledAsync(deviceId))
+            {
+                Log.Warning("设备授权已过期，丢弃上行数据: DeviceId={DeviceId}", deviceId);
+                return;
+            }
+
             // ── Step 0: 查询设备元数据，确定能源类型策略 ──
             var device = await _deviceRepository.GetByIdAsync(deviceId, appCode: appCode);
             var energyTypes = ParseEnergyTypes(device?.EnergyTypes);

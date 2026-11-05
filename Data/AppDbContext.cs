@@ -64,6 +64,7 @@ public class AppDbContext : DbContext
     public DbSet<Archive> Archives { get; set; }
     public DbSet<ArchiveDeviceMarker> ArchiveDeviceMarkers { get; set; }
     public DbSet<Camera> Cameras { get; set; }
+    public DbSet<DeviceAuthorization> DeviceAuthorizations { get; set; }
 
     // 数据采集
     public DbSet<ProtocolConfig> ProtocolConfigs { get; set; }
@@ -124,6 +125,7 @@ public class AppDbContext : DbContext
         ConfigureArchives(modelBuilder);
         ConfigureArchiveDeviceMarkers(modelBuilder);
         ConfigureCameras(modelBuilder);
+        ConfigureDeviceAuthorizations(modelBuilder);
         ConfigureProtocolConfigs(modelBuilder);
         ConfigureAnShengDeviceConfigs(modelBuilder);
         ConfigureDiscoveredAnShengDevices(modelBuilder);
@@ -394,6 +396,22 @@ public class AppDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.AreaId);
             entity.HasIndex(e => e.AppCode);
+        });
+    }
+
+    private void ConfigureDeviceAuthorizations(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DeviceAuthorization>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            // 每台设备每个租户唯一一条授权记录
+            entity.HasIndex(e => new { e.DeviceId, e.AppCode }).IsUnique();
+            entity.HasIndex(e => e.ExpireAt);
+            entity.HasIndex(e => e.Status);
+            entity.HasOne(e => e.Device)
+                .WithMany()
+                .HasForeignKey(e => e.DeviceId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 

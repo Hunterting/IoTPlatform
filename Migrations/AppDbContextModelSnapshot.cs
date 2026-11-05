@@ -1608,6 +1608,61 @@ namespace IoTPlatform.Migrations
                     b.ToTable("devices");
                 });
 
+            modelBuilder.Entity("IoTPlatform.Models.DeviceAuthorization", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AppCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<DateTime>("AuthorizedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long?>("AuthorizedBy")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AuthorizedByName")
+                        .HasMaxLength(100)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<long>("DeviceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpireAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Remark")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpireAt");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("DeviceId", "AppCode")
+                        .IsUnique();
+
+                    b.ToTable("device_authorizations");
+                });
+
             modelBuilder.Entity("IoTPlatform.Models.DeviceCommand", b =>
                 {
                     b.Property<long>("Id")
@@ -3317,6 +3372,17 @@ namespace IoTPlatform.Migrations
                     b.Navigation("Project");
 
                     b.Navigation("ProtocolConfig");
+                });
+
+            modelBuilder.Entity("IoTPlatform.Models.DeviceAuthorization", b =>
+                {
+                    b.HasOne("IoTPlatform.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("IoTPlatform.Models.DeviceCommand", b =>
