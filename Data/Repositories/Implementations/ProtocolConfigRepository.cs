@@ -50,6 +50,14 @@ public class ProtocolConfigRepository : Repository<ProtocolConfig>, IProtocolCon
             .ToListAsync();
     }
 
+    public async Task<IEnumerable<ProtocolConfig>> GetActiveProtocolConfigsForAutoStartAsync()
+    {
+        return await _context.ProtocolConfigs
+            .IgnoreQueryFilters()
+            .Where(p => p.IsActive)
+            .ToListAsync();
+    }
+
     public async Task UpdateStatusAsync(long configId, string status)
     {
         var config = await _context.ProtocolConfigs.FindAsync(configId);

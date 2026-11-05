@@ -40,6 +40,12 @@ public interface IProtocolConfigService
     Task StartProtocolAsync(long id, string? appCode);
 
     /// <summary>
+    /// 后端 cold start 时自动拉起所有已激活的协议配置（供 ProtocolConfigAutoStartHostedService 调用）。
+    /// 单个配置拉起失败只记录警告，不影响其它配置与宿主启动。
+    /// </summary>
+    Task AutoStartActiveProtocolsAsync();
+
+    /// <summary>
     /// 停止协议
     /// </summary>
     Task StopProtocolAsync(long id, string? appCode);

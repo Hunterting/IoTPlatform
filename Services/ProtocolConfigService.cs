@@ -440,6 +440,18 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议配置不存在");
         }
 
+        await StartProtocolCoreAsync(config, appCode);
+    }
+
+    /// <summary>
+    /// 启动协议的核心实现（不含取数与空值校验，由 <see cref="StartProtocolAsync"/> 负责）。
+    /// 抽取出来供 <see cref="AutoStartActiveProtocolsAsync"/> 在循环内逐个调用，
+    /// 单个配置失败由调用方捕获，不向外抛出。
+    /// </summary>
+    /// <param name="config">已取到的协议配置实体。</param>
+    /// <param name="appCode">调用方租户码，用于权限校验（可为空）。</param>
+    private async Task StartProtocolCoreAsync(ProtocolConfig config, string? appCode)
+    {
         // 权限检查
         if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
@@ -531,6 +543,31 @@ public class ProtocolConfigService : IProtocolConfigService
         {
             _logger?.LogError(ex, "启动协议失败: {Name}", config.Name);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// 后端 cold start 自动拉起：跨租户枚举所有已激活协议配置并逐个启动。
+    /// 单个失败仅记警告并继续，绝不阻断宿主启动。
+    /// </summary>
+    public async Task AutoStartActiveProtocolsAsync()
+    {
+        var configs = await _protocolConfigRepository.GetActiveProtocolConfigsForAutoStartAsync();
+        foreach (var config in configs)
+        {
+            try
+            {
+                _logger?.LogInformation(
+                    "自动拉起协议配置: Id={Id}, Name={Name}, Type={Type}, AppCode={AppCode}",
+                    config.Id, config.Name, config.Type, config.AppCode);
+                await StartProtocolCoreAsync(config, config.AppCode);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex,
+                    "自动拉起协议配置失败（跳过，不影响其它配置）: Id={Id}, Name={Name}",
+                    config.Id, config.Name);
+            }
         }
     }
 
@@ -798,6 +835,12 @@ public class ProtocolConfigService : IProtocolConfigService
                             }
                             catch { /* ignore parse errors */ }
                         }
+
+                        // T1 可观测性：把未注册 AnSheng 设备送进待认领池时记一条结构化日志，
+                        // 便于现场核查「上行是否真的进了待认领池」（设计 §1.4 / T1）。
+                        _logger?.LogInformation(
+                            "安圣数据桥接→待认领池: IMEI={IMEI}, ProtocolType={ProtoType}, AppCode={AppCode}",
+                            e.SerialNumber, e.ProtocolType, appCode ?? "(null)");
 
                         await _discoveryService.OnDeviceOnlineAsync(
                             e.SerialNumber, model, netType, appCode);

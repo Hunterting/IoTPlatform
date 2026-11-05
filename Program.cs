@@ -205,6 +205,9 @@ builder.Services.AddSingleton<IoTPlatform.Services.IAnShengProbeService, IoTPlat
 builder.Services.AddSingleton<IoTPlatform.Services.IAnShengDiscoveryService, IoTPlatform.Services.AnShengDiscoveryService>();
 builder.Services.AddHostedService(sp => (IoTPlatform.Services.AnShengDiscoveryService)sp.GetRequiredService<IoTPlatform.Services.IAnShengDiscoveryService>());
 
+// 协议配置 cold start 自动拉起（避免每次重启手动 /start）
+builder.Services.AddHostedService<IoTPlatform.Services.ProtocolConfigAutoStartHostedService>();
+
 // ───────────────────────────────────────────────────────────────────────────
 // T6 安圣事件识别与处理管道
 //

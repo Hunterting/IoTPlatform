@@ -37,7 +37,14 @@ public interface IProtocolConfigRepository : IRepository<ProtocolConfig>
     /// <param name="appCode">应用代码</param>
     /// <returns>活动配置列表</returns>
     Task<IEnumerable<ProtocolConfig>> GetActiveConfigsAsync(string? appCode = null);
-    
+
+    /// <summary>
+    /// 跨租户枚举所有「已激活」的协议配置，供 cold start 自动拉起使用。
+    /// 必须显式 IgnoreQueryFilters：后台作用域无 AppCode 上下文，否则非当前租户的配置会被全局过滤器滤掉。
+    /// 不额外要求 ProtocolType 非空 —— StartProtocolAsync 内部会经 ReconcileDerivedFields 自行派生 ProtocolType。
+    /// </summary>
+    Task<IEnumerable<ProtocolConfig>> GetActiveProtocolConfigsForAutoStartAsync();
+
     /// <summary>
     /// 更新协议配置状态
     /// </summary>
