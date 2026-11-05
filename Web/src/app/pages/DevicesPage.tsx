@@ -31,9 +31,15 @@ interface DevicesPageProps {
 }
 
 export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFilter }: DevicesPageProps = {}) {
-  const { currentCustomer, hasPermission } = useAuth();
+  const { currentCustomer, hasPermission, user } = useAuth();
+  // T5 收敛：仅超级管理员可见「直接新增」入口（添加设备 / 批量导入）。
+  // 租户账号入口隐藏 + 后端 POST /devices 返回 403，彻底禁用租户越权建设备（风险 R3）。
+  const isSuperAdmin = user?.role === 'super_admin';
   const { getAreasByCustomerId } = useArea();
-  const { devices, addDevice, updateDevice, deleteDevice } = useDevices();
+  // 挂载即刷新：DeviceContext 是全局 Provider，allDevices 跨页面持久，
+  // 在其它页（如安圣认领）产生的设备不会触发本页重新拉取，
+  // 不刷新会看到陈旧空列表（认领成功但设备列表不显示）。仅首次挂载执行一次。
+  const { devices, addDevice, updateDevice, deleteDevice, refreshDevices } = useDevices();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterArea, setFilterArea] = useState<string>(initialAreaFilter || 'all');
@@ -44,6 +50,12 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
       setFilterArea(initialAreaFilter);
     }
   }, [initialAreaFilter]);
+
+  // 每次进入本页都重新拉取设备列表（页间导航会重新挂载本组件）
+  useEffect(() => {
+    refreshDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -80,8 +92,8 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
     // 2. Filter by status
     const matchesStatus = filterStatus === 'all' || device.status === filterStatus;
     
-    // 3. Filter by area (location)
-    const matchesArea = filterArea === 'all' || device.location === filterArea;
+    // 3. Filter by area (areaName，认领流程只写 AreaId 不写 location，故以 areaName 为准)
+    const matchesArea = filterArea === 'all' || device.area === filterArea;
 
     return matchesSearch && matchesStatus && matchesArea;
   });
@@ -120,10 +132,13 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
   };
 
   const handleAddDevice = (device: Partial<DeviceItem>) => {
-    // 自动注入当前选中客户的 appCode
+    // 自动注入当前选中客户的 appCode；T5 收敛：超级管理员直接新增时，
+    // 同时显式给出目标租户码（targetAppCode），由服务端据此确定设备归属，
+    // 不再信任请求体里的 appCode（防多租户越权，风险 R3）。
     const deviceWithAppCode = {
       ...device,
       appCode: currentCustomer?.appCode || device.appCode,
+      targetAppCode: currentCustomer?.appCode || device.appCode,
     };
     addDevice(deviceWithAppCode as Omit<DeviceItem, 'id' | 'createdAt' | 'updatedAt'>);
     setShowAddModal(false);
@@ -160,7 +175,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
           <p className="text-gray-400">管理监控所有厨房设备</p>
         </div>
         <div className="flex items-center gap-3">
-          {hasPermission(PERMISSIONS.CREATE_DEVICES) && (
+          {hasPermission(PERMISSIONS.CREATE_DEVICES) && isSuperAdmin && (
             <button
                 onClick={handleBatchImport}
                 className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg transition-colors text-white"
@@ -176,7 +191,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
             <Download className="w-4 h-4" />
             <span>导出</span>
           </button>
-          {hasPermission(PERMISSIONS.CREATE_DEVICES) && (
+          {hasPermission(PERMISSIONS.CREATE_DEVICES) && isSuperAdmin && (
             <button
                 onClick={() => setShowAddModal(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-lg transition-all"
@@ -324,7 +339,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <span className="text-sm text-gray-300">{device.location}</span>
+                      <span className="text-sm text-gray-300">{device.area}</span>
                     </td>
                     <td className="px-6 py-4">{getStatusBadge(device.status)}</td>
                     <td className="px-6 py-4">

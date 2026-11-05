@@ -205,11 +205,18 @@ public class Repository<T> : IRepository<T> where T : class
                     // 构建 AreaId.HasValue && allowedAreaIds.Contains(AreaId.Value)
                     var hasValue = Expression.Property(property, "HasValue");
                     var value = Expression.Property(property, "Value");
-                    var contains = Expression.Call(
-                        typeof(List<long>).GetMethod("Contains", new[] { typeof(long) }),
-                        constant,
-                        value
-                    );
+
+                    // 使用 Enumerable.Contains<long>(IEnumerable<long>, long) 静态泛型方法构造表达式树。
+                    // 原因：Expression.Call(typeof(List<long>).GetMethod("Contains",...), constant, value)
+                    // 会被解析为「实例方法 + 实例参数」，而反射对该方法判定为静态，导致
+                    // "Static method requires null instance" 异常，使所有携带 AllowedAreaIds 声明的租户
+                    // 请求 GET /devices 直接 500。改用 Enumerable.Contains<long> 静态泛型方法后，
+                    // EF Core 可将其正确翻译为 SQL IN 子句，且不再有实例/静态歧义。
+                    var containsMethod = typeof(Enumerable)
+                        .GetMethods()
+                        .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
+                        .MakeGenericMethod(typeof(long));
+                    var contains = Expression.Call(containsMethod, constant, value);
                     var and = Expression.AndAlso(hasValue, contains);
                     var lambda = Expression.Lambda<Func<T, bool>>(and, parameter);
                     

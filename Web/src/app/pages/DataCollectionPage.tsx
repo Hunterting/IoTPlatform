@@ -805,7 +805,7 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                     管理设备关联
                   </h3>
                   <p className="text-sm text-gray-400 mt-1">
-                    协议：{managingProtocol.name} - 已关联 {managingProtocol.deviceIds.length} 台设备
+                    协议：{managingProtocol.name} - 已关联 {(managingProtocol.deviceIds || []).length} 台设备
                   </p>
                 </div>
                 <button
@@ -821,10 +821,10 @@ function ProtocolConfigPage({ devices }: { devices: any[] }) {
                 <div>
                   <h4 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
                     <CheckCircle className="w-5 h-5 text-green-500" />
-                    已关联设备 ({managingProtocol.deviceIds.length})
+                    已关联设备 ({(managingProtocol.deviceIds || []).length})
                   </h4>
                   <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                    {managingProtocol.deviceIds.length === 0 ? (
+                    {(managingProtocol.deviceIds || []).length === 0 ? (
                       <div className="text-center py-12 text-gray-500">
                         <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
                         <p>暂无关联设备</p>

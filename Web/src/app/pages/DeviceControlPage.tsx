@@ -224,17 +224,19 @@ export function DeviceControlPage() {
   const [registerResult, setRegisterResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // ── 加载设备列表 ─────────────────────────────────────────────────────────────
+  // 注意：依赖数组必须是 []。若依赖 controlledDevices，则 loadControlledDevices 每次
+  // setControlledDevices（返回新数组引用）都会重建本函数，进而触发下方初始加载 effect
+  // 反复执行，造成 devices / controlled-devices / device-commands 无限轮询。
+  // 受控设备 ID 集合由 loadControlledDevices 统一维护（见其内 setControlledDeviceIds），
+  // 此处无需再更新，避免引入循环依赖。
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true);
     setDevicesError(null);
     try {
       const response = await deviceApi.getDevices(1, 100);
-      if (response.data.success && response.data.data) {
+      if (response.data.code === 200 && response.data.data) {
         const deviceList = response.data.data.items || [];
         setDevices(deviceList.map(mapDeviceToSimple));
-        // 同时更新受控设备ID集合
-        const ids = new Set(controlledDevices.map(d => d.deviceId));
-        setControlledDeviceIds(ids);
       }
     } catch (err) {
       console.error('加载设备列表失败:', err);
@@ -242,14 +244,14 @@ export function DeviceControlPage() {
     } finally {
       setDevicesLoading(false);
     }
-  }, [controlledDevices]);
+  }, []);
 
   // ── 加载受控设备列表 ─────────────────────────────────────────────────────────
   const loadControlledDevices = useCallback(async () => {
     setControlledDevicesLoading(true);
     try {
       const response = await controlledDeviceApi.getDevices({ page: 1, pageSize: 100 });
-      if (response.data.success && response.data.data) {
+      if (response.data.code === 200 && response.data.data) {
         const items = response.data.data.items || [];
         setControlledDevices(items);
         // 更新受控设备ID集合
@@ -267,7 +269,7 @@ export function DeviceControlPage() {
     setCommandsLoading(true);
     try {
       const response = await deviceCommandApi.getCommands({ page: 1, pageSize: 50 });
-      if (response.data.success && response.data.data) {
+      if (response.data.code === 200 && response.data.data) {
         const items = response.data.data.items || [];
         setAllCommands(items);
       }
@@ -287,12 +289,14 @@ export function DeviceControlPage() {
     }
   }, [loadDevices, loadControlledDevices, loadCommands, canView]);
 
-  // 切换到历史 Tab 时刷新
+  // 切换到历史 Tab 时刷新。
+  // 注意：不可把 allCommands.length 放进依赖数组，否则在无指令记录时
+  // allCommands 恒为 0 → effect 反复触发 → device-commands 无限轮询。
   useEffect(() => {
     if (activeTab === 'history' && allCommands.length === 0) {
       loadCommands();
     }
-  }, [activeTab, loadCommands, allCommands.length]);
+  }, [activeTab, loadCommands]);
 
   // 切换到受控设备 Tab 时刷新
   useEffect(() => {
@@ -371,7 +375,7 @@ export function DeviceControlPage() {
 
       // 调用真实 API
       const response = await deviceCommandApi.sendCommand(request);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         // 刷新指令列表
         await loadCommands();
         setSendResult({ success: true, message: `指令已发送成功` });
@@ -389,7 +393,7 @@ export function DeviceControlPage() {
   const handleCancel = async (commandId: number) => {
     try {
       const response = await deviceCommandApi.cancelCommand(commandId);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         // 更新本地状态
         setAllCommands(prev =>
           prev.map(c => c.id === commandId
@@ -407,7 +411,7 @@ export function DeviceControlPage() {
   const handleRetry = async (commandId: number) => {
     try {
       const response = await deviceCommandApi.retryCommand(commandId);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         // 刷新指令列表
         await loadCommands();
       }
@@ -437,7 +441,7 @@ export function DeviceControlPage() {
         status: createForm.status || 'offline',
       };
       const response = await deviceApi.createDevice(request);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setCreateResult({ success: true, message: '设备创建成功' });
         // 刷新设备列表
         await loadDevices();
@@ -470,7 +474,7 @@ export function DeviceControlPage() {
     setRegisterResult(null);
     try {
       const response = await controlledDeviceApi.registerDevice({ deviceId });
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setRegisterResult({ success: true, message: '已添加到控制系统' });
         // 刷新受控设备列表
         await loadControlledDevices();
@@ -492,7 +496,7 @@ export function DeviceControlPage() {
   const handleRemoveFromControl = async (controlledId: number) => {
     try {
       const response = await controlledDeviceApi.unregisterDevice(controlledId);
-      if (response.data.success) {
+      if (response.data.code === 200) {
         // 刷新受控设备列表
         await loadControlledDevices();
       }
@@ -523,7 +527,7 @@ export function DeviceControlPage() {
       setLoadingHistoryId(commandId);
       try {
         const response = await deviceCommandApi.getCommandHistory(commandId);
-        if (response.data.success && response.data.data) {
+        if (response.data.code === 200 && response.data.data) {
           setCommandHistories(prev => ({ ...prev, [commandId]: response.data.data }));
         }
       } catch (err) {
