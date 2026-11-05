@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Settings,
@@ -15,9 +15,18 @@ import {
   Plus,
   Lock,
   BookOpen,
+  AlertTriangle,
+  RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import { PageType } from '@/app/components/Sidebar';
 import { DictionaryManagementPage } from '@/app/pages/DictionaryManagementPage';
+import { useAuth } from '@/app/contexts/AuthContext';
+import {
+  deviceAuthorizationApi,
+  type DeviceAuthorization as DeviceAuthItem,
+  type DeviceAuthorizationSummary,
+} from '@/app/services/api/deviceAuthorizationApi';
 
 interface SettingsPageProps {
   activePage: PageType;
@@ -1211,50 +1220,322 @@ function UserManagement() {
 }
 
 function DeviceAuthorization() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  const [list, setList] = useState<DeviceAuthItem[]>([]);
+  const [summary, setSummary] = useState<DeviceAuthorizationSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // 授权弹窗
+  const [grantTarget, setGrantTarget] = useState<DeviceAuthItem | null>(null);
+  const [grantDays, setGrantDays] = useState(365);
+  const [grantRemark, setGrantRemark] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const [lr, sr] = await Promise.all([
+        deviceAuthorizationApi.getList(),
+        deviceAuthorizationApi.getSummary(),
+      ]);
+      if (lr.code === 200 && lr.data) { setList(lr.data); setError(null); }
+      else setError(lr.message || '设备授权列表加载失败');
+      if (sr.code === 200 && sr.data) setSummary(sr.data);
+    } catch {
+      setError('无权限或网络错误');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const wrapped = async () => { if (!cancelled) await load(); };
+    wrapped();
+    const timer = setInterval(() => { if (!cancelled) load(); }, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [load]);
+
+  const filtered = list.filter(d => {
+    const matchSearch =
+      d.deviceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (d.serialNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (d.model || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchStatus = statusFilter === 'all' || d.authorizationStatus === statusFilter;
+    return matchSearch && matchStatus;
+  });
+
+  const expiringSoon = list.filter(d => d.isExpiringSoon);
+  const expired = list.filter(d => d.authorizationStatus === 'expired');
+
+  const statusStyle = (s: string) => {
+    switch (s) {
+      case 'active': return 'bg-green-500/20 text-green-400';
+      case 'expiring_soon': return 'bg-amber-500/20 text-amber-400';
+      case 'expired': return 'bg-red-500/20 text-red-400';
+      case 'revoked': return 'bg-gray-500/20 text-gray-400';
+      default: return 'bg-blue-500/20 text-blue-400'; // pending
+    }
+  };
+
+  const fmtDate = (s?: string | null) => {
+    if (!s) return '—';
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('zh-CN');
+  };
+
+  const handleGrant = async () => {
+    if (!grantTarget) return;
+    setBusy(true); setActionMsg(null);
+    try {
+      const r = await deviceAuthorizationApi.grant({
+        deviceId: grantTarget.deviceId,
+        expireDays: grantDays,
+        remark: grantRemark || undefined,
+      });
+      if (r.code === 200) {
+        setActionMsg(`「${grantTarget.deviceName}」授权成功`);
+        setGrantTarget(null); setGrantRemark(''); setGrantDays(365);
+        await load();
+      } else setActionMsg(r.message || '授权失败');
+    } catch { setActionMsg('授权请求失败'); }
+    setBusy(false);
+  };
+
+  const handleRevoke = async (d: DeviceAuthItem) => {
+    if (!confirm(`确定撤销「${d.deviceName}」的授权吗？撤销后该设备将变为待授权状态。`)) return;
+    setBusy(true); setActionMsg(null);
+    try {
+      const r = await deviceAuthorizationApi.revoke({ deviceId: d.deviceId });
+      if (r.code === 200) { setActionMsg(`已撤销「${d.deviceName}」授权`); await load(); }
+      else setActionMsg(r.message || '撤销失败');
+    } catch { setActionMsg('撤销请求失败'); }
+    setBusy(false);
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-          <Zap className="w-5 h-5 text-blue-400" />
-          设备授权管理
-        </h2>
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-white mb-1 flex items-center gap-2">
+            <Zap className="w-5 h-5 text-blue-400" />
+            设备授权管理
+          </h2>
+          <p className="text-xs text-gray-400">
+            每台设备需单独授权；到期前 {summary?.expiringSoonDays ?? 30} 天自动提醒租户。
+            {!isSuperAdmin && <span className="ml-2 text-blue-400">（当前为只读视图，授权/续期由超级管理员操作）</span>}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {isSuperAdmin && (
+            <button onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await deviceAuthorizationApi.scan();
+                setActionMsg(r.code === 200 ? (r.message || '扫描完成') : (r.message || '扫描失败'));
+                await load();
+              } catch { setActionMsg('扫描请求失败'); }
+              setBusy(false);
+            }} disabled={busy}
+              className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-xs text-amber-300 flex items-center gap-1.5 disabled:opacity-50">
+              <Bell className="w-3.5 h-3.5" />立即扫描提醒
+            </button>
+          )}
+          <button onClick={load} disabled={loading}
+            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-300 flex items-center gap-1.5 disabled:opacity-50">
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />刷新
+          </button>
+        </div>
       </div>
-      <div className="space-y-4">
-        {[
-          { name: '智能冰箱-A01', model: 'SR-F520BX', status: '已授权', expires: '2026-12-31' },
-          { name: '智能烤箱-B01', model: 'OV-X8000', status: '已授权', expires: '2026-12-31' },
-          { name: '智能炉灶-C01', model: 'GS-P4000', status: '待授权', expires: '-' },
-          { name: '洗碗机-D01', model: 'DW-M9000', status: '已过期', expires: '2025-12-31' },
-        ].map((device, index) => (
-          <div key={index} className="flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-lg">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-                <Zap className="w-5 h-5 text-blue-400" />
-              </div>
-              <div>
-                <p className="font-medium text-white">{device.name}</p>
-                <p className="text-sm text-gray-400">{device.model}</p>
-              </div>
+
+      {/* 统计卡 */}
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {[
+            { label: '设备总数', value: summary.total, color: '#8ecfff' },
+            { label: '已授权', value: summary.active, color: '#00ff9f' },
+            { label: '即将过期', value: summary.expiringSoon, color: '#ffcc66' },
+            { label: '已过期', value: summary.expired, color: '#ff6666' },
+            { label: '待授权', value: summary.pending, color: '#8ecfff' },
+          ].map(s => (
+            <div key={s.label} className="bg-white/5 border border-white/10 rounded-lg p-3">
+              <p className="text-xs text-gray-400 mb-1">{s.label}</p>
+              <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
             </div>
-            <div className="flex items-center gap-4">
-              <div>
-                <p className="text-xs text-gray-400">到期时间</p>
-                <p className="text-sm text-white">{device.expires}</p>
-              </div>
-              <span className={`px-3 py-1 rounded-full text-xs ${
-                device.status === '已授权' ? 'bg-green-500/20 text-green-400' :
-                device.status === '待授权' ? 'bg-amber-500/20 text-amber-400' :
-                'bg-red-500/20 text-red-400'
-              }`}>
-                {device.status}
-              </span>
-              <button className="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded text-xs transition-colors">
-                {device.status === '已授权' ? '续期' : '授权'}
-              </button>
+          ))}
+        </div>
+      )}
+
+      {/* 快过期提醒横幅（页面内提醒，租户可见） */}
+      {(expiringSoon.length > 0 || expired.length > 0) && (
+        <div className="rounded-lg p-4 flex items-start gap-3"
+          style={{ background: 'rgba(255,170,0,0.08)', border: '1px solid rgba(255,170,0,0.35)' }}>
+          <AlertTriangle className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: '#ffaa00' }} />
+          <div className="text-xs" style={{ color: '#ffcc66' }}>
+            <p className="font-semibold mb-1 text-sm">
+              授权到期提醒（{expiringSoon.length} 台即将过期 / {expired.length} 台已过期）
+            </p>
+            <p className="opacity-90 mb-1">
+              系统已同步在「告警中心」生成提醒记录；已过期设备的采集与指令下发已被禁用，请及时续期。
+            </p>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {[...expired, ...expiringSoon].map(d => (
+                <span key={d.deviceId} className="px-2 py-0.5 rounded"
+                  style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,170,0,0.3)' }}>
+                  {d.deviceName} · {d.statusLabel}
+                </span>
+              ))}
             </div>
           </div>
-        ))}
+        </div>
+      )}
+
+      {/* 筛选 */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+          placeholder="搜索设备名称 / 序列号 / 型号…"
+          className="flex-1 min-w-[200px] px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white [&>option]:bg-gray-800">
+          <option value="all">全部状态</option>
+          <option value="active">已授权</option>
+          <option value="expiring_soon">即将过期</option>
+          <option value="expired">已过期</option>
+          <option value="pending">待授权</option>
+          <option value="revoked">已撤销</option>
+        </select>
       </div>
+
+      {/* 操作提示 */}
+      <AnimatePresence>
+        {actionMsg && (
+          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            onClick={() => setActionMsg(null)}
+            className="px-3 py-2 rounded-lg text-xs text-white cursor-pointer"
+            style={{ background: 'rgba(0,20,50,0.9)', border: '1px solid rgba(0,195,255,0.4)' }}>
+            {actionMsg}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 列表 */}
+      {loading ? (
+        <div className="text-center py-10 text-xs text-gray-500">加载设备授权…</div>
+      ) : error ? (
+        <div className="text-center py-10 text-xs" style={{ color: '#ffaa00' }}>{error}</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-10 text-xs text-gray-500">
+          {list.length === 0 ? '暂无设备（请先添加设备）' : '没有匹配的设备'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(d => (
+            <div key={d.deviceId}
+              className="flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-lg flex-wrap gap-3"
+              style={d.isDisabled ? { borderColor: 'rgba(255,80,80,0.4)' } : d.isExpiringSoon ? { borderColor: 'rgba(255,170,0,0.4)' } : {}}>
+              <div className="flex items-center gap-3 min-w-[180px]">
+                <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Zap className="w-5 h-5 text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="font-medium text-white truncate">{d.deviceName}</p>
+                  <p className="text-xs text-gray-400 truncate">
+                    {d.model || '—'} {d.areaName ? `· ${d.areaName}` : ''}
+                  </p>
+                  <p className="text-[10px] text-gray-500 font-mono truncate">{d.serialNumber || `ID ${d.deviceId}`}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="text-right">
+                  <p className="text-xs text-gray-400">到期时间</p>
+                  <p className="text-sm text-white">{fmtDate(d.expireAt)}</p>
+                  {d.daysUntilExpire != null && d.authorizationStatus !== 'revoked' && (
+                    <p className="text-[10px]" style={{ color: d.daysUntilExpire <= 0 ? '#ff6666' : d.isExpiringSoon ? '#ffcc66' : '#5a9abf' }}>
+                      {d.daysUntilExpire <= 0 ? `已过期 ${Math.abs(d.daysUntilExpire)} 天` : `剩余 ${d.daysUntilExpire} 天`}
+                    </p>
+                  )}
+                </div>
+                <span className={`px-3 py-1 rounded-full text-xs whitespace-nowrap ${statusStyle(d.authorizationStatus)}`}>
+                  {d.statusLabel}
+                </span>
+                {isSuperAdmin && (
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => { setGrantTarget(d); setGrantDays(365); setGrantRemark(''); }}
+                      disabled={busy}
+                      className="px-3 py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded text-xs transition-colors disabled:opacity-50 flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3" />
+                      {d.authorizationStatus === 'active' || d.authorizationStatus === 'expiring_soon' || d.authorizationStatus === 'expired' ? '续期' : '授权'}
+                    </button>
+                    {d.authorizationId != null && d.authorizationStatus !== 'revoked' && (
+                      <button onClick={() => handleRevoke(d)} disabled={busy}
+                        className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs transition-colors disabled:opacity-50">
+                        撤销
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 授权弹窗 */}
+      <AnimatePresence>
+        {grantTarget && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setGrantTarget(null)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-gradient-to-br from-[#1a1f35] to-[#0f1321] border border-blue-500/30 rounded-xl w-full max-w-md p-6">
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-lg font-bold text-white">授权 / 续期</h3>
+                <button onClick={() => setGrantTarget(null)} className="p-1.5 hover:bg-white/10 rounded"><X className="w-5 h-5 text-gray-400" /></button>
+              </div>
+              <div className="space-y-4">
+                <div className="p-3 bg-white/5 rounded-lg">
+                  <p className="text-sm text-white">{grantTarget.deviceName}</p>
+                  <p className="text-xs text-gray-400">{grantTarget.model || '—'} · {grantTarget.serialNumber || `ID ${grantTarget.deviceId}`}</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-300 mb-2">授权有效期</label>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[30, 90, 180, 365].map(days => (
+                      <button key={days} onClick={() => setGrantDays(days)}
+                        className={`py-2 rounded-lg text-xs border transition-colors ${grantDays === days ? 'bg-blue-500/20 border-blue-500 text-blue-300' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'}`}>
+                        {days} 天
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-2">
+                    到期时间约为 {new Date(Date.now() + grantDays * 86400000).toLocaleDateString('zh-CN')}
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-300 mb-2">备注（可选）</label>
+                  <textarea value={grantRemark} onChange={e => setGrantRemark(e.target.value)} rows={2}
+                    placeholder="授权说明 / 合同编号…"
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setGrantTarget(null)} className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm text-white">取消</button>
+                  <button onClick={handleGrant} disabled={busy}
+                    className="flex-1 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg font-semibold text-white text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                    <Save className="w-4 h-4" />{busy ? '处理中…' : '确认授权'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
