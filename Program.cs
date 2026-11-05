@@ -125,6 +125,14 @@ builder.Services.AddScoped<IoTPlatform.Services.ITunnelService, IoTPlatform.Serv
 builder.Services.AddScoped<IoTPlatform.Services.IPluginService, IoTPlatform.Services.PluginService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDatabaseConfigService, IoTPlatform.Services.DatabaseConfigService>();
 builder.Services.AddScoped<IoTPlatform.Services.IDataCollectionService, IoTPlatform.Services.DataCollectionService>();
+
+// ── 萤石开放平台（EZVIZ Open API）后端代理 ──
+// appSecret 只在服务端持有；配置来自 appsettings.json "Ezviz" 节，
+// 可被环境变量 Ezviz__AppKey / Ezviz__AppSecret / Ezviz__BaseUrl 覆盖（无需改代码库）。
+builder.Services.Configure<IoTPlatform.Configuration.EzvizOptions>(
+    builder.Configuration.GetSection(IoTPlatform.Configuration.EzvizOptions.SectionName));
+builder.Services.AddHttpClient("Ezviz");
+builder.Services.AddScoped<IoTPlatform.Services.IEzvizService, IoTPlatform.Services.EzvizService>();
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.ITimeSeriesStore, IoTPlatform.Services.MySqlTimeSeriesStore>();
 builder.Services.AddSingleton<IoTPlatform.Services.IMqttClientService, IoTPlatform.Services.MqttClientService>();
 builder.Services.AddHostedService<IoTPlatform.Services.MqttHostedService>();
