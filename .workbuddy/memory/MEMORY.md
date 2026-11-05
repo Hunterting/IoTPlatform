@@ -59,3 +59,4 @@
 - 所有改动 **不 commit**，留工作区待决策；**严禁子代理执行任何 git 写命令**
 - SOP 协作：标准 SOP / 快速模式 / BugFix 快捷路径；信任但验证（主理人独立 grep/read/build 复核）；智能路由判定（源码 Bug→回派工程师 / 测试 Bug→QA 自修 / 全过→NoOne），最多 2 轮
 - 环境怪象：Bash 内嵌 PowerShell 被安全策略拦截 → 改用专用 PowerShell 工具；Git Bash 下反斜杠路径被吞 → 用 POSIX 风格 `/h/...`；`rm -rf` 删构建目录常被 safe-delete shim 拦截 → 用 PowerShell `Remove-Item -LiteralPath ... -Recurse -Force`
+- **前端 `Web` 依赖铁律（2026-11-05 504 大坑）**：`package.json` 曾把 `react`/`react-dom` 放在 **peerDependencies + optional:true**，早期只靠 node_modules 里恰好有这些包才能跑 —— 已**根治为 `dependencies` 正式依赖**（含 `hls.js`）。⚠️ 即便如此，装新包后仍要 `npm ls react` 确认未被 prune；Vite 依赖变更后重启用标准 `npm run dev`（清 `node_modules/.vite` 缓存），别盲目 `--force`（会把依赖树问题放大）。`504 Outdated Optimize Dep` → 清缓存重启；重启后若 `Could not resolve "react"` → 查 `git diff package-lock.json` 是否被 prune，恢复基线 lock + 删 `node_modules/.package-lock.json` + `npm install --legacy-peer-deps`。此项目无 tsconfig、靠 esbuild 转译，`@types/*` 仅类型不影响运行时。
