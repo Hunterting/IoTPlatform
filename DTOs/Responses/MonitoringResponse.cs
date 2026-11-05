@@ -10,7 +10,16 @@ public class MonitoringDataDto
     public string? DeviceName { get; set; }
     public long? AreaId { get; set; }
     public string? AreaName { get; set; }
-    public Dictionary<string, double?>? SensorValues { get; set; }
+    /// <summary>设备能源类型（取 EnergyTypes 首个，如 electric/water/gas）</summary>
+    public string? EnergyType { get; set; }
+    /// <summary>
+    /// 原始上报数据点（来自 DeviceDataRecord.SensorData JSON）。
+    /// 之所以不再读类型化列（Temperature/Humidity…），是因为安圣等设备上报的值只落进
+    /// SensorData 原始 JSON、类型化列多为 null；直接读 SensorData 才能保证「设备上报了什么，界面就显示什么」。
+    /// </summary>
+    public Dictionary<string, object?>? SensorValues { get; set; }
+    /// <summary>数据质量（由 Level 映射：info→良好 / warning→警告 / error→异常 / 其它→正常）</summary>
+    public string? Quality { get; set; }
     public DateTime Timestamp { get; set; }
 }
 

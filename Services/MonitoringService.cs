@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
@@ -42,33 +43,109 @@ public class MonitoringService : IMonitoringService
         }
 
         var totalCount = await query.CountAsync();
-        var dataRecords = await query
+
+        // 第一步：仅做可被 EF 翻译成 SQL 的原始字段投影（含 Include 关联），
+        // 避免在表达式树 Lambda 中使用 ?. 或无法翻译的自定义方法（CS8072 / 运行时无法翻译）。
+        var rawRecords = await query
             .Include(d => d.Device)
             .Include(d => d.Device.Area)
             .OrderByDescending(d => d.Timestamp)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(d => new
+            {
+                d.Id,
+                d.DeviceId,
+                DeviceName = d.Device != null ? d.Device.Name : null,
+                AreaId = d.Device != null ? d.Device.AreaId : null,
+                AreaName = d.Device != null && d.Device.Area != null ? d.Device.Area.Name : null,
+                EnergyTypes = d.Device != null ? d.Device.EnergyTypes : null,
+                d.SensorData,
+                d.Level,
+                d.Timestamp
+            })
+            .ToListAsync();
+
+        // 第二步：在内存中做 JSON 解析与质量映射（LINQ to Objects，可自由调用自定义方法）。
+        var dataRecords = rawRecords
             .Select(d => new MonitoringDataDto
             {
                 Id = d.Id,
                 DeviceId = d.DeviceId,
-                DeviceName = d.Device != null ? d.Device.Name : null,
-                AreaId = d.Device != null ? d.Device.AreaId : null,
-                AreaName = d.Device != null && d.Device.Area != null ? d.Device.Area.Name : null,
-                SensorValues = new Dictionary<string, double?>
-                {
-                    { "temperature", d.Temperature },
-                    { "humidity", d.Humidity },
-                    { "pm25", d.PM25 },
-                    { "co2", d.CO2 },
-                    { "co", d.CO }
-                },
+                DeviceName = d.DeviceName,
+                AreaId = d.AreaId,
+                AreaName = d.AreaName,
+                EnergyType = ParseFirstEnergyType(d.EnergyTypes),
+                SensorValues = ParseSensorData(d.SensorData),
+                Quality = MapQuality(d.Level),
                 Timestamp = d.Timestamp
             })
-            .ToListAsync();
+            .ToList();
 
         return PagedResponse<MonitoringDataDto>.Create(dataRecords, totalCount, page, pageSize);
     }
+
+    /// <summary>
+    /// 从 DeviceDataRecord.SensorData（原始上报 JSON）解析出全部数据点。
+    /// 安圣等设备的上报值只落进 SensorData 原始 JSON，类型化列多为 null；
+    /// 直接读 SensorData 才能保证「设备上报了什么，界面就显示什么」。
+    /// </summary>
+    private static Dictionary<string, object?>? ParseSensorData(string? sensorData)
+    {
+        if (string.IsNullOrWhiteSpace(sensorData)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(sensorData);
+            var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                dict[prop.Name] = prop.Value.ValueKind switch
+                {
+                    JsonValueKind.Number => prop.Value.GetDouble(),
+                    JsonValueKind.String => prop.Value.GetString(),
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => prop.Value.ToString()
+                };
+            }
+            return dict;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>解析设备能源类型（JSON 数组或逗号分隔），取首个。</summary>
+    private static string? ParseFirstEnergyType(string? energyTypesJson)
+    {
+        if (string.IsNullOrWhiteSpace(energyTypesJson)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(energyTypesJson);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var e in doc.RootElement.EnumerateArray())
+                {
+                    var v = e.GetString();
+                    if (!string.IsNullOrWhiteSpace(v)) return v.Trim().ToLowerInvariant();
+                }
+            }
+        }
+        catch (JsonException) { }
+        return energyTypesJson.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Trim().ToLowerInvariant())
+            .FirstOrDefault(t => t.Length > 0);
+    }
+
+    /// <summary>将 DeviceDataRecord.Level 映射为可读质量标签。</summary>
+    private static string? MapQuality(string? level) => level switch
+    {
+        "warning" => "警告",
+        "error" => "异常",
+        "info" => "良好",
+        _ => "正常"
+    };
 
     /// <summary>
     /// 获取空气质量数据
