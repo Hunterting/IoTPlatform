@@ -1,57 +1,58 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, ChevronDown, MapPin, Droplets, Zap, Flame,
-  AlertTriangle, Bell, Clock, TrendingUp, Calendar, LogOut, Cpu,
+  Bell, Clock, Cpu, Activity,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { useDevices } from '@/app/contexts/DeviceContext';
 import { useArea } from '@/app/contexts/AreaContext';
-import { SHARED_ALERT_RECORDS } from '@/app/config/sharedMockData';
-import { SceneViewer } from '@/app/components/3d-scene/SceneViewer';
-import { DeviceInfoPanel } from '@/app/components/3d-scene/DeviceInfoPanel';
+import {
+  analyticsApi,
+  type EnergyAnalysis,
+} from '@/app/services/api/analyticsApi';
+import {
+  dashboardApi,
+  type AlertDto,
+} from '@/app/services/api/dashboardApi';
 
 type EnergyType = 'electric' | 'water' | 'gas';
 
-// ── Mock Data ──────────────────────────────────────────────────────────────────
-// 模拟用能数据 - 日历视图（以电为例）
-const dailyElectricData = [
-  { day: '1', week: '一', value: 1.06 }, { day: '2', week: '二', value: 1.12 }, { day: '3', week: '三', value: 0.98 },
-  { day: '4', week: '四', value: 1.36 }, { day: '5', week: '五', value: 0.9 }, { day: '6', week: '六', value: 1.05 }, { day: '7', week: '日', value: 0.7 },
-  { day: '8', week: '一', value: 1.30 }, { day: '9', week: '二', value: 0.9 }, { day: '10', week: '三', value: 0.98 },
-  { day: '11', week: '四', value: 1.36 }, { day: '12', week: '五', value: 0.9 }, { day: '13', week: '六', value: 1.42 }, { day: '14', week: '日', value: 0.7 },
-  { day: '15', week: '一', value: 1.36 }, { day: '16', week: '二', value: 0.9 }, { day: '17', week: '三', value: 1.20 }, { day: '18', week: '四', value: 0.9 },
-  { day: '19', week: '五', value: 1.36 }, { day: '20', week: '六', value: 0.7 }, { day: '21', week: '日', value: 1.42 },
-  { day: '22', week: '一', value: 1.20 }, { day: '23', week: '二', value: 0.9 }, { day: '24', week: '三', value: 0.9 }, { day: '25', week: '四', value: 1.36 },
-  { day: '26', week: '五', value: 0.9 }, { day: '27', week: '六', value: 1.45 }, { day: '28', week: '日', value: 0.7 },
-];
+const ENERGY_TYPES: EnergyType[] = ['electric', 'water', 'gas'];
 
-const dailyWaterData = dailyElectricData.map(d => ({ ...d, value: (parseFloat(d.value.toFixed(2)) * 850).toFixed(0) }));
-const dailyGasData = dailyElectricData.map(d => ({ ...d, value: (parseFloat(d.value.toFixed(2)) * 62).toFixed(0) }));
+/** 告警类型 → 中文 */
+const ALERT_TYPE_LABEL: Record<string, string> = {
+  temperature: '温度异常', pressure: '压力异常', offline: '设备离线',
+  power: '功率异常', smoke: '烟雾异常', door: '门体异常',
+};
 
-// 月度趋势 - 柱状图
-const monthlyElectricTrend = [
-  { month: '1月', value: 4200 }, { month: '2月', value: 3800 }, { month: '3月', value: 5100 },
-  { month: '4月', value: 4500 }, { month: '5月', value: 4800 }, { month: '6月', value: 3900 },
-  { month: '7月', value: 4200 }, { month: '8月', value: 3600 }, { month: '9月', value: 4800 },
-  { month: '10月', value: 5300 }, { month: '11月', value: 4900 }, { month: '12月', value: 5200 },
-];
-
-const monthlyWaterTrend = monthlyElectricTrend.map(m => ({ ...m, value: m.value * 85 }));
-const monthlyGasTrend = monthlyElectricTrend.map(m => ({ ...m, value: Math.round(m.value * 6.2) }));
-
-// 年度趋势 - 折线图
-const yearlyElectricTrend = [
-  { year: '2021年', value: 48000 }, { year: '2022年', value: 52000 },
-  { year: '2023年', value: 55000 }, { year: '2024年', value: 58000 }, { year: '2025年', value: 62000 },
-];
-
-const yearlyWaterTrend = yearlyElectricTrend.map(y => ({ ...y, value: y.value * 85 }));
-const yearlyGasTrend = yearlyElectricTrend.map(y => ({ ...y, value: Math.round(y.value * 6.2) }));
+/** 真实告警 → 预警汇总展示项 */
+interface AlertView {
+  id: string;
+  type: string;
+  level: string;
+  deviceName: string;
+  description: string;
+  time: string;
+}
+function toAlertView(a: AlertDto): AlertView {
+  const d = new Date(a.alertTime);
+  const time = Number.isNaN(d.getTime())
+    ? String(a.alertTime ?? '')
+    : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return {
+    id: String(a.id),
+    type: ALERT_TYPE_LABEL[a.alertType] || a.alertType || '异常',
+    level: a.level,
+    deviceName: a.deviceName || '未知设备',
+    description: a.area || a.deviceCode || a.status || '',
+    time,
+  };
+}
 
 // ── Area Tree Component ────────────────────────────────────────────────────────
 interface AreaTreeNodeProps {
@@ -121,151 +122,126 @@ function AreaTreeNode({ area, level, selectedArea, onSelect }: AreaTreeNodeProps
 // ── Main Component ─────────────────────────────────────────────────────────────
 export function AnalyticsPage() {
   const { user, logout, currentCustomer } = useAuth();
-  const { devices, updateDeviceStatus } = useDevices();
+  const { devices } = useDevices();
   const { areas } = useArea();
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [selectedEnergyType, setSelectedEnergyType] = useState<EnergyType>('electric');
-  const [viewMode, setViewMode] = useState<'day' | 'month' | 'year'>('day');
-  const [selectedYear, setSelectedYear] = useState<number>(2026);
-  const [selectedMonth, setSelectedMonth] = useState<number>(1);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearOnlyPicker, setShowYearOnlyPicker] = useState(false);
-  
-  // 3D scene states
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [selected3DDevice, setSelected3DDevice] = useState<any>(null);
-  const [showDeviceInfo, setShowDeviceInfo] = useState(false);
+
+  // ── 真实后端数据（每个来源独立容错） ──
+  const [analysisByType, setAnalysisByType] = useState<Record<EnergyType, EnergyAnalysis | null>>({
+    electric: null, water: null, gas: null,
+  });
+  const [alerts, setAlerts] = useState<AlertView[]>([]);
+  const [panelError, setPanelError] = useState<Record<string, string>>({});
+
+  // 选中区域名 → areaId（后端聚合按 areaId 过滤）
+  const selectedAreaId = useMemo(() => {
+    if (!selectedArea) return undefined;
+    const match = areas.find((a: any) => a.name === selectedArea);
+    return match ? Number(match.id) : undefined;
+  }, [selectedArea, areas]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const markError = (key: string, msg: string) => {
+      if (!cancelled) setPanelError(prev => ({ ...prev, [key]: msg }));
+    };
+    const clearError = (key: string) => {
+      if (!cancelled) setPanelError(prev => {
+        const next = { ...prev }; delete next[key]; return next;
+      });
+    };
+
+    const load = () => {
+      // 三种能源各拉一次，卡片汇总 + 图表都用真实数据
+      ENERGY_TYPES.forEach((type) => {
+        analyticsApi.getEnergyAnalysis({
+          energyType: type,
+          year: selectedYear,
+          month: selectedMonth,
+          areaId: selectedAreaId,
+        })
+          .then((res) => {
+            if (cancelled) return;
+            if (res.code === 200 && res.data) {
+              setAnalysisByType(prev => ({ ...prev, [type]: res.data! }));
+              clearError(type);
+            } else {
+              markError(type, res.message || '能耗数据不可用');
+            }
+          })
+          .catch(() => markError(type, '无权限或网络错误'));
+      });
+
+      // 预警汇总：真实告警（优先待处理，空则取最近）
+      dashboardApi.getAlerts({ page: 1, pageSize: 5, status: 'pending' })
+        .then(async (res) => {
+          if (cancelled) return;
+          let items = res.code === 200 && res.data ? (res.data.items || []) : [];
+          if (items.length === 0) {
+            try {
+              const fb = await dashboardApi.getAlerts({ page: 1, pageSize: 5 });
+              items = fb.code === 200 && fb.data ? (fb.data.items || []) : [];
+            } catch { /* 保持空 */ }
+          }
+          if (!cancelled) { setAlerts(items.map(toAlertView)); clearError('alerts'); }
+        })
+        .catch(() => markError('alerts', '无权限或网络错误'));
+    };
+
+    load();
+    const timer = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [selectedYear, selectedMonth, selectedAreaId]);
+  void user; void logout; void currentCustomer;
 
   // 可选年份列表（2020-2030）
   const availableYears = Array.from({ length: 11 }, (_, i) => 2020 + i);
   
   // 可选月份列表
   const availableMonths = Array.from({ length: 12 }, (_, i) => i + 1);
-  
-  // 根据选中的区域获取3D场景配置
-  const currentSceneConfig = useMemo(() => {
-    if (!selectedArea) return null;
-    
-    // 查找匹配的区域
-    const matchingArea = areas.find((area: any) => area.name === selectedArea);
-    if (!matchingArea) return null;
-    
-    // 返回3D场景配置（这里使用mock配置，实际应从archivesData获取）
-    return {
-      areaId: matchingArea.id,
-      areaName: selectedArea,
-      cadFilePath: '/assets/cad/default.dxf',
-      devices: [
-        {
-          id: 'device-1',
-          deviceId: '1',
-          name: '咖啡机-E01',
-          position: { x: -3, y: 0, z: -1 },
-          color: 0x00c3ff,
-        },
-        {
-          id: 'device-2',
-          deviceId: '2',
-          name: '蒸箱-F01',
-          position: { x: 3, y: 0, z: 2 },
-          color: 0x00c3ff,
-        },
-        {
-          id: 'device-3',
-          deviceId: '3',
-          name: '新风机-AQ01',
-          position: { x: -5, y: 0, z: -3 },
-          color: 0x00c3ff,
-        },
-      ],
-      camera: {
-        position: [12, 10, 12],
-        lookAt: [0, 0, 0],
-      },
-      backgroundColor: 0x0a1628,
-    };
-  }, [selectedArea, areas]);
 
-  // 处理设备点击
-  const handleDeviceClick = (deviceId: string, deviceData: any) => {
-    setSelectedDeviceId(deviceId);
-    setSelected3DDevice(deviceData);
-    setShowDeviceInfo(true);
-  };
-
-  // 处理设备悬停
-  const handleHoverDevice = (deviceId: string | null, deviceData?: any) => {
-    // 可以用于高亮设备或显示悬停提示
-    console.log('Hovered device:', deviceId);
-  };
-
-  // 处理设备状态切换
-  const handleTogglePower = async (deviceId: string, status: 'online' | 'offline') => {
-    try {
-      await updateDeviceStatus(deviceId, status);
-    } catch (error) {
-      console.error('设备状态更新失败:', error);
-      throw error;
-    }
-  };
-
-  // 关闭设备信息面板
-  const closeDeviceInfo = () => {
-    setShowDeviceInfo(false);
-    setSelectedDeviceId(null);
-    setSelected3DDevice(null);
-  };
-
-  // 统计设备状态
+  // 统计设备状态（真实设备列表）
   const deviceStats = useMemo(() => {
     const total = devices.length;
     const online = devices.filter(d => d.status === 'online').length;
     const warning = devices.filter(d => d.status === 'warning').length;
     const offline = devices.filter(d => d.status === 'offline').length;
-    
     return { total, online, warning, offline };
   }, [devices]);
 
-  // 用能数据汇总（模拟）
-  const energyStats = useMemo(() => {
+  // 当前选中能源类型的真实分析数据
+  const analysis = analysisByType[selectedEnergyType];
+  const dailyData = analysis?.daily ?? [];
+  const monthlyData = analysis?.monthly ?? [];
+  const yearlyData = analysis?.yearly ?? [];
+  const currentUnit = analysis?.unit ?? (selectedEnergyType === 'electric' ? 'kW' : 'm³/h');
+  const hasChartData = (analysis?.sampleCount ?? 0) > 0;
+
+  // 用能卡片：三种能源各自的真实当日平均 + 累计采样
+  const energyCards = ENERGY_TYPES.map((type) => {
+    const a = analysisByType[type];
     return {
-      water: { current: 1400, target: 1500 },
-      electric: { current: 120, target: 150 },
-      gas: { current: 75, target: 90 },
+      type,
+      current: a?.summary?.today ?? 0,
+      total: a?.summary?.total ?? 0,
+      todayLabel: a?.summary?.todayLabel ?? '当日平均',
+      totalLabel: a?.summary?.totalLabel ?? '累计采样',
+      unit: a?.unit ?? (type === 'electric' ? 'kW' : 'm³/h'),
+      hasData: (a?.sampleCount ?? 0) > 0,
     };
-  }, []);
+  });
 
-  // 获取告警记录
-  const alerts = useMemo(() => {
-    return SHARED_ALERT_RECORDS.filter(a => a.status !== 'resolved').slice(0, 5);
-  }, []);
-
-  // 获取图表数据
-  const chartData = useMemo(() => {
-    if (viewMode === 'day') {
-      if (selectedEnergyType === 'electric') return dailyElectricData;
-      if (selectedEnergyType === 'water') return dailyWaterData;
-      return dailyGasData;
-    } else if (viewMode === 'month') {
-      if (selectedEnergyType === 'electric') return monthlyElectricTrend;
-      if (selectedEnergyType === 'water') return monthlyWaterTrend;
-      return monthlyGasTrend;
-    } else {
-      if (selectedEnergyType === 'electric') return yearlyElectricTrend;
-      if (selectedEnergyType === 'water') return yearlyWaterTrend;
-      return yearlyGasTrend;
-    }
-  }, [viewMode, selectedEnergyType]);
-
-  // 单位配置
-  const unitConfig = {
-    electric: { unit: 'kWh', label: '电' },
-    water: { unit: 'm³', label: '水' },
-    gas: { unit: 'm³', label: '气' },
-  };
-
-  const currentUnit = unitConfig[selectedEnergyType];
+  // 选中区域的真实设备列表（替代原假 3D 场景 + 假设备标注）
+  const areaDevices = useMemo(() => {
+    if (!selectedArea) return [];
+    return devices.filter((d: any) => d.area === selectedArea || d.areaName === selectedArea);
+  }, [selectedArea, devices]);
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-gradient-to-br from-[#0a1628] via-[#0d1b2a] to-[#0a1628] flex flex-col">
@@ -324,110 +300,103 @@ export function AnalyticsPage() {
 
         {/* Center Panel - 3D场景 & 用能卡片 */}
         <div className="flex-1 flex flex-col gap-4">
-          {/* 用能卡片 */}
+          {/* 用能卡片（真实：设备上报采样平均功率/流量 + 累计采样数） */}
           <div className="grid grid-cols-3 gap-4">
-            {/* 用水量 */}
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-black/40 backdrop-blur-sm border border-cyan-500/30 rounded-lg p-4 relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/10 rounded-full blur-2xl" />
-              <div className="relative flex items-center gap-3 mb-2">
-                <div className="p-2 bg-cyan-500/20 rounded-lg">
-                  <Droplets className="w-6 h-6 text-cyan-400" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">用水量</p>
-                  <p className="text-2xl font-bold text-white">{energyStats.water.current}<span className="text-sm text-gray-400">m³</span></p>
-                </div>
-              </div>
-              <p className="text-xs text-cyan-400">当日 {energyStats.water.current}m³</p>
-              <p className="text-xs text-gray-500">累计 {energyStats.water.target}m³</p>
-            </motion.div>
-
-            {/* 用电量 */}
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-black/40 backdrop-blur-sm border border-yellow-500/30 rounded-lg p-4 relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-yellow-500/10 rounded-full blur-2xl" />
-              <div className="relative flex items-center gap-3 mb-2">
-                <div className="p-2 bg-yellow-500/20 rounded-lg">
-                  <Zap className="w-6 h-6 text-yellow-400" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">用电量</p>
-                  <p className="text-2xl font-bold text-white">{energyStats.electric.current}<span className="text-sm text-gray-400">kWh</span></p>
-                </div>
-              </div>
-              <p className="text-xs text-yellow-400">当日 {energyStats.electric.current}kWh</p>
-              <p className="text-xs text-gray-500">累计 {energyStats.electric.target}kWh</p>
-            </motion.div>
-
-            {/* 用气量 */}
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="bg-black/40 backdrop-blur-sm border border-orange-500/30 rounded-lg p-4 relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/10 rounded-full blur-2xl" />
-              <div className="relative flex items-center gap-3 mb-2">
-                <div className="p-2 bg-orange-500/20 rounded-lg">
-                  <Flame className="w-6 h-6 text-orange-400" />
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">用气量</p>
-                  <p className="text-2xl font-bold text-white">{energyStats.gas.current}<span className="text-sm text-gray-400">m³</span></p>
-                </div>
-              </div>
-              <p className="text-xs text-orange-400">当日 {energyStats.gas.current}m³</p>
-              <p className="text-xs text-gray-500">累计 {energyStats.gas.target}m³</p>
-            </motion.div>
+            {([
+              { key: 'water' as EnergyType, title: '用水', Icon: Droplets, border: 'border-cyan-500/30', glow: 'bg-cyan-500/10', chip: 'bg-cyan-500/20', text: 'text-cyan-400', label: 'text-cyan-400' },
+              { key: 'electric' as EnergyType, title: '用电', Icon: Zap, border: 'border-yellow-500/30', glow: 'bg-yellow-500/10', chip: 'bg-yellow-500/20', text: 'text-yellow-400', label: 'text-yellow-400' },
+              { key: 'gas' as EnergyType, title: '用气', Icon: Flame, border: 'border-orange-500/30', glow: 'bg-orange-500/10', chip: 'bg-orange-500/20', text: 'text-orange-400', label: 'text-orange-400' },
+            ]).map((cfg) => {
+              const card = energyCards.find(c => c.type === cfg.key)!;
+              const err = panelError[cfg.key];
+              return (
+                <motion.div
+                  key={cfg.key}
+                  whileHover={{ scale: 1.02 }}
+                  className={`bg-black/40 backdrop-blur-sm border ${cfg.border} rounded-lg p-4 relative overflow-hidden`}
+                >
+                  <div className={`absolute top-0 right-0 w-24 h-24 ${cfg.glow} rounded-full blur-2xl`} />
+                  <div className="relative flex items-center gap-3 mb-2">
+                    <div className={`p-2 ${cfg.chip} rounded-lg`}>
+                      <cfg.Icon className={`w-6 h-6 ${cfg.text}`} />
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400">{cfg.title} · 平均功率</p>
+                      <p className="text-2xl font-bold text-white">
+                        {card.hasData ? card.current : '—'}
+                        <span className="text-sm text-gray-400 ml-0.5">{card.unit}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <p className={`text-xs ${cfg.label}`}>
+                    {card.todayLabel} {card.hasData ? `${card.current}${card.unit}` : '暂无数据'}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {card.totalLabel} {card.total} 条
+                  </p>
+                  {(err || !card.hasData) && (
+                    <p className="text-xs mt-1" style={{ color: err ? '#ffaa00' : '#5a7a90' }}>
+                      {err || '未接入该类型计量设备'}
+                    </p>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
 
-          {/* 3D 场景 */}
-          <div className="flex-1 bg-black/40 backdrop-blur-sm border border-cyan-500/30 rounded-lg p-4 relative overflow-hidden">
-            {!currentSceneConfig ? (
+          {/* 区域设备（真实设备列表，替代原假 3D 场景 + WebGL 白屏） */}
+          <div className="flex-1 bg-black/40 backdrop-blur-sm border border-cyan-500/30 rounded-lg p-4 relative overflow-hidden flex flex-col">
+            {!selectedArea ? (
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
                   <MapPin className="w-16 h-16 text-gray-600 mx-auto mb-4" />
                   <p className="text-gray-400 text-sm">请从左侧区域导航中选择一个区域</p>
-                  <p className="text-gray-500 text-xs mt-2">查看该区域的3D场景和设备标注</p>
+                  <p className="text-gray-500 text-xs mt-2">查看该区域的真实设备</p>
                 </div>
               </div>
             ) : (
               <div className="w-full h-full flex flex-col">
-                {/* 3D Scene Header */}
                 <div className="flex items-center justify-between mb-3 pb-2 border-b border-cyan-500/20">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-cyan-400" />
-                    <h3 className="text-sm font-bold text-cyan-300">{currentSceneConfig.areaName}</h3>
+                    <h3 className="text-sm font-bold text-cyan-300">{selectedArea}</h3>
                   </div>
-                  <span className="text-xs text-gray-400">
-                    {currentSceneConfig.devices.length} 个设备标注
-                  </span>
+                  <span className="text-xs text-gray-400">{areaDevices.length} 台设备</span>
                 </div>
-
-                {/* 3D Scene View */}
-                <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-hidden">
-                  {/* SceneViewer */}
-                  <SceneViewer
-                    sceneConfig={currentSceneConfig}
-                    onDeviceClick={handleDeviceClick}
-                    onHoverDevice={handleHoverDevice}
-                    className="w-full h-full"
-                  />
-
-                  {/* Device Info Panel */}
-                  <AnimatePresence>
-                    {showDeviceInfo && selectedDeviceId && selected3DDevice && (
-                      <DeviceInfoPanel
-                        device={selected3DDevice}
-                        onClose={closeDeviceInfo}
-                        onTogglePower={handleTogglePower}
-                        className="absolute right-0 top-0 bottom-0"
-                      />
-                    )}
-                  </AnimatePresence>
+                <div className="flex-1 relative bg-gray-900/50 rounded-lg border border-white/10 overflow-y-auto p-3">
+                  {areaDevices.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      {areaDevices.map((d: any) => {
+                        const stColor = d.status === 'online' ? '#00ff9f'
+                          : d.status === 'warning' ? '#ffaa00'
+                          : d.status === 'offline' ? '#ff5555' : '#8aa';
+                        return (
+                          <div key={d.id} className="rounded-lg p-3 flex items-center gap-3"
+                            style={{ background: 'rgba(0,30,60,0.5)', border: '1px solid rgba(0,195,255,0.2)' }}>
+                            <div className="w-2 h-2 rounded-full flex-shrink-0"
+                              style={{ background: stColor, boxShadow: `0 0 6px ${stColor}` }} />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-white truncate">{d.name}</p>
+                              <p className="text-xs text-gray-500 truncate">
+                                {d.model || d.category || d.serialNumber || '—'}
+                              </p>
+                            </div>
+                            <span className="text-xs flex-shrink-0" style={{ color: stColor }}>
+                              {d.status === 'online' ? '在线' : d.status === 'warning' ? '告警' : d.status === 'offline' ? '离线' : d.status}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center gap-2">
+                      <Activity className="w-10 h-10" style={{ color: '#3a5a70' }} />
+                      <p className="text-xs text-gray-500">该区域暂无真实设备</p>
+                      <p className="text-xs" style={{ color: '#5a7a90' }}>
+                        3D 场景需 CAD/场景配置数据，当前以设备列表展示
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -454,15 +423,23 @@ export function AnalyticsPage() {
                       alert.level === 'critical' ? 'bg-red-500' :
                       alert.level === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
                     }`} />
-                    <span className="text-xs font-medium text-white">{alert.alertType}</span>
+                    <span className="text-xs font-medium text-white">{alert.type}</span>
                   </div>
                   <Clock className="w-3 h-3 text-gray-500" />
                 </div>
                 <p className="text-xs text-gray-400 mb-1">{alert.deviceName}</p>
                 <p className="text-xs text-gray-500 truncate">{alert.description}</p>
-                <p className="text-xs text-cyan-400 mt-2">{alert.triggerTime?.split(' ')[1] || alert.triggerTime || '-'}</p>
+                <p className="text-xs text-cyan-400 mt-2">{alert.time || '-'}</p>
               </motion.div>
             ))}
+            {alerts.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center gap-2 py-8">
+                <Bell className="w-10 h-10" style={{ color: '#3a5a70' }} />
+                <p className="text-xs" style={{ color: panelError.alerts ? '#ffaa00' : '#5a7a90' }}>
+                  {panelError.alerts || '暂无预警'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -583,35 +560,34 @@ export function AnalyticsPage() {
                 </AnimatePresence>
               </div>
             </div>
-            <div className="flex-1 bg-black/40 border border-cyan-500/20 rounded-lg p-3">
-              <div className="grid grid-cols-7 gap-1 text-xs h-full">
+            <div className="flex-1 bg-black/40 border border-cyan-500/20 rounded-lg p-3 flex flex-col">
+              <div className="flex items-center justify-between mb-1 px-1">
+                <span className="text-[10px] text-gray-500">单位：{currentUnit}（日平均）</span>
+                <span className="text-[10px] text-gray-500">{analysis?.source || '设备真实上报'}</span>
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-xs flex-1">
                 {/* 星期标题 */}
-                <div className="text-center text-gray-500 flex items-center justify-center">日</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">一</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">二</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">三</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">四</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">五</div>
-                <div className="text-center text-gray-500 flex items-center justify-center">六</div>
-                
-                {/* 日期网格 */}
-                {dailyElectricData.map((item: any, idx: number) => {
-                  const value = selectedEnergyType === 'electric' 
-                    ? dailyElectricData[idx].value 
-                    : selectedEnergyType === 'water'
-                    ? dailyWaterData[idx].value
-                    : dailyGasData[idx].value;
-                  
-                  return (
-                    <div
-                      key={idx}
-                      className="bg-gradient-to-br from-cyan-500/10 to-cyan-500/5 border border-cyan-500/20 rounded flex flex-col items-center justify-center hover:bg-cyan-500/20 transition-all cursor-pointer"
-                    >
-                      <span className="text-[10px] text-gray-400">{item.day}</span>
-                      <span className="text-[11px] text-cyan-300 font-medium">{value}</span>
-                    </div>
-                  );
-                })}
+                {['日', '一', '二', '三', '四', '五', '六'].map(w => (
+                  <div key={w} className="text-center text-gray-500 flex items-center justify-center">{w}</div>
+                ))}
+                {/* 日期网格：真实每日聚合 */}
+                {dailyData.map((pt) => (
+                  <div
+                    key={pt.label}
+                    title={`${pt.label} 日 · ${pt.sampleCount} 条采样`}
+                    className="bg-gradient-to-br from-cyan-500/10 to-cyan-500/5 border border-cyan-500/20 rounded flex flex-col items-center justify-center hover:bg-cyan-500/20 transition-all"
+                  >
+                    <span className="text-[10px] text-gray-400">{pt.label}</span>
+                    <span className="text-[11px] text-cyan-300 font-medium">
+                      {pt.sampleCount > 0 ? pt.value : '—'}
+                    </span>
+                  </div>
+                ))}
+                {dailyData.length === 0 && (
+                  <div className="col-span-7 flex items-center justify-center text-xs" style={{ color: '#5a7a90' }}>
+                    {panelError[selectedEnergyType] || '暂无该能源类型上报数据'}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -669,40 +645,47 @@ export function AnalyticsPage() {
               </div>
             </div>
             <div className="flex-1 bg-black/40 border border-cyan-500/20 rounded-lg p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={selectedEnergyType === 'electric' ? monthlyElectricTrend : selectedEnergyType === 'water' ? monthlyWaterTrend : monthlyGasTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" vertical={false} />
-                  <XAxis 
-                    dataKey="month" 
-                    stroke="#5a7a90" 
-                    style={{ fontSize: '11px' }}
-                    axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
-                    tickLine={false}
-                  />
-                  <YAxis 
-                    stroke="#5a7a90" 
-                    style={{ fontSize: '11px' }}
-                    axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'rgba(0,0,0,0.9)',
-                      border: '1px solid rgba(6,182,212,0.5)',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                    }}
-                    cursor={{ fill: 'rgba(6,182,212,0.1)' }}
-                  />
-                  <Bar dataKey="value" fill="url(#barGradient)" radius={[4, 4, 0, 0]} />
-                  <defs>
-                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#06b6d4" stopOpacity={1} />
-                      <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.6} />
-                    </linearGradient>
-                  </defs>
-                </BarChart>
-              </ResponsiveContainer>
+              {hasChartData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" vertical={false} />
+                    <XAxis
+                      dataKey="label"
+                      stroke="#5a7a90"
+                      style={{ fontSize: '11px' }}
+                      axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke="#5a7a90"
+                      style={{ fontSize: '11px' }}
+                      axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'rgba(0,0,0,0.9)',
+                        border: '1px solid rgba(6,182,212,0.5)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                      }}
+                      cursor={{ fill: 'rgba(6,182,212,0.1)' }}
+                      formatter={(v: number) => [`${Number(v).toFixed(4)} ${currentUnit}`, '平均']}
+                    />
+                    <Bar dataKey="value" fill="url(#barGradient)" radius={[4, 4, 0, 0]} />
+                    <defs>
+                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#06b6d4" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.6} />
+                      </linearGradient>
+                    </defs>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError[selectedEnergyType] ? '#ffaa00' : '#5a7a90' }}>
+                  {panelError[selectedEnergyType] || '暂无该能源类型上报数据'}
+                </div>
+              )}
             </div>
           </div>
 
@@ -759,40 +742,47 @@ export function AnalyticsPage() {
               </div>
             </div>
             <div className="flex-1 bg-black/40 border border-cyan-500/20 rounded-lg p-3">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={selectedEnergyType === 'electric' ? yearlyElectricTrend : selectedEnergyType === 'water' ? yearlyWaterTrend : yearlyGasTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
-                  <XAxis 
-                    dataKey="year" 
-                    stroke="#5a7a90" 
-                    style={{ fontSize: '11px' }}
-                    axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
-                    tickLine={false}
-                  />
-                  <YAxis 
-                    stroke="#5a7a90" 
-                    style={{ fontSize: '11px' }}
-                    axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'rgba(0,0,0,0.9)',
-                      border: '1px solid rgba(6,182,212,0.5)',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                    }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="value" 
-                    stroke="#06b6d4" 
-                    strokeWidth={3} 
-                    dot={{ fill: '#06b6d4', r: 5, strokeWidth: 2, stroke: '#0a1628' }} 
-                    activeDot={{ r: 7 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              {hasChartData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={yearlyData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(6,182,212,0.15)" />
+                    <XAxis
+                      dataKey="label"
+                      stroke="#5a7a90"
+                      style={{ fontSize: '11px' }}
+                      axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke="#5a7a90"
+                      style={{ fontSize: '11px' }}
+                      axisLine={{ stroke: 'rgba(6,182,212,0.3)' }}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'rgba(0,0,0,0.9)',
+                        border: '1px solid rgba(6,182,212,0.5)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                      }}
+                      formatter={(v: number) => [`${Number(v).toFixed(4)} ${currentUnit}`, '平均']}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#06b6d4"
+                      strokeWidth={3}
+                      dot={{ fill: '#06b6d4', r: 5, strokeWidth: 2, stroke: '#0a1628' }}
+                      activeDot={{ r: 7 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError[selectedEnergyType] ? '#ffaa00' : '#5a7a90' }}>
+                  {panelError[selectedEnergyType] || '暂无该能源类型上报数据'}
+                </div>
+              )}
             </div>
           </div>
         </div>

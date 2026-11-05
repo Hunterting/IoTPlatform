@@ -208,6 +208,90 @@ public class DataCollectionService : IDataCollectionService
     /// 4. 更新设备传感器 LastValue
     /// 5. 执行活跃的数据规则
     /// </summary>
+    /// <summary>
+    /// 解析安圣 4G 开关上报里的 EMdata / tasks（其值本身是 JSON 字符串形式的数组），
+    /// 把首个插槽的瞬时功率 p(kW) 写入 <see cref="DeviceDataRecord.ElectricPower"/>、
+    /// 累计电量 e(kWh) 写入 <see cref="DeviceDataRecord.ElectricKWh"/>。
+    ///
+    /// 背景：SensorData 形如
+    ///   { "EMdata": "[{\"c\":0.008,\"p\":0.122,\"e\":0,\"v\":225.79}]",
+    ///     "tasks":  "[{\"power\":\"0.161\",\"voltage\":\"227\", ...}]", ... }
+    /// 这些顶层属性的 ValueKind 是 String（不是 Number），因此现有的
+    /// SensorFieldMappings 循环无法命中，历史 629 条记录的能耗类型化列全为 null。
+    /// 本方法只对「新上报」数据补写，历史数据保持原样（由 AnalyticsService 从
+    /// SensorData 兜底解析，无需回溯刷库）。
+    /// </summary>
+    private static void ApplyAnShengEnergyFields(
+        DeviceDataRecord record, JsonElement root, List<string> mappedFieldNames)
+    {
+        // 从一个可能是「JSON 字符串 / 数组 / 对象」的元素里，按给定键读取第一个有效数值。
+        static double? ReadFirstNumber(JsonElement el, params string[] keys)
+        {
+            if (el.ValueKind == JsonValueKind.String)
+            {
+                var raw = el.GetString();
+                if (string.IsNullOrWhiteSpace(raw)) return null;
+                try
+                {
+                    using var inner = JsonDocument.Parse(raw);
+                    return ReadFirstNumber(inner.RootElement.Clone(), keys);
+                }
+                catch (JsonException) { return null; }
+            }
+            if (el.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in el.EnumerateArray())
+                {
+                    var v = ReadFirstNumber(item, keys);
+                    if (v.HasValue) return v.Value;
+                }
+                return null;
+            }
+            if (el.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var key in keys)
+                {
+                    if (!el.TryGetProperty(key, out var val)) continue;
+                    double? num = val.ValueKind switch
+                    {
+                        JsonValueKind.Number when val.TryGetDouble(out var d) => d,
+                        JsonValueKind.String when double.TryParse(
+                            val.GetString(),
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out var p) => p,
+                        _ => null
+                    };
+                    if (num.HasValue && double.IsFinite(num.Value)) return num.Value;
+                }
+            }
+            return null;
+        }
+
+        // 瞬时功率：优先 EMdata.p，其次 tasks.power / tasks.p
+        double? power = null;
+        if (root.TryGetProperty("EMdata", out var emEl))
+            power = ReadFirstNumber(emEl, "p");
+        if (!power.HasValue && root.TryGetProperty("tasks", out var tasksEl))
+            power = ReadFirstNumber(tasksEl, "power", "p");
+        if (power.HasValue)
+        {
+            record.ElectricPower = power.Value;
+            mappedFieldNames.Add("ElectricPower");
+        }
+
+        // 累计电量：EMdata.e（设备侧读数，当前多为 0，如实写入不伪造）
+        if (root.TryGetProperty("EMdata", out var emEl2))
+        {
+            var energy = ReadFirstNumber(emEl2, "e");
+            if (energy.HasValue)
+            {
+                record.ElectricKWh = energy.Value;
+                mappedFieldNames.Add("ElectricKWh");
+            }
+        }
+    }
+
     public async Task ProcessDeviceDataAsync(long deviceId, string? appCode, string? sensorData, DateTime timestamp)
     {
         try
@@ -295,6 +379,11 @@ public class DataCollectionService : IDataCollectionService
                         };
                         lastValueUpdates[jsonProp.Name] = valueStr;
                     }
+
+                    // ③-b 安圣 EMdata / tasks 是「值为 JSON 字符串数组」的嵌套结构，
+                    //     顶层 SensorFieldMappings 只认 Number 直接属性，功率写不进类型化列。
+                    //     这里显式解析补写 ElectricPower / ElectricKWh，让能耗分析有真实数据源。
+                    ApplyAnShengEnergyFields(dataRecord, jsonDoc.RootElement, mappedFieldNames);
 
                     // ④ 根据是否有超范围值调整数据记录级别
                     if (hasOutOfRangeValue)
