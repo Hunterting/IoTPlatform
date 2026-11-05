@@ -25,6 +25,7 @@
 - **联调时构建/测试被后端进程锁 bin**（MSB3027）→ 用 `dotnet test -o /tmp/xxx` / `dotnet build -o /tmp/xxx` 重定向，**不要 kill 联调进程**。⚠️ 集成测试用 `-o` 重定向时**必须同时显式设 `IOT_TEST_MYSQL` 环境变量**——`TestConnectionStringResolver.FindRepositoryRoot()` 从 `AppContext.BaseDirectory` 向上找 `IoTPlatform.csproj` 定仓库根，`-o` 把 BaseDirectory 挪走会断链导致 65 条全红「无法确定测试 MySQL 连接串」。
 - **开发环境每次启动清空全库（铁律级环境事实，2026-08-06 踩坑）**：`Data/SeedData/DataSeeder.cs:113` 由 `Program.cs:424` 的 `app.Environment.IsDevelopment()` 触发，启动时 `SET FOREIGN_KEY_CHECKS=0` + 逐表 `DELETE FROM` 再灌种子。**任何联调现场数据（协议配置/设备/档案/待认领池/命令流水）活不过一次后端重启**；要保留现场必须切非 Development 环境。（`DELETE FROM areas` 会因自引用外键 `FK_areas_areas_ParentId` 失败，被 catch 成 WRN，不阻断启动。这也解释了"业务数据总是全空"的现象。）
 - **【用户 2026-08-06 明令·铁律】起后端若"不希望清库"，一律 direct-DLL + Staging，禁用 `dotnet run`**。`dotnet run` 会读 `Properties/launchSettings.json` 的 `environmentVariables` → **强制 `ASPNETCORE_ENVIRONMENT=Development`**，命令行 `--environment Staging` 或 `ASPNETCORE_ENVIRONMENT=Staging` 均被覆盖，故 `dotnet run` 永远触发清库。正确起法：`dotnet bin/Debug/net8.0/IoTPlatform.dll` + `ASPNETCORE_ENVIRONMENT=Staging`（不读 launchSettings，环境变量才生效）。无 `appsettings.Staging.json`/`appsettings.Production.json` → 任何非 Dev 环境回退 `appsettings.json` 同一连接串（192.168.3.7:3306/iot_platform），仅跳过清库。
+- **【2026-11-05 踩坑·铁律】后端改码后必须 `dotnet build` 回写 `bin/Debug` 再重启，勿只编 `/tmp`**：工程师为避 DLL 锁常 `dotnet build -o /tmp/xxx`，但若不回写 `bin/Debug/net8.0/IoTPlatform.dll`，下次 `dotnet bin/Debug/.../IoTPlatform.dll` 跑的仍是**旧 DLL**（P1 自动拉起首启即因此无日志、二次重启才生效；更早 Intent M 同型）。正确序列：改码 → `dotnet build`（运行实例在跑则先停进程解锁）→ 再起。改码后先验 DLL 时间戳晚于源文件再重启。
 - **【用户 2026-08-06 明令·铁律】查日志一律以 Serilog 文件槽为准（`logs/log-YYYYMMDD.txt`），别只 grep 单实例 stdout 重定向**。`Program.cs:25-30` 用 `ReadFrom.Configuration` 但 appsettings 无 `Serilog` 节 → 最小级别回退 Information，且同时写 Console 与 `logs/log-YYYYMMDD.txt`（每实例从同一 CWD 写同一文件）。单实例 stdout 重定向未必含全部行，易误判"日志没打"。
 
 - **DI 生命周期错配铁律（2026-08-06 协议加固踩出）**：`ProtocolAdapterFactory` = **Singleton**（`Program.cs:47`），`ProtocolConfigService` = **Scoped**（`Program.cs:120`）。任何追踪"进程内适配器实例"的状态（如订阅登记表）**必须是 static**，绝不能是 Scoped 实例字段——否则每 HTTP 请求拿到空表，防重逻辑恒失效、每次 `/start` 重复挂 handler。若新增进程级静态状态，须一并纳入 `StaticStateResetter.ResetAll`（目前它只认识 4 处，本次 `_activeSubscriptions` 是第 5 处，未纳入，脆弱）。
@@ -52,6 +53,7 @@
 - **T12 未开工部分**：运维与配置命令后端（`AnShengMaintenanceController`、KeyConfig/SimCheck/Rs485 模型、`setTime`/`getLogs`/`send485` 等 9 个 method），按 `docs/phase345-audit-2026-08-03.md` §2.8 仍 ❌ 未开工
 - **通用技术债**：消息队列(RabbitMQ)、限流熔断、软删除+审计日志、OPC UA 适配器（仅 20% 骨架）、Global Query Filter 动态化、MqttClientService Singleton 资源争抢
 - **演进规划**：P0-P2 全完成；远期多节点/读写分离/K8s/微服务拆分
+- **协议冷启动自动拉起（P1，已实现·2026-11-05 真机验证通过）**：`ProtocolConfigAutoStartHostedService` 在 `ApplicationStarted` 遍历 `IsActive` 配置自动 `StartProtocolAsync`，复用双条件短路判活；消除「重启后须手动 /start、否则设备上行静默丢弃」运维隐患。改动：`ProtocolConfigAutoStartHostedService.cs`(新) + `ProtocolConfigService.AutoStartActiveProtocolsAsync`/`StartProtocolCoreAsync` + `ProtocolConfigRepository.GetActiveProtocolConfigsForAutoStartAsync`(`IgnoreQueryFilters`) + `Program.cs:209` 注册 + 集成测试。详见 `2026-10-28.md`(立项/实现) 与 `2026-11-05.md`(真机验证 + 旧 DLL 陷阱复盘)。
 
 ## 协作约定（本仓库）
 - 所有改动 **不 commit**，留工作区待决策；**严禁子代理执行任何 git 写命令**
