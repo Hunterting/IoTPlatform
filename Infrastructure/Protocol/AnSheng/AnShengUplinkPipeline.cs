@@ -260,7 +260,10 @@ public sealed class AnShengUplinkPipeline : IDisposable
                 "[AnShengPipeline] 组装上下文时查库失败 imei={Imei} method={Method}", imei, method);
         }
 
-        // 优先级 4：配置的默认租户；优先级 5：空串 + Warn。
+        // 优先级 4：配置的默认租户；优先级 5：空串（表示该事件无法归属到任何真实租户）。
+        // T4 收敛：空 AppCode 一律归一为 string.Empty，绝不返回 null；
+        // 下游 UpsertDiscoveredAsync 仅在 appCode 非空时才回填 discovered 行，
+        // 故空串不会把历史 NULL 行误改写为某租户，也不会凭空造出 NULL 行歧义（风险 R5）。
         if (string.IsNullOrWhiteSpace(appCode))
         {
             appCode = _options.DefaultAppCode;
@@ -268,12 +271,16 @@ public sealed class AnShengUplinkPipeline : IDisposable
 
         if (string.IsNullOrWhiteSpace(appCode))
         {
-            appCode = string.Empty;
-            _logger.LogWarning(
-                "[AnShengPipeline] 无法解析租户码，事件将以空 AppCode 落库 imei={Imei} method={Method}。" +
+            // 所有来源（设备 / 档案 / 待认领池 / 默认租户）都给不出租户码：
+            // 归为「未归属」，保持空串，交由认领流程在用户指定品类时再定归属。
+            // 由 Warn 降为 Debug：每条上行都打 Warn 会淹没真实告警，此处仅作排障留痕。
+            _logger.LogDebug(
+                "[AnShengPipeline] 无法解析租户码，事件将以空 AppCode(未归属) 处理 imei={Imei} method={Method}。" +
                 "可在 AnSheng:Event:DefaultAppCode 配置兜底租户。",
                 imei, method);
         }
+
+        appCode ??= string.Empty;
 
         return new AnShengUplinkContext(imei, args.Message, args.RawPayload, args.ReceivedAt)
         {

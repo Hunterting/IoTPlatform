@@ -46,7 +46,7 @@ public class DeviceService : IDeviceService
     }
 
     // Ensure EnergyTypes is valid JSON for JSON column storage
-    private string? NormalizeEnergyTypesJson(string? input)
+    internal static string? NormalizeEnergyTypesJson(string? input)
     {
         if (string.IsNullOrWhiteSpace(input)) return null;
 
@@ -231,9 +231,60 @@ public class DeviceService : IDeviceService
 
     /// <summary>
     /// 创建设备
+    ///
+    /// 【收敛方案（T2）】
+    ///   ① <b>权限收敛</b>：仅超级管理员可走此「直接新增」兜底通道；租户账号入口已在前端隐藏、
+    ///     接口由 <see cref="Controllers.DevicesController.CreateDevice"/> 返回 403，防御性再拦截一次。
+    ///   ② <b>AppCode 服务端定</b>：设备归属租户不再信任请求体
+    ///     （<see cref="CreateDeviceRequest.AppCode"/> 已降级为可忽略），
+    ///     超级管理员必须显式给出 <see cref="CreateDeviceRequest.TargetAppCode"/>。
+    ///   ③ <b>去重 / 存在性闸门</b>：复用 <see cref="DeviceRegistrationGuard"/>（与认领路径同一套），
+    ///     待认领池已有同 IMEI → 提示走认领；devices 已有同 SerialNumber/IMEI → 409；
+    ///     提供了 IMEI 却无任何在线证据 → 拒绝孤儿设备。
     /// </summary>
     public async Task<DeviceDto> CreateDeviceAsync(CreateDeviceRequest request)
     {
+        // ── ① 身份解析：是否超级管理员、AppCode 由服务端决定 ──
+        var callerRole = _httpContextAccessor?.HttpContext?.User
+            .FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        var isSuperAdmin = string.Equals(
+            callerRole, IoTPlatform.Configuration.Roles.SUPER_ADMIN,
+            StringComparison.OrdinalIgnoreCase);
+
+        if (!isSuperAdmin)
+        {
+            // 防御性：正常情况控制器已 403 拦截，这里再兜底一次，绝不让租户凭空建设备。
+            throw new DeviceRegistrationException(
+                403, "仅超级管理员可直接新增设备，请走认领流程或由超级管理员操作。",
+                DeviceRegistrationGuard.Conflict.None);
+        }
+
+        // 超级管理员：必须显式指定目标租户（其 token 通常不带 AppCode claim）。
+        var effectiveAppCode = !string.IsNullOrWhiteSpace(request.TargetAppCode)
+            ? request.TargetAppCode!.Trim()
+            : (!string.IsNullOrWhiteSpace(request.AppCode) ? request.AppCode.Trim() : null);
+
+        if (string.IsNullOrEmpty(effectiveAppCode))
+        {
+            throw new DeviceRegistrationException(
+                400, "超级管理员直接新增设备必须指定目标租户 AppCode（TargetAppCode）。",
+                DeviceRegistrationGuard.Conflict.None);
+        }
+
+        // ── ② 去重 / 存在性闸门（与认领路径共用 DeviceRegistrationGuard）──
+        var conflict = await DeviceRegistrationGuard.CheckAsync(_dbContext, request.SerialNumber);
+        conflict = DeviceRegistrationGuard.ApplyOnlinePresenceGate(conflict);
+
+        switch (conflict.Type)
+        {
+            case DeviceRegistrationGuard.Conflict.PendingPool:
+                throw new DeviceRegistrationException(409, conflict.Message, conflict.Type);
+            case DeviceRegistrationGuard.Conflict.ExistingDevice:
+                throw new DeviceRegistrationException(409, conflict.Message, conflict.Type);
+            case DeviceRegistrationGuard.Conflict.NoOnlinePresence:
+                throw new DeviceRegistrationException(409, conflict.Message, conflict.Type);
+        }
+
         // 验证区域是否存在，如果不存在则设置为null
         // 使用 DbContext 直接查询，避免仓储层全局过滤器干扰
         Area? area = null;
@@ -248,7 +299,7 @@ public class DeviceService : IDeviceService
                     validAreaId = request.AreaId.Value;
 
                     // 如果提供了 AppCode，确保区域属于相同的 AppCode
-                    if (!string.IsNullOrEmpty(request.AppCode) && area.AppCode != request.AppCode)
+                    if (!string.IsNullOrEmpty(effectiveAppCode) && area.AppCode != effectiveAppCode)
                     {
                         _logger.LogWarning("区域ID {AreaId} 的 AppCode 与请求不匹配（{AreaAppCode} != {RequestAppCode}），将不关联区域", request.AreaId.Value, area.AppCode, request.AppCode);
                         validAreaId = null;
@@ -267,7 +318,7 @@ public class DeviceService : IDeviceService
                                 ip: ctx.ip,
                                 status: "failed",
                                 duration: null,
-                                appCode: ctx.appCode ?? request.AppCode
+                                appCode: ctx.appCode ?? effectiveAppCode
                             );
                         }
                         catch { }
@@ -290,7 +341,7 @@ public class DeviceService : IDeviceService
                             ip: ctx.ip,
                             status: "success",
                             duration: null,
-                            appCode: ctx.appCode ?? request.AppCode
+                            appCode: ctx.appCode ?? effectiveAppCode
                         );
                     }
                     catch
@@ -316,7 +367,7 @@ public class DeviceService : IDeviceService
                         ip: ctx.ip,
                         status: "failed",
                         duration: null,
-                        appCode: ctx.appCode ?? request.AppCode
+                        appCode: ctx.appCode ?? effectiveAppCode
                     );
                 }
                 catch
@@ -340,7 +391,7 @@ public class DeviceService : IDeviceService
                     validProjectName = project.Name;
 
                     // 如果提供了 AppCode，确保项目属于相同的 AppCode
-                    if (!string.IsNullOrEmpty(request.AppCode) && project.AppCode != request.AppCode)
+                    if (!string.IsNullOrEmpty(effectiveAppCode) && project.AppCode != effectiveAppCode)
                     {
                         _logger.LogWarning("项目ID {ProjectId} 的 AppCode 与请求不匹配（{ProjectAppCode} != {RequestAppCode}），将不关联项目", request.ProjectId.Value, project.AppCode, request.AppCode);
                         // 不关联项目
@@ -364,7 +415,7 @@ public class DeviceService : IDeviceService
                             ip: ctx.ip,
                             status: "success",
                             duration: null,
-                            appCode: ctx.appCode ?? request.AppCode
+                            appCode: ctx.appCode ?? effectiveAppCode
                         );
                     }
                     catch
@@ -390,7 +441,7 @@ public class DeviceService : IDeviceService
                         ip: ctx.ip,
                         status: "failed",
                         duration: null,
-                        appCode: ctx.appCode ?? request.AppCode
+                        appCode: ctx.appCode ?? effectiveAppCode
                     );
                 }
                 catch
@@ -406,7 +457,7 @@ public class DeviceService : IDeviceService
         {
             // Ensure Id is zero so the database assigns the identity value
             Id = 0,
-            AppCode = request.AppCode,
+            AppCode = effectiveAppCode,
             Name = request.Name,
             Model = request.Model,
             SerialNumber = request.SerialNumber,
@@ -485,7 +536,7 @@ public class DeviceService : IDeviceService
                     ip: ctx.ip,
                     status: "failed",
                     duration: null,
-                    appCode: ctx.appCode ?? request.AppCode
+                    appCode: ctx.appCode ?? effectiveAppCode
                 );
             }
             catch

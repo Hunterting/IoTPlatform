@@ -266,6 +266,13 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
     {
         if (string.IsNullOrEmpty(imei)) return;
 
+        // T1 可观测性：收到设备上线 / 上行帧时先记一条结构化日志，
+        // 便于现场核查「二开/安圣设备是否真的落进了 ANSHENG_MQTT 摄取路径」
+        // （设计 §1.4 / T1 验收）。不打印 payload 明文。
+        _logger.LogInformation(
+            "[AnShengDiscovery] 收到设备上线/上行: IMEI={Imei}, 解析AppCode={AppCode}, Model={Model}, NetType={NetType}",
+            imei, appCode ?? "(null)", model ?? "(null)", netType ?? "(null)");
+
         try
         {
             var now = DateTime.UtcNow;
@@ -361,6 +368,11 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
 
             if (discovered != null)
             {
+                // T1 可观测性：命中既有待认领记录 → 推进在线时间（更新，非插入）。
+                _logger.LogDebug(
+                    "[AnShengDiscovery] 待认领记录命中(更新): IMEI={Imei}, AppCode={AppCode}, Id={Id}",
+                    imei, appCode ?? "(null)", discovered.Id);
+
                 ApplyOnlineFields(discovered, model, netType, appCode, now);
 
                 try
@@ -585,18 +597,32 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
         var imei = discovered.Imei;
         var appCode = FirstNonEmpty(command.AppCode, discovered.AppCode) ?? FallbackAppCode;
 
-        // ── 步骤 4：IMEI 冲突拦截 ──
+        // ── 步骤 3.5：跨租户认领拦截（T3）──
+        // 非超级管理员只能认领归属自身租户的记录；若待认领记录已带一个「非本租户」的
+        // AppCode，直接拒绝，避免租户 A 凭 discoveredDeviceId 把租户 B 的设备认到 A 名下
+        // （风险 R3 的认领侧表现）。未归属租户（AppCode 为空）的记录允许任一租户认领。
+        if (!command.IsSuperAdmin
+            && !string.IsNullOrEmpty(discovered.AppCode)
+            && !string.Equals(discovered.AppCode, command.AppCode, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "{Tag} 跨租户认领被拒: 调用者AppCode={Caller}, 记录AppCode={Owner}, IMEI={Imei}",
+                ClaimLogTag, command.AppCode, discovered.AppCode, imei);
+            return AnShengClaimResult.Fail(
+                AnShengClaimErrorCodes.CrossTenant,
+                $"不可跨租户认领：该待认领记录归属租户 {discovered.AppCode}，您无权认领。");
+        }
+
+        // ── 步骤 4：IMEI 冲突拦截（复用 T2 的 DeviceRegistrationGuard，与直接新增同一套）──
         // 与步骤 3 分开：discovered 没标记已认领、但 devices 表里已经有同 IMEI 行，
         // 说明数据被旁路写入过。此时仍按「已被认领」对外表达，语义对用户最直观。
-        var conflictDevice = await db.Devices
-            .AsNoTracking()
-            .FirstOrDefaultAsync(d => d.SerialNumber == imei, ct);
-
-        if (conflictDevice != null)
+        // 认领路径不必再查待认领池（本就在认领这条记录），故 includePendingPool:false。
+        var conflict = await DeviceRegistrationGuard.CheckAsync(db, imei, includePendingPool: false, ct);
+        if (conflict.Type == DeviceRegistrationGuard.Conflict.ExistingDevice)
         {
             return AnShengClaimResult.Fail(
                 AnShengClaimErrorCodes.AlreadyClaimed,
-                $"IMEI {imei} 已存在对应设备（DeviceId={conflictDevice.Id}）。");
+                $"IMEI {imei} 已存在对应设备（DeviceId={conflict.ExistingDeviceId}）。");
         }
 
         // ── 步骤 5：解析协议配置 ──
@@ -679,6 +705,7 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
                         ProtocolConfigId = protocolConfigId,
                         AreaId = command.AreaId,
                         ProjectId = command.ProjectId,
+                        EnergyTypes = DeviceService.NormalizeEnergyTypesJson(command.EnergyTypes),
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow
                     };

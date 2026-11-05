@@ -73,9 +73,24 @@ export const deviceApi = {
 
   /**
    * 创建设备
+   *
+   * T5 收敛：调用层对 403 / 409 做容错——仅超级管理员可走直接新增（否则 403），
+   * 去重 / 待认领池冲突会返回 409，统一转成面向人的友好错误抛给上层捕获。
    */
   createDevice: async (data: CreateDeviceRequest): Promise<AxiosResponse<ApiResponse<DeviceDto>>> => {
-    return httpClient.post<ApiResponse<DeviceDto>>('/devices', data);
+    try {
+      return await httpClient.post<ApiResponse<DeviceDto>>('/devices', data);
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const code = err?.response?.data?.code;
+      if (status === 403 || code === 403) {
+        throw new Error('无权限：仅超级管理员可直接新增设备，请走认领流程或由超级管理员操作。');
+      }
+      if (status === 409 || code === 409) {
+        throw new Error('设备已存在或已在待认领池，请走认领流程。');
+      }
+      throw err;
+    }
   },
 
   /**

@@ -12,6 +12,9 @@ import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS } from '@/app/config/permissions';
 import { anshengApi } from '@/app/services/api/anshengApi';
 import { deviceApi } from '@/app/services/api/deviceApi';
+import { useArea } from '@/app/contexts/AreaContext';
+import { AreaTreeSelect } from '@/app/components/AreaTreeSelect';
+import { projectApi, Project } from '@/app/services/api/projectApi';
 import type {
   DiscoveredAnShengDeviceDto,
   AnShengCommandResponse,
@@ -68,7 +71,8 @@ function getOnlineBadge(lastSeenAt: string | null | undefined) {
 
 // ── 主组件 ───────────────────────────────────────────────────────
 export function AnShengManagementPage() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, currentCustomer } = useAuth();
+  const { areaTree } = useArea();
   const canView   = hasPermission(PERMISSIONS.VIEW_DEVICES);
   const canCreate = hasPermission(PERMISSIONS.CREATE_DEVICES);
   const canUpdate = hasPermission(PERMISSIONS.UPDATE_DEVICES);
@@ -93,10 +97,16 @@ export function AnShengManagementPage() {
   const [claimForm, setClaimForm] = useState({
     deviceName: '',
     model: '',
-    category: 'power',
+    // 安圣品类枚举字符串（AnShengDeviceKind）：后端认领必传（KIND_REQUIRED 门禁）。
+    kind: '',
+    projectId: '',
+    areaId: '',
     location: '',
-    energyTypes: 'electric',
+    energyType: ['electric'] as string[],
   });
+  // 认领弹窗 - 项目下拉数据源
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [claimResult, setClaimResult] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -124,9 +134,11 @@ export function AnShengManagementPage() {
       if (claimedFilter !== null) params.claimed = claimedFilter;
 
       const response = await anshengApi.getDiscoveredDevices(params);
-      if (response.data.success && response.data.data) {
+      // 信封判定铁律：ApiResponse = { code, message, data, timestamp }，无 success 字段。
+      // 分页字段注意：/ansheng/discovered 是 total；/devices 端点才是 totalCount。
+      if (response.data.code === 200 && response.data.data) {
         setDiscoveredDevices(response.data.data.items || []);
-        setDiscoveredTotal(response.data.data.totalCount || 0);
+        setDiscoveredTotal(response.data.data.total ?? 0);
       } else {
         setDiscoveredDevices([]);
         setDiscoveredTotal(0);
@@ -168,7 +180,7 @@ export function AnShengManagementPage() {
     setAnshengDevicesLoading(true);
     try {
       const response = await deviceApi.getDevices(1, 200);
-      if (response.data.success && response.data.data) {
+      if (response.data.code === 200 && response.data.data) {
         const all = response.data.data.items || [];
         // 筛选出安圣设备（SerialNumber 为纯数字 IMEI 格式）
         const ansheng = all.filter(d => d.serialNumber && /^\d{10,20}$/.test(d.serialNumber));
@@ -198,12 +210,32 @@ export function AnShengManagementPage() {
     setClaimForm({
       deviceName: `安圣-${device.imei.substring(device.imei.length - 6)}`,
       model: device.model || '安圣充电桩',
-      category: 'power',
+      // 预填探测建议品类；Unknown/空则留空，强制用户显式选择（后端 KIND_REQUIRED 门禁）。
+      kind: device.suggestedKind && device.suggestedKind !== 'Unknown' ? device.suggestedKind : '',
+      projectId: '',
+      areaId: '',
       location: '',
-      energyTypes: 'electric',
+      energyType: ['electric'],
     });
     setClaimResult(null);
+    // 加载项目下拉（按当前选中租户过滤；超管无 currentCustomer 时取全部）
+    setLoadingProjects(true);
+    projectApi.getProjects(currentCustomer?.id ? String(currentCustomer.id) : undefined)
+      .then(res => { if (res.data.code === 200) setProjects(res.data.data.items || []); })
+      .catch(() => setProjects([]))
+      .finally(() => setLoadingProjects(false));
     setShowClaimModal(true);
+  };
+
+  // 能源类型多选切换（与 DevicesPage 新增设备逻辑一致）
+  const toggleEnergyType = (type: string) => {
+    setClaimForm(prev => {
+      const current = prev.energyType || [];
+      const next = current.includes(type)
+        ? current.filter(t => t !== type)
+        : [...current, type];
+      return { ...prev, energyType: next };
+    });
   };
 
   const handleClaimSubmit = async () => {
@@ -211,18 +243,30 @@ export function AnShengManagementPage() {
       setClaimResult({ success: false, message: '请输入设备名称' });
       return;
     }
+    if (!claimForm.kind) {
+      setClaimResult({ success: false, message: '请选择设备品类（探测未推断出时必须人工指定）' });
+      return;
+    }
     setClaiming(true);
     setClaimResult(null);
     try {
+      // 后端 ClaimAnShengDeviceRequest 接收 name（必填）/ imei / kind（必填）/ areaId /
+      // projectId / energyTypes 等，见 DTOs/Requests/AnShengRequests.cs:19。
+      // kind 必传：probeStatus=NotProbed 且不传 kind 会被 KIND_REQUIRED 门禁拒绝
+      // （品类决定下发策略与能力拦截，宁拒不落 Unknown 档）。
       const response = await anshengApi.claimDevice({
         discoveredDeviceId: claimingDevice.id,
-        deviceName: claimForm.deviceName.trim(),
-        model: claimForm.model || undefined,
-        category: claimForm.category,
-        location: claimForm.location || undefined,
-        energyTypes: claimForm.energyTypes,
+        name: claimForm.deviceName.trim(),
+        kind: claimForm.kind,
+        // 超管代顶栏选中租户认领：后端仅超管接受此值，非超管被忽略（以 JWT 租户为准）。
+        appCode: currentCustomer?.appCode || undefined,
+        // 所属项目 / 区域 / 能耗类型：前端已选则下发（与新增设备页同一契约）。
+        areaId: claimForm.areaId ? Number(claimForm.areaId) : null,
+        projectId: claimForm.projectId ? Number(claimForm.projectId) : null,
+        energyTypes: (claimForm.energyType || []).join(','),
       });
-      if (response.data.success && response.data.data?.success) {
+      // 外层信封看 code；data.success 是 ClaimAnShengDeviceResponse 自身的业务结果字段。
+      if (response.data.code === 200 && response.data.data?.success) {
         setClaimResult({ success: true, message: `设备 "${response.data.data.deviceName}" 认领成功` });
         await loadDiscoveredDevices();
         await loadAnShengDevices();
@@ -262,7 +306,7 @@ export function AnShengManagementPage() {
       // 二开设备命令 — 按 method 路由到专用 API
       const isOpenDevice = activeTab === 'opendevice';
       const method = selectedTemplate.method;
-      let response: { data: { success: boolean; message?: string; data?: AnShengCommandResponse } };
+      let response: { data: { code: number; message?: string; data?: AnShengCommandResponse } };
 
       if (isOpenDevice && method === 'reboot') {
         response = await anshengApi.rebootDevice(selectedDeviceId) as any;
@@ -282,7 +326,7 @@ export function AnShengManagementPage() {
         }) as any;
       }
 
-      if (response.data.success) {
+      if (response.data.code === 200) {
         setSendResult({ success: true, message: `指令 ${selectedTemplate.method} 已下发` });
         setCommandLog(prev => [{
           time: new Date(),
@@ -500,7 +544,7 @@ export function AnShengManagementPage() {
                         <td className="px-4 py-3 text-slate-300">{device.netType || '—'}</td>
                         <td className="px-4 py-3">{getClaimStatusBadge(device.isClaimed)}</td>
                         <td className="px-4 py-3">{getOnlineBadge(device.lastSeenAt)}</td>
-                        <td className="px-4 py-3 text-slate-400 text-xs">{formatTime(device.firstSeenAt)}</td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{formatTime(device.discoveredAt)}</td>
                         <td className="px-4 py-3 text-slate-400 text-xs">{formatTime(device.lastSeenAt)}</td>
                         <td className="px-4 py-3 text-right">
                           {!device.isClaimed && canCreate && (
@@ -1012,7 +1056,7 @@ export function AnShengManagementPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-slate-500">首次发现</span>
-                    <span className="text-sm text-slate-300">{formatTime(claimingDevice.firstSeenAt)}</span>
+                    <span className="text-sm text-slate-300">{formatTime(claimingDevice.discoveredAt)}</span>
                   </div>
                 </div>
 
@@ -1044,47 +1088,73 @@ export function AnShengManagementPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">类别</label>
+                      <label className="block text-xs font-medium text-slate-400 mb-1">
+                        品类 <span className="text-red-400">*</span>
+                      </label>
                       <select
-                        value={claimForm.category}
-                        onChange={e => setClaimForm(prev => ({ ...prev, category: e.target.value }))}
+                        value={claimForm.kind}
+                        onChange={e => setClaimForm(prev => ({ ...prev, kind: e.target.value }))}
                         className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700/50 text-sm text-slate-200
                                    focus:outline-none focus:border-blue-500/50 transition-all"
                       >
-                        <option value="power">充电桩</option>
-                        <option value="sensor">传感器</option>
-                        <option value="controller">控制器</option>
-                        <option value="gateway">网关</option>
+                        {/* 与后端 AnShengDeviceKind 枚举一一对齐（JsonStringEnumConverter 接受 PascalCase 字符串） */}
+                        <option value="">请选择品类</option>
+                        <option value="Switch4G">4G 开关</option>
+                        <option value="Speaker4G">4G 喇叭</option>
+                        <option value="SwitchWiFi">WiFi 开关</option>
+                        <option value="SpeakerWiFi">WiFi 喇叭</option>
                       </select>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">能源类型</label>
-                      <select
-                        value={claimForm.energyTypes}
-                        onChange={e => setClaimForm(prev => ({ ...prev, energyTypes: e.target.value }))}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700/50 text-sm text-slate-200
-                                   focus:outline-none focus:border-blue-500/50 transition-all"
-                      >
-                        <option value="electric">电</option>
-                        <option value="water">水</option>
-                        <option value="gas">气</option>
-                        <option value="electric,water">水 + 电</option>
-                        <option value="electric,gas">电 + 气</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-400 mb-1">位置</label>
-                      <input
-                        type="text"
-                        value={claimForm.location}
-                        onChange={e => setClaimForm(prev => ({ ...prev, location: e.target.value }))}
-                        placeholder="可选"
-                        className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700/50 text-sm text-slate-200
-                                   placeholder:text-slate-500 focus:outline-none focus:border-blue-500/50 transition-all"
-                      />
+                  {/* 所属项目 */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">所属项目</label>
+                    <select
+                      value={claimForm.projectId}
+                      onChange={e => setClaimForm(prev => ({ ...prev, projectId: e.target.value }))}
+                      disabled={loadingProjects}
+                      className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700/50 text-sm text-slate-200
+                                 placeholder:text-slate-500 focus:outline-none focus:border-blue-500/50 transition-all disabled:opacity-50"
+                    >
+                      <option value="">{loadingProjects ? '加载中...' : '请选择项目（可选）'}</option>
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name || ''}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 所属区域 */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">所属区域</label>
+                    <AreaTreeSelect
+                      areas={areaTree}
+                      value={claimForm.location}
+                      onChange={(name: string, id: string) =>
+                        setClaimForm(prev => ({ ...prev, location: name, areaId: id }))}
+                      placeholder="请选择区域（可选）"
+                    />
+                  </div>
+
+                  {/* 能源类型（多选 → 设备能耗类型） */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-1">能源类型</label>
+                    <div className="flex gap-5 px-1 py-2">
+                      {[
+                        { type: 'electric', label: '用电' },
+                        { type: 'gas', label: '用气' },
+                        { type: 'water', label: '用水' },
+                      ].map(item => (
+                        <label key={item.type} className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={claimForm.energyType?.includes(item.type) ?? false}
+                            onChange={() => toggleEnergyType(item.type)}
+                            className="rounded border-slate-600 bg-slate-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-slate-900"
+                          />
+                          <span className="text-sm text-slate-300">{item.label}</span>
+                        </label>
+                      ))}
                     </div>
                   </div>
                 </div>

@@ -29,6 +29,14 @@ public class ClaimAnShengDeviceRequest
     [MaxLength(50)]
     public string? Imei { get; set; }
 
+    /// <summary>
+    /// 目标租户 AppCode。<b>仅超级管理员可指定</b>——超管在顶栏选中某租户后代其认领时传入；
+    /// 非超管一律以 JWT AppCode 为准，请求体里的值被控制器忽略（防越权写入他租户）。
+    /// 两者皆空时由服务层兜底（AnShengDiscoveryService.FallbackAppCode = "system"）。
+    /// </summary>
+    [MaxLength(50)]
+    public string? AppCode { get; set; }
+
     /// <summary>设备名称</summary>
     [Required, MaxLength(100)]
     public string Name { get; set; } = string.Empty;
@@ -45,6 +53,14 @@ public class ClaimAnShengDeviceRequest
 
     /// <summary>所属项目 ID（可选）</summary>
     public long? ProjectId { get; set; }
+
+    /// <summary>
+    /// 能耗类型（可选）。逗号分隔字符串（如 "electric,water"）或 JSON 数组串；
+    /// 服务层经 <c>DeviceService.NormalizeEnergyTypesJson</c> 归一化为 JSON 数组串写入
+    /// <c>devices.EnergyTypes</c>（MySQL json 列）。空 = 不设置（沿用设备默认）。
+    /// </summary>
+    [MaxLength(200)]
+    public string? EnergyTypes { get; set; }
 
     /// <summary>
     /// 协议配置 ID。为空时由服务层按 IMEI 所属租户的安圣协议配置自动选取。

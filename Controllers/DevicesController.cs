@@ -129,10 +129,30 @@ public class DevicesController : ControllerBase
     [PermissionAuthorize(Permissions.CREATE_DEVICES)]
     public async Task<ActionResult<ApiResponse<DeviceDto>>> CreateDevice([FromBody] CreateDeviceRequest request)
     {
+        // ── T2 权限收敛：仅超级管理员可走「直接新增」兜底通道 ──
+        // PermissionFilter 已放行所有持 CREATE_DEVICES 的角色（含租户 admin/operator），
+        // 此处再做服务端强校验：非超级管理员一律 403，杜绝租户越权建设备（风险 R3）。
+        // 超级管理员判据取自 ClaimTypes.Role（与 PermissionFilter L37-39 同源）。
+        var role = User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+        if (role != IoTPlatform.Configuration.Roles.SUPER_ADMIN)
+        {
+            // 返回泛型 ApiResponse<DeviceDto> 以保持与动作返回类型一致（HTTP 仍为 200，业务码 403）。
+            var forbidden = ApiResponse<DeviceDto>.Fail(
+                403, "仅超级管理员可直接新增设备，请走认领流程或由超级管理员操作。");
+            return Ok(forbidden);
+        }
+
         try
         {
             var result = await _deviceService.CreateDeviceAsync(request);
             return ApiResponse<DeviceDto>.Success(result, "设备创建成功");
+        }
+        catch (DeviceRegistrationException ex)
+        {
+            // 去重 / 存在性 / 越权类拒绝：按异常携带的语义状态码映射（403 / 409）。
+            // 返回泛型 ApiResponse<DeviceDto> 以保持与动作返回类型一致。
+            var response = ApiResponse<DeviceDto>.Fail(ex.StatusCode, ex.Message);
+            return Ok(response);
         }
         catch (InvalidOperationException ex)
         {

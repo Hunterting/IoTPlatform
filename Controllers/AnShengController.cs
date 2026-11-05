@@ -91,13 +91,27 @@ public class AnShengController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
+            var isSuperAdmin = User.FindFirst(ClaimTypes.Role)?.Value
+                == IoTPlatform.Configuration.Roles.SUPER_ADMIN;
 
             var query = _db.Set<DiscoveredAnShengDevice>().AsQueryable();
 
-            // 租户隔离
-            if (!string.IsNullOrEmpty(appCode))
+            // 租户隔离（T4 收敛，见设计 §4 T4）：
+            //   · 超级管理员：<b>不过滤</b>，返回全部记录（含历史 AppCode 行与尚未归属的 NULL 行），
+            //     彻底消除「池子假空」——超级管理员视角下「空」即确无写入行。
+            //   · 租户：严格按自身 AppCode，<b>不再</b>把 AppCode 为 NULL 的行算作可见，
+            //     避免「某角色看似有数据、另一角色看不到」的跨租户假空歧义（风险 R5）。
+            if (!isSuperAdmin)
             {
-                query = query.Where(d => d.AppCode == null || d.AppCode == appCode);
+                if (string.IsNullOrEmpty(appCode))
+                {
+                    // 理论由 TenantFilter 已拦截；此处兜底返回空集而非崩溃。
+                    query = query.Where(d => false);
+                }
+                else
+                {
+                    query = query.Where(d => d.AppCode == appCode);
+                }
             }
 
             // 认领状态筛选
@@ -223,6 +237,15 @@ public class AnShengController : ControllerBase
 
         try
         {
+            var isSuperAdmin = User.FindFirst(ClaimTypes.Role)?.Value == IoTPlatform.Configuration.Roles.SUPER_ADMIN;
+            var jwtAppCode = User.FindFirst("AppCode")?.Value ?? string.Empty;
+            // 目标租户解析：超管可经请求体 AppCode 显式指定（前端顶栏选中租户，代租户认领）；
+            // 非超管忽略请求体值、一律以 JWT 租户为准，防止越权把设备认到他租户名下。
+            // 两者皆空时由服务层兜底（AnShengDiscoveryService.FallbackAppCode = "system"）。
+            var effectiveAppCode = isSuperAdmin && !string.IsNullOrWhiteSpace(request.AppCode)
+                ? request.AppCode.Trim()
+                : jwtAppCode;
+
             var result = await _discoveryService.ClaimAsync(new AnShengClaimCommand
             {
                 DiscoveredDeviceId = request.DiscoveredDeviceId,
@@ -231,10 +254,12 @@ public class AnShengController : ControllerBase
                 Kind = request.Kind,
                 AreaId = request.AreaId,
                 ProjectId = request.ProjectId,
+                EnergyTypes = request.EnergyTypes,
                 ProtocolConfigId = request.ProtocolConfigId,
                 GetDevStatusSec = request.GetDevStatusSec,
                 GetDevStatusQ = request.GetDevStatusQ,
-                AppCode = User.FindFirst("AppCode")?.Value ?? string.Empty
+                AppCode = effectiveAppCode,
+                IsSuperAdmin = isSuperAdmin
             }, ct);
 
             var payload = new ClaimAnShengDeviceResponse
@@ -284,6 +309,10 @@ public class AnShengController : ControllerBase
 
             AnShengClaimErrorCodes.PersistFailed =>
                 ApiResponse<ClaimAnShengDeviceResponse>.Error(message, payload),
+
+            // T3：跨租户认领被拒 → 403（ApiResponse 无 Forbidden(payload) 重载，用 Fail 直填）。
+            AnShengClaimErrorCodes.CrossTenant =>
+                ApiResponse<ClaimAnShengDeviceResponse>.Fail(403, message, payload),
 
             // ApiResponse 没有 409 工厂，按设计 §8.3 直填 Code。
             AnShengClaimErrorCodes.ProbeConflict =>

@@ -36,6 +36,9 @@ public static class AnShengClaimErrorCodes
 
     /// <summary>落库失败（唯一键冲突 / 数据库异常）。</summary>
     public const string PersistFailed = "PERSIST_FAILED";
+
+    /// <summary>跨租户认领被拒（非超级管理员试图认领归属其他租户的记录，T3）。</summary>
+    public const string CrossTenant = "CROSS_TENANT";
 }
 
 /// <summary>
@@ -66,6 +69,9 @@ public sealed class AnShengClaimCommand
     /// <summary>所属项目主键。</summary>
     public long? ProjectId { get; init; }
 
+    /// <summary>能耗类型（可选）。逗号分隔串或 JSON 数组；认领时归一化写入 Device.EnergyTypes（json 列）。</summary>
+    public string? EnergyTypes { get; init; }
+
     /// <summary>协议配置主键；为空时由服务层自动选取。</summary>
     public long? ProtocolConfigId { get; init; }
 
@@ -75,8 +81,16 @@ public sealed class AnShengClaimCommand
     /// <summary>自动上报查询参数。</summary>
     public string? GetDevStatusQ { get; init; }
 
-    /// <summary>当前租户码。由控制器从认证上下文取出后传入。</summary>
+    /// <summary>目标租户码。控制器已归一：超管可经请求体显式指定（代顶栏选中租户认领），非超管恒为 JWT 租户。</summary>
     public string AppCode { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 调用者是否为超级管理员。由控制器从认证上下文取出后传入。
+    ///
+    /// T3：跨租户认领拦截的依据。非超级管理员只能认领归属自身租户（<see cref="AppCode"/>）
+    /// 的待认领记录；超级管理员不受此限（核心职责即跨租户认领与设备归属调整）。
+    /// </summary>
+    public bool IsSuperAdmin { get; init; }
 }
 
 /// <summary>

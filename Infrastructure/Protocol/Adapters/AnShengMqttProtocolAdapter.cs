@@ -630,7 +630,8 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
             var topic = e.ApplicationMessage.Topic;
             var rawPayload = Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
 
-            _logger?.LogDebug("安圣 MQTT 消息: Topic={Topic}, Payload={Payload}", topic, rawPayload);
+            // T1 可观测性：仅记 topic，<b>不打印 payload 明文</b>（避免敏感字段落日志）。
+            _logger?.LogDebug("安圣 MQTT 消息到达: Topic={Topic}", topic);
 
             var message = _parser?.Parse(rawPayload);
 
@@ -641,9 +642,14 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
 
             if (string.IsNullOrEmpty(imei))
             {
-                _logger?.LogWarning("无法确定消息所属 IMEI: Topic={Topic}, Payload={Payload}", topic, rawPayload);
+                _logger?.LogWarning("无法确定消息所属 IMEI: Topic={Topic}", topic);
                 return Task.CompletedTask;
             }
+
+            // T1 可观测性：记录已解析到的 imei 与 topic，确认二开/安圣上行确实到达适配器
+            // （设计 §1.4 / T1 验收）。不打印 payload 明文。
+            _logger?.LogInformation(
+                "安圣 MQTT 上行到达: Topic={Topic}, IMEI={Imei}", topic, imei);
 
             // 学习设备品类，供后续下发决定是否注入 timestamp
             LearnDeviceKind(imei, message);

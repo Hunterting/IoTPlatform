@@ -43,7 +43,11 @@ export interface DeviceDetailDto extends DeviceDto {
 
 // 创建设备请求
 export interface CreateDeviceRequest {
-  appCode: string;
+  // 注意（T5 收敛）：appCode 不再被服务端信任为设备归属租户，此处保留仅为兼容。
+  // 设备归属由服务端按调用者身份决定；超级管理员需显式给出 targetAppCode。
+  appCode?: string | null;
+  // 目标租户码（仅超级管理员直接新增使用）。服务端据此确定设备归属，避免请求体劫持（风险 R3）。
+  targetAppCode?: string | null;
   name: string;
   model?: string | null;
   serialNumber?: string | null;

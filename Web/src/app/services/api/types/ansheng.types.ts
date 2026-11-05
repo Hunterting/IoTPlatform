@@ -1,35 +1,58 @@
 // 安圣 MQTT 设备管理相关类型定义
 
 // ── 安圣待认领设备 ──────────────────────────────────────────
+// 字段与后端 DiscoveredAnShengDeviceDto 出网形状（camelCase）一一对齐，
+// 勿凭记忆臆造字段名（firstSeenAt/createdAt/updatedAt 后端并不返回，首次发现是 discoveredAt）。
 export interface DiscoveredAnShengDeviceDto {
   id: number;
   imei: string;
   model?: string | null;
   netType?: string | null;
   isClaimed: boolean;
-  firstSeenAt: string;
+  claimedDeviceId?: number | null;
+  /** 首次发现时间 */
+  discoveredAt: string;
   lastSeenAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
+  kind?: string | null;
+  kindName?: string | null;
+  suggestedKind?: string | null;
+  suggestedKindName?: string | null;
+  slotAmount?: number | null;
+  version?: string | null;
+  iccid?: string | null;
+  probeStatus?: string | null;
+  probeError?: string | null;
+  lastProbedAt?: string | null;
 }
 
 // ── 待认领设备列表分页响应 ──────────────────────────────────
+// 注意：/ansheng/discovered 的分页计数字段是 total（不是 /devices 端点的 totalCount）。
 export interface DiscoveredDeviceListResponse {
   items: DiscoveredAnShengDeviceDto[];
-  totalCount: number;
+  total: number;
   page: number;
   pageSize: number;
 }
 
 // ── 认领设备请求 ────────────────────────────────────────────
+// 与后端 ClaimAnShengDeviceRequest（DTOs/Requests/AnShengRequests.cs:19）逐字段对齐。
+// 铁律：字段名精确匹配 —— 曾臆造 deviceName 导致 400「The Name field is required」。
 export interface ClaimAnShengDeviceRequest {
-  discoveredDeviceId: number;
-  deviceName: string;
-  model?: string | null;
-  category?: string | null;
-  location?: string | null;
+  discoveredDeviceId?: number;
+  imei?: string;
+  /** 设备名称（后端必填） */
+  name: string;
+  /** 品类枚举：Unknown | Speaker4G | Switch4G | SpeakerWiFi | SwitchWiFi；缺省 Unknown = 交给探测推断 */
+  kind?: string | null;
+  /** 目标租户 AppCode（仅超管可指定=顶栏选中租户；非超管后端忽略此值、以 JWT 租户为准） */
+  appCode?: string | null;
+  areaId?: number | null;
+  projectId?: number | null;
+  /** 能耗类型（逗号分隔串，如 "electric,water"；服务层归一化为 JSON 数组串落 devices.EnergyTypes） */
   energyTypes?: string | null;
-  status?: string;
+  protocolConfigId?: number | null;
+  getDevStatusSec?: number | null;
+  getDevStatusQ?: string | null;
 }
 
 // ── 认领设备响应 ────────────────────────────────────────────
@@ -37,7 +60,9 @@ export interface ClaimAnShengDeviceResponse {
   success: boolean;
   deviceId?: number | null;
   deviceName?: string | null;
+  errorCode?: string | null;
   errorMessage?: string | null;
+  kind?: string | null;
 }
 
 // ── 安圣命令请求 ────────────────────────────────────────────

@@ -343,7 +343,9 @@ export const adaptCreateDeviceRequest = (
 
   return {
     name: deviceItem.name,
+    // T5 收敛：appCode 降级为可忽略；超级管理员直接新增时改用 targetAppCode 指定目标租户。
     appCode: deviceItem.appCode,
+    targetAppCode: deviceItem.targetAppCode ?? deviceItem.appCode,
     model: deviceItem.model,
     serialNumber: deviceItem.serialNumber,
     category: deviceItem.category,
