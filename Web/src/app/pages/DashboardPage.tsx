@@ -8,7 +8,107 @@ import {
 } from 'recharts';
 import { Cloud, ChevronDown, User, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ALARM_COUNT, FAULT_COUNT, ACTIVE_WORK_ORDER_COUNT, SHARED_ALERT_RECORDS, AlertRecord } from '@/app/config/sharedMockData';
+import {
+  dashboardApi,
+  type AlertDto,
+  type AlertSummaryDto,
+  type MonitoringDataDto,
+} from '@/app/services/api/dashboardApi';
+
+// ─── Real backend data helpers ───────────────────────────────────────────────
+// 解析设备原始上报里被序列化成 JSON 字符串的字段（tasks / EMdata / slots）。
+function tryParseJson(s: unknown): unknown | null {
+  if (typeof s !== 'string') return null;
+  const t = s.trim();
+  if (!(t.startsWith('[') || t.startsWith('{'))) return null;
+  try { return JSON.parse(t); } catch { return null; }
+}
+function firstArrayItem(s: unknown): Record<string, unknown> | null {
+  const parsed = tryParseJson(s);
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && typeof parsed[0] === 'object') {
+    return parsed[0] as Record<string, unknown>;
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return null;
+}
+function toNum(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+function fmtHHmm(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '--:--';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+interface AlertEventView {
+  time: string;
+  content: string;
+  status: string;
+  color: string;
+}
+
+const ALERT_TYPE_LABEL: Record<string, string> = {
+  temperature: '温度异常',
+  pressure: '压力异常',
+  offline: '设备离线',
+  power: '功率异常',
+  smoke: '烟雾异常',
+  door: '门体异常',
+};
+
+function toAlertEventView(alert: AlertDto): AlertEventView {
+  let status = '待处理';
+  if (alert.status === 'processing') status = '处理中';
+  else if (alert.status === 'resolved') status = '已处理';
+  else if (alert.status === 'ignored') status = '已忽略';
+
+  let color = '#00c3ff';
+  if (alert.level === 'critical') color = '#ff4444';
+  else if (alert.level === 'warning' || status === '处理中') color = '#ffaa00';
+
+  return {
+    time: fmtHHmm(alert.alertTime),
+    content: `${alert.deviceName} ${ALERT_TYPE_LABEL[alert.alertType] || alert.alertType || '异常'}`,
+    status,
+    color,
+  };
+}
+
+/** 把真实监控记录按时间升序排列，构造三条曲线的数据点 */
+interface ChartPoint {
+  t: string;
+  temperature: number | null;
+  signal: number | null;
+  power: number | null;
+  current: number | null;
+  emPower: number | null;
+}
+function buildChartPoints(records: MonitoringDataDto[], limit = 12): ChartPoint[] {
+  const sorted = [...records].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  return sorted.slice(-limit).map((r) => {
+    const sv = (r.sensorValues || {}) as Record<string, unknown>;
+    const task = firstArrayItem(sv.tasks);
+    const em = firstArrayItem(sv.EMdata);
+    return {
+      t: fmtHHmm(r.timestamp),
+      temperature: toNum(sv.temperature),
+      signal: toNum(sv.signal),
+      power: task ? toNum(task.power) : null,
+      current: task ? toNum(task.current) : null,
+      emPower: em ? toNum(em.p) : null,
+    };
+  });
+}
 
 // ─── Real-time clock ─────────────────────────────────────────────────────────
 function useClock() {
@@ -124,13 +224,8 @@ function FloorPlan3D({
     return lvl2.slice(0, 8);
   }, [areas]);
 
-  // Fallback demo zones when no real data
-  const displayAreas: Area[] = zoneAreas.length > 0 ? zoneAreas : [
-    { id: 'demo1', name: '大厅区',   type: 'level2', image: '', deviceCount: 45 },
-    { id: 'demo2', name: '中央厨房', type: 'level2', image: '', deviceCount: 52 },
-    { id: 'demo3', name: '冷库',     type: 'level2', image: '', deviceCount: 12 },
-    { id: 'demo4', name: '备餐间',   type: 'level2', image: '', deviceCount: 18 },
-  ];
+  // 无真实区域数据时展示空态（不再伪造演示区域）
+  const displayAreas: Area[] = zoneAreas.length > 0 ? zoneAreas : [];
 
   const tiles = computeZoneTiles(displayAreas.length);
 
@@ -268,6 +363,16 @@ function FloorPlan3D({
           </text>
         )}
       </svg>
+
+      {/* 无真实区域数据时的空态 */}
+      {displayAreas.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-xs px-3 py-1.5 rounded"
+            style={{ color: '#5a8ab0', background: 'rgba(0,12,36,0.75)', border: '1px solid rgba(0,195,255,0.2)' }}>
+            暂无区域数据
+          </span>
+        </div>
+      )}
 
       {/* Level3 expansion popup on hover */}
       {hoveredId && level3Children.length > 0 && hoverPos && (
@@ -426,7 +531,76 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showCustomerMenu, setShowCustomerMenu] = useState(false);
 
-  // Stats
+  // ── 真实后端数据（每个来源独立容错，单接口 403/失败不影响整页） ──
+  const [alertSummary, setAlertSummary] = useState<AlertSummaryDto | null>(null);
+  const [alertEvents, setAlertEvents] = useState<AlertEventView[]>([]);
+  const [workOrderCount, setWorkOrderCount] = useState(0);
+  const [chartPoints, setChartPoints] = useState<ChartPoint[]>([]);
+  const [panelError, setPanelError] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const markError = (key: string, msg: string) => {
+      if (!cancelled) setPanelError((prev) => ({ ...prev, [key]: msg }));
+    };
+    const clearError = (key: string) => {
+      if (!cancelled) setPanelError((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+
+    const load = async () => {
+      // 运营情况 / 预警事件：告警汇总
+      dashboardApi.getAlertSummary()
+        .then((res) => {
+          if (cancelled) return;
+          if (res.code === 200 && res.data) { setAlertSummary(res.data); clearError('summary'); }
+          else markError('summary', res.message || '告警数据不可用');
+        })
+        .catch(() => markError('summary', '无权限或网络错误'));
+
+      // 预警事件列表（优先待处理，空则取最近）
+      dashboardApi.getAlerts({ page: 1, pageSize: 6, status: 'pending' })
+        .then(async (res) => {
+          if (cancelled) return;
+          let items = res.code === 200 && res.data ? (res.data.items || []) : [];
+          if (items.length === 0) {
+            try {
+              const fallback = await dashboardApi.getAlerts({ page: 1, pageSize: 6 });
+              items = fallback.code === 200 && fallback.data ? (fallback.data.items || []) : [];
+            } catch { /* 保持空 */ }
+          }
+          if (!cancelled) { setAlertEvents(items.map(toAlertEventView)); clearError('alerts'); }
+        })
+        .catch(() => markError('alerts', '无权限或网络错误'));
+
+      // 工单数
+      dashboardApi.getWorkOrderCount()
+        .then((res) => {
+          if (cancelled) return;
+          if (res.code === 200) { setWorkOrderCount(res.data ?? 0); clearError('workorders'); }
+          else markError('workorders', res.message || '工单数据不可用');
+        })
+        .catch(() => markError('workorders', '无权限或网络错误'));
+
+      // 环境/变频排风/能耗曲线：真实监控记录
+      dashboardApi.getRecentMonitoringData(50)
+        .then((res) => {
+          if (cancelled) return;
+          if (res.code === 200) { setChartPoints(buildChartPoints(res.data || [])); clearError('monitor'); }
+          else markError('monitor', res.message || '监控数据不可用');
+        })
+        .catch(() => markError('monitor', '无权限或网络错误'));
+    };
+
+    load();
+    const timer = setInterval(load, 30000); // 与设备上行频率一致
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  // Stats（真实设备列表，无任何假兜底）
   const totalDevices   = devices.length;
   const onlineDevices  = devices.filter(d => d.status === 'online' || d.status === 'warning').length;
   const offlineDevices = devices.filter(d => d.status === 'offline').length;
@@ -462,78 +636,29 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
     return lvl2.slice(0, 8);
   }, [areas]);
 
-  // ── Mock data ──
-  const envData = [
-    { t: '03:00', pm25: 22, co: 35, ch2o: 12, temp: 18 },
-    { t: '04:00', pm25: 30, co: 42, ch2o: 15, temp: 17 },
-    { t: '05:00', pm25: 28, co: 45, ch2o: 18, temp: 17 },
-    { t: '06:00', pm25: 50, co: 60, ch2o: 22, temp: 18 },
-    { t: '07:00', pm25: 65, co: 58, ch2o: 28, temp: 18 },
-    { t: '08:00', pm25: 45, co: 52, ch2o: 20, temp: 19 },
-    { t: '09:00', pm25: 38, co: 48, ch2o: 17, temp: 20 },
-    { t: '10:00', pm25: 42, co: 55, ch2o: 19, temp: 20 },
-    { t: '11:00', pm25: 35, co: 40, ch2o: 14, temp: 21 },
-    { t: '12:00', pm25: 30, co: 38, ch2o: 13, temp: 21 },
-  ];
+  // ── 真实曲线数据（全部来自 /monitoring/data 的设备上报，绝不编造数值） ──
+  // 环境监测：温度 / 信号强度（当前设备上报的真实指标）
+  const envData = chartPoints.map((p) => ({
+    t: p.t,
+    temperature: p.temperature,
+    signal: p.signal,
+  }));
+  const hasEnvData = envData.some(d => d.temperature !== null || d.signal !== null);
 
-  const energyData = [
-    { d: '4日', v: 22491 },
-    { d: '5日', v: 16585 },
-    { d: '6日', v: 25000 },
-    { d: '7日', v: 12353 },
-    { d: '8日', v: 15072 },
-    { d: '9日', v: 8023 },
-    { d: '10日', v: 14311 },
-  ];
+  // 变频排风：tasks[].power（功率）/ tasks[].current（电流）
+  const fanData = chartPoints.map((p) => ({ t: p.t, power: p.power, current: p.current }));
+  const hasFanData = fanData.some(d => d.power !== null || d.current !== null);
 
-  const fanData = [
-    { t: '03:00', power: 120, wind: 8 },
-    { t: '04:00', power: 98, wind: 6 },
-    { t: '05:00', power: 150, wind: 10 },
-    { t: '06:00', power: 200, wind: 13 },
-    { t: '07:00', power: 265, wind: 15 },
-    { t: '08:00', power: 180, wind: 12 },
-    { t: '09:00', power: 160, wind: 11 },
-    { t: '10:00', power: 145, wind: 10 },
-    { t: '11:00', power: 130, wind: 9 },
-    { t: '12:00', power: 110, wind: 8 },
-  ];
+  // 能耗统计：EMdata[].p（瞬时功率），按采样时刻展示
+  const energyData = chartPoints
+    .filter((p) => p.emPower !== null)
+    .map((p) => ({ d: p.t, v: p.emPower as number }));
+  const hasEnergyData = energyData.length > 0;
 
-  // 获取最近的预警事件，只显示待处理和处理中的，转换格式用于显示
-  const alertEvents = SHARED_ALERT_RECORDS
-    .filter(alert => alert.status === 'pending' || alert.status === 'processing')
-    .slice(0, 6)
-    .map(alert => {
-      // 根据状态和级别决定颜色
-      let color = '#00c3ff';
-      let statusText = '待处理';
-      
-      if (alert.status === 'processing') {
-        color = '#ffaa00';
-        statusText = '处理中';
-      } else if (alert.status === 'pending' && alert.level === 'critical') {
-        color = '#ff4444';
-        statusText = '待处理';
-      }
-      
-      // 组合设备名称和告警类型作为内容
-      const typeMap: Record<string, string> = {
-        temperature: '温度异常',
-        pressure: '压力异常',
-        offline: '设备离线',
-        power: '功率异常',
-        smoke: '烟雾异常',
-        door: '门体异常',
-      };
-      const content = `${alert.deviceName} ${typeMap[alert.alertType] || '异常'}`;
-      
-      return {
-        time: alert.alertTime.slice(5, 16), // 只显示月日时分
-        content,
-        status: statusText,
-        color,
-      };
-    });
+  // 运营情况三圈（真实告警汇总，空即为 0）
+  const alarmCount = alertSummary?.pendingAlerts ?? 0;
+  const faultCount = alertSummary?.criticalAlerts ?? 0;
+  const workOrderStat = workOrderCount;
 
   const [envTab, setEnvTab] = useState<'today' | '7days' | 'month'>('today');
   const [projectFilter] = useState('项目筛选');
@@ -560,7 +685,7 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <Cloud className="w-5 h-5 text-gray-300" />
-            <span className="text-sm text-gray-300">多云 12-17°C</span>
+            <span className="text-sm text-gray-400">天气服务未接入</span>
           </div>
           
           {/* Customer Selector (for super admin) */}
@@ -694,13 +819,18 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
             </div>
           </Panel>
 
-          {/* 运营情况 */}
+          {/* 运营情况（真实：告警汇总 + 工单数；无权限时显示提示） */}
           <Panel title="运营情况">
             <div className="flex justify-around items-center py-1">
-              <CircleStat value={ALARM_COUNT}              max={Math.max(ALARM_COUNT, 10)}              label="报警"   color="#ff4444" />
-              <CircleStat value={FAULT_COUNT}              max={Math.max(FAULT_COUNT, 10)}              label="故障"   color="#ffaa00" />
-              <CircleStat value={ACTIVE_WORK_ORDER_COUNT}  max={Math.max(ACTIVE_WORK_ORDER_COUNT, 10)}  label="工单"   color="#00c3ff" />
+              <CircleStat value={alarmCount}     max={Math.max(alarmCount, 10)}     label="待处理报警" color="#ff4444" />
+              <CircleStat value={faultCount}     max={Math.max(faultCount, 10)}     label="严重告警"   color="#ffaa00" />
+              <CircleStat value={workOrderStat}  max={Math.max(workOrderStat, 10)}  label="待处理工单" color="#00c3ff" />
             </div>
+            {(panelError.summary || panelError.workorders) && (
+              <div className="text-center text-xs mt-1" style={{ color: '#ffaa00' }}>
+                {panelError.summary || panelError.workorders}
+              </div>
+            )}
           </Panel>
 
           {/* 预警事件 */}
@@ -721,7 +851,9 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
                   </div>
                 ))
               ) : (
-                <div className="text-center py-4 text-xs text-gray-500">暂无待处理预警</div>
+                <div className="text-center py-4 text-xs" style={{ color: panelError.alerts ? '#ffaa00' : '#556' }}>
+                  {panelError.alerts || '暂无待处理预警'}
+                </div>
               )}
             </div>
           </Panel>
@@ -736,27 +868,33 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
             }
             className="flex-1">
             <div style={{ height: 110 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={fanData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="fanPower" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#ffaa00" stopOpacity="0.4" />
-                      <stop offset="95%" stopColor="#ffaa00" stopOpacity="0.0" />
-                    </linearGradient>
-                    <linearGradient id="fanWind" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#00c3ff" stopOpacity="0.4" />
-                      <stop offset="95%" stopColor="#00c3ff" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
-                  <XAxis dataKey="t" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                  <YAxis yAxisId="l" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                  <YAxis yAxisId="r" orientation="right" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                  <Tooltip contentStyle={chartTooltipStyle} />
-                  <RechartsArea key="fan-power" yAxisId="l" type="monotone" dataKey="power" stroke="#ffaa00" strokeWidth={1.5} fill="url(#fanPower)" name="功率(kW)" />
-                  <RechartsArea key="fan-wind" yAxisId="r" type="monotone" dataKey="wind" stroke="#00c3ff" strokeWidth={1.5} fill="url(#fanWind)" name="风速(m/s)" />
-                </AreaChart>
-              </ResponsiveContainer>
+              {hasFanData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={fanData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="fanPower" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#ffaa00" stopOpacity="0.4" />
+                        <stop offset="95%" stopColor="#ffaa00" stopOpacity="0.0" />
+                      </linearGradient>
+                      <linearGradient id="fanWind" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%"  stopColor="#00c3ff" stopOpacity="0.4" />
+                        <stop offset="95%" stopColor="#00c3ff" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
+                    <XAxis dataKey="t" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
+                    <YAxis yAxisId="l" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
+                    <YAxis yAxisId="r" orientation="right" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
+                    <Tooltip contentStyle={chartTooltipStyle} />
+                    <RechartsArea key="fan-power" yAxisId="l" type="monotone" dataKey="power" stroke="#ffaa00" strokeWidth={1.5} fill="url(#fanPower)" name="功率(kW)" connectNulls />
+                    <RechartsArea key="fan-current" yAxisId="r" type="monotone" dataKey="current" stroke="#00c3ff" strokeWidth={1.5} fill="url(#fanWind)" name="电流(A)" connectNulls />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
+                  {panelError.monitor || '暂无设备功率/电流上报数据'}
+                </div>
+              )}
             </div>
           </Panel>
         </div>
@@ -821,24 +959,29 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
             }
             className="flex-none">
             <div style={{ height: 120 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={envData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
-                  <XAxis dataKey="t" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                  <YAxis stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                  <Tooltip contentStyle={chartTooltipStyle} />
-                  <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '2px' }} />
-                  <Line key="env-pm25" type="monotone" dataKey="pm25" stroke="#00c3ff" strokeWidth={1.5} dot={false} name="PM2.5浓度" />
-                  <Line key="env-co" type="monotone" dataKey="co" stroke="#00ff9f" strokeWidth={1.5} dot={false} name="一氧化碳浓度" />
-                  <Line key="env-ch2o" type="monotone" dataKey="ch2o" stroke="#ff6b6b" strokeWidth={1.5} dot={false} name="甲醛浓度" />
-                  <Line key="env-temp" type="monotone" dataKey="temp" stroke="#ffaa00" strokeWidth={1.5} dot={false} name="温湿度" />
-                </LineChart>
-              </ResponsiveContainer>
+              {hasEnvData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={envData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
+                    <XAxis dataKey="t" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
+                    <YAxis yAxisId="l" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
+                    <YAxis yAxisId="r" orientation="right" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
+                    <Tooltip contentStyle={chartTooltipStyle} />
+                    <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '2px' }} />
+                    <Line key="env-temp" yAxisId="l" type="monotone" dataKey="temperature" stroke="#ffaa00" strokeWidth={1.5} dot={false} name="温度(°C)" connectNulls />
+                    <Line key="env-signal" yAxisId="r" type="monotone" dataKey="signal" stroke="#00c3ff" strokeWidth={1.5} dot={false} name="信号强度" connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
+                  {panelError.monitor || '暂无设备温度/信号上报数据'}
+                </div>
+              )}
             </div>
             <div className="flex gap-4 mt-1 px-1">
-              <span className="text-xs" style={{ color: '#ff6b6b' }}>▲ 超阈值: PM2.5</span>
-              <span className="text-xs" style={{ color: '#ffaa00' }}>▲ 超阈值: 甲醛</span>
-              <span className="text-xs text-gray-500">日期/月份</span>
+              <span className="text-xs" style={{ color: '#ffaa00' }}>温度(°C)</span>
+              <span className="text-xs" style={{ color: '#00c3ff' }}>信号强度</span>
+              <span className="text-xs text-gray-500">数据来自设备真实上报</span>
             </div>
           </Panel>
         </div>
@@ -846,49 +989,26 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
         {/* ══ RIGHT COLUMN ══ */}
         <div className="flex flex-col gap-2 min-h-0 overflow-hidden">
 
-          {/* 实时视频监控 */}
+          {/* 实时视频监控（后端暂无摄像头/视频流接口，诚实占位，不伪造事件） */}
           <Panel title="实时视频监控" className="flex-none">
             <div className="grid grid-cols-2 gap-1.5">
-              {[
-                { src: 'https://images.unsplash.com/photo-1740803292814-13d2e35924c3?w=300&q=80', label: '主厨房' },
-                { src: 'https://images.unsplash.com/photo-1771574207826-02f0d845e3a7?w=300&q=80', label: '操作台' },
-              ].map((cam, i) => (
-                <div key={i} className="relative rounded overflow-hidden" style={{ aspectRatio: '16/9' }}>
-                  <img src={cam.src} alt={cam.label} className="w-full h-full object-cover" />
-                  <div className="absolute inset-0" style={{ background: 'rgba(0,10,30,0.3)' }} />
-                  <div className="absolute top-1 left-1 flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-xs" style={{ color: '#ffffff', textShadow: '0 0 4px #000' }}>REC</span>
-                  </div>
-                  <div className="absolute" style={{ top: '25%', left: '20%', width: '30%', height: '50%', border: '1px solid #00ff9f', boxShadow: '0 0 4px #00ff9f' }}>
-                    <span className="absolute -top-4 left-0 text-xs" style={{ color: '#00ff9f', fontSize: 9 }}>员工识别</span>
-                  </div>
-                  <div className="absolute bottom-1 left-1 right-1 text-xs truncate"
-                    style={{ color: '#ffffff', textShadow: '0 0 4px #000', fontSize: 9 }}>
-                    {cam.label}
-                  </div>
+              {['画面 1', '画面 2'].map((label, i) => (
+                <div key={i} className="relative rounded overflow-hidden flex items-center justify-center"
+                  style={{ aspectRatio: '16/9', background: 'rgba(0,20,50,0.6)', border: '1px dashed rgba(0,195,255,0.25)' }}>
+                  <span className="text-xs" style={{ color: '#4a7a9f' }}>暂无视频源</span>
                 </div>
               ))}
             </div>
-            <div className="mt-2 space-y-1">
-              {[
-                { label: '时间', value: '2024-08-25 09:52' },
-                { label: '地点', value: '主厨房' },
-                { label: '事件', value: '打电话' },
-              ].map(item => (
-                <div key={item.label} className="flex gap-2 text-xs">
-                  <span className="text-gray-500 w-8 flex-shrink-0">{item.label}</span>
-                  <span style={{ color: '#8ecfff' }}>{item.value}</span>
-                </div>
-              ))}
+            <div className="mt-2 text-center text-xs" style={{ color: '#5a8ab0' }}>
+              暂未接入摄像头 / 视频流服务
             </div>
           </Panel>
 
-          {/* 设备情况 */}
+          {/* 设备情况（真实设备统计，无假兜底） */}
           <Panel title="设备情况">
             <DeviceDonut
-              online={onlineDevices || 5200}
-              offline={offlineDevices || 92}
+              online={onlineDevices}
+              offline={offlineDevices}
             />
           </Panel>
 
@@ -906,20 +1026,26 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
             }
             className="flex-1">
             <div style={{ height: 120 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={energyData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" vertical={false} />
-                  <XAxis dataKey="d" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                  <YAxis stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                  <Tooltip contentStyle={chartTooltipStyle} formatter={(v: number) => [v.toLocaleString(), '能耗(kWh)']} />
-                  <Bar key="energy-bar" dataKey="v" radius={[2, 2, 0, 0]} maxBarSize={24}>
-                    {energyData.map((entry, i) => (
-                      <Cell key={`energy-cell-${entry.d}-${i}`} fill={i === 2 ? '#00c3ff' : '#0a4a7a'}
-                        style={i === 2 ? { filter: 'drop-shadow(0 0 4px #00c3ff)' } : {}} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {hasEnergyData ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={energyData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" vertical={false} />
+                    <XAxis dataKey="d" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
+                    <YAxis stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
+                    <Tooltip contentStyle={chartTooltipStyle} formatter={(v: number) => [Number(v).toFixed(3), '瞬时功率(kW)']} />
+                    <Bar key="energy-bar" dataKey="v" radius={[2, 2, 0, 0]} maxBarSize={24}>
+                      {energyData.map((entry, i) => (
+                        <Cell key={`energy-cell-${entry.d}-${i}`} fill={i === energyData.length - 1 ? '#00c3ff' : '#0a4a7a'}
+                          style={i === energyData.length - 1 ? { filter: 'drop-shadow(0 0 4px #00c3ff)' } : {}} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
+                  {panelError.monitor || '暂无设备功率上报数据'}
+                </div>
+              )}
             </div>
           </Panel>
         </div>
