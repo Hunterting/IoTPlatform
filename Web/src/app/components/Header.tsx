@@ -50,6 +50,7 @@ export function Header({ currentPage }: HeaderProps) {
     'settings-devices': '设备设置',
     'settings-api': 'API设置',
     'settings-dictionary': '字典管理',
+    'settings-database': '数据库管理',
   };
 
   const pageTitle = pageTitles[currentPage] || '';

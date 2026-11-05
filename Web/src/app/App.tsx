@@ -29,6 +29,7 @@ import { AnShengManagementPage } from '@/app/pages/AnShengManagementPage';
 import { SwitchControlPage } from '@/app/pages/SwitchControlPage';
 import { ScheduleEditorPage } from '@/app/pages/ScheduleEditorPage';
 import { EnergyStatisticsPage } from '@/app/pages/EnergyStatisticsPage';
+import { DatabaseConfigPage } from '@/app/pages/DataCollectionApiSubPages';
 
 function AppContent() {
   const { user, currentCustomer } = useAuth();
@@ -121,6 +122,10 @@ function AppContent() {
       case 'settings-api':
       case 'settings-dictionary':
         return <SettingsPage activePage={currentPage} />;
+      case 'settings-database':
+        // 系统设置 → 数据库管理：复用「数据采集→数据库配置」的真实 API 页面
+        // （此前未进 switch，落到 default 渲染成工作台，是「页面不对」的主因）
+        return <DatabaseConfigPage />;
       case 'dictionary':
         return <DictionaryManagementPage />;
       default:

@@ -76,6 +76,7 @@ export type PageType =
   | 'settings-devices'
   | 'settings-api'
   | 'settings-dictionary'
+  | 'settings-database'
   | 'ansheng-management'
   | 'switch-control'
   | 'schedule-editor'
@@ -372,7 +373,7 @@ const menuItems: MenuItem[] = [
         id: 'settings-database',
         label: '数据库管理',
         icon: <Database className="w-4 h-4" />,
-        requiredPermission: PERMISSIONS.VIEW_DATABASE,
+        requiredPermission: PERMISSIONS.VIEW_DATABASE_CONFIG,
       },
     ],
   },

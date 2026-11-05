@@ -43,7 +43,8 @@ export function RuleEnginePage() {
     try {
       setLoading(true);
       const res = await dataRuleApi.getDataRules({ pageSize: 100 });
-      if (res.success && res.data) {
+      // 铁律：统一认 code === 200，后端 ApiResponse 无 success 字段
+      if (res.code === 200 && res.data) {
         setRules(res.data.items);
       }
     } catch (err) {
@@ -350,7 +351,9 @@ export function DatabaseConfigPage() {
     try {
       setLoading(true);
       const res = await databaseConfigApi.getDatabaseConfigs({ pageSize: 100 });
-      if (res.success && res.data) {
+      // 铁律：统一认 code === 200，后端 ApiResponse 无 success 字段
+      // （此前误用 res.success 导致列表恒空，是「数据库管理页面不对」的实质原因之一）
+      if (res.code === 200 && res.data) {
         setDatabases(res.data.items);
       }
     } catch (err) {
@@ -420,7 +423,7 @@ export function DatabaseConfigPage() {
   const handleTest = async (id: number) => {
     try {
       const res = await databaseConfigApi.testDatabaseConnectionById(id);
-      if (res.success && res.data) {
+      if (res.code === 200 && res.data === true) {
         alert('连接测试成功！');
       } else {
         alert('连接测试失败：' + (res.message || '未知错误'));
