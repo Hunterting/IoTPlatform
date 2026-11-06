@@ -186,7 +186,12 @@ public static class Roles
             Permissions.VIEW_PROTOCOL_CONFIG,
             Permissions.MANAGE_PROTOCOL_CONFIG,
             Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY
+            Permissions.MANAGE_PROTOCOL_GATEWAY,
+            // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
+            Permissions.VIEW_DICTIONARY,
+            Permissions.CREATE_DICTIONARY,
+            Permissions.UPDATE_DICTIONARY,
+            Permissions.DELETE_DICTIONARY
         };
     }
 
@@ -207,7 +212,12 @@ public static class Roles
             Permissions.VIEW_PROTOCOL_CONFIG,
             Permissions.MANAGE_PROTOCOL_CONFIG,
             Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY
+            Permissions.MANAGE_PROTOCOL_GATEWAY,
+            // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
+            Permissions.VIEW_DICTIONARY,
+            Permissions.CREATE_DICTIONARY,
+            Permissions.UPDATE_DICTIONARY,
+            Permissions.DELETE_DICTIONARY
         };
     }
 }
