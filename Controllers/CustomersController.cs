@@ -25,6 +25,21 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
+    /// 判断当前用户是否为「等同超管」角色（super_admin / admin）。
+    /// 在客户管理域，租户 admin 与超管一致：可见全部客户、可对任意客户增删改。
+    /// </summary>
+    private bool IsAdminLike()
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value;
+        return role == Roles.SUPER_ADMIN || role == Roles.ADMIN;
+    }
+
+    /// <summary>
+    /// 读取当前用户的租户 AppCode claim（可能为空）。
+    /// </summary>
+    private string? TenantAppCode() => User.FindFirst("AppCode")?.Value;
+
+    /// <summary>
     /// 获取客户列表
     /// </summary>
     [HttpGet]
@@ -37,11 +52,10 @@ public class CustomersController : ControllerBase
         {
             var query = _dbContext.Customers.AsQueryable();
 
-            // 超级管理员可以查看所有客户，其他角色只能查看所属客户
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-            if (role != Roles.SUPER_ADMIN)
+            // 超级管理员与租户 admin 可以查看所有客户，普通角色只能查看所属客户
+            if (!IsAdminLike())
             {
-                var appCode = User.FindFirst("AppCode")?.Value;
+                var appCode = TenantAppCode();
                 if (!string.IsNullOrEmpty(appCode))
                 {
                     query = query.Where(c => c.AppCode == appCode);
@@ -95,15 +109,16 @@ public class CustomersController : ControllerBase
     {
         try
         {
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-            var appCode = User.FindFirst("AppCode")?.Value;
-
             var query = _dbContext.Customers.AsQueryable();
 
-            // 超级管理员可以访问所有客户，其他角色只能访问自己的客户
-            if (role != Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode))
+            // 超级管理员与租户 admin 可以访问所有客户，普通角色只能访问自己的客户
+            if (!IsAdminLike())
             {
-                query = query.Where(c => c.AppCode == appCode);
+                var appCode = TenantAppCode();
+                if (!string.IsNullOrEmpty(appCode))
+                {
+                    query = query.Where(c => c.AppCode == appCode);
+                }
             }
 
             var customers = await query
@@ -150,10 +165,8 @@ public class CustomersController : ControllerBase
             return Ok(response);
             }
 
-            // 权限检查
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-            var appCode = User.FindFirst("AppCode")?.Value;
-            if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
+            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
+            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
             {
                 var response = ApiResponse.Forbidden("无权访问该客户");
             return Ok(response);
@@ -195,9 +208,34 @@ public class CustomersController : ControllerBase
     {
         try
         {
+            // 归属解析：admin/超管可指定任意新 AppCode（每个客户独立 AppCode）；
+            // 普通角色（纵深防御，类级 PermissionAuthorize 已挡住无 CREATE_CUSTOMERS 权限者）
+            // 不采信前端传入的 AppCode，强制使用自身 claim，防止伪造跨租户归属。
+            string? effectiveAppCode;
+            if (IsAdminLike())
+            {
+                effectiveAppCode = request.AppCode;
+            }
+            else
+            {
+                var tenantAppCode = TenantAppCode();
+                if (!string.IsNullOrEmpty(request.AppCode) && request.AppCode != tenantAppCode)
+                {
+                    var forbiddenResponse = ApiResponse.Forbidden("无权为该租户创建客户");
+                    return Ok(forbiddenResponse);
+                }
+                effectiveAppCode = tenantAppCode;
+            }
+
+            if (string.IsNullOrEmpty(effectiveAppCode))
+            {
+                var badRequestResponse = ApiResponse.BadRequest("应用代码不能为空");
+                return Ok(badRequestResponse);
+            }
+
             // 检查代码是否已存在
             var exists = await _dbContext.Customers
-                .AnyAsync(c => c.Code == request.Code || c.AppCode == request.AppCode);
+                .AnyAsync(c => c.Code == request.Code || c.AppCode == effectiveAppCode);
 
             if (exists)
             {
@@ -209,7 +247,7 @@ public class CustomersController : ControllerBase
             {
                 Name = request.Name,
                 Code = request.Code,
-                AppCode = request.AppCode,
+                AppCode = effectiveAppCode,
                 ContactPerson = request.Contact,
                 Phone = request.Phone,
                 Address = request.Address,
@@ -224,7 +262,7 @@ public class CustomersController : ControllerBase
                 Id = customer.Id,
                 Name = customer.Name,
                 Code = customer.Code,
-                AppCode = customer.AppCode,
+                AppCode = effectiveAppCode,
                 Contact = customer.ContactPerson,
                 Phone = customer.Phone,
                 Address = customer.Address,
@@ -259,10 +297,8 @@ public class CustomersController : ControllerBase
             return Ok(response);
             }
 
-            // 权限检查
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-            var appCode = User.FindFirst("AppCode")?.Value;
-            if (role != Roles.SUPER_ADMIN && customer.AppCode != appCode)
+            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
+            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
             {
                 var response = ApiResponse.Forbidden("无权修改该客户");
             return Ok(response);
@@ -318,6 +354,13 @@ public class CustomersController : ControllerBase
             {
                 var response = ApiResponse.NotFound("客户不存在");
             return Ok(response);
+            }
+
+            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
+            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
+            {
+                var forbiddenResponse = ApiResponse.Forbidden("无权删除该客户");
+                return Ok(forbiddenResponse);
             }
 
             // 检查是否有关联数据

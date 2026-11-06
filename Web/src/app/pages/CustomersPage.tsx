@@ -19,6 +19,9 @@ import * as contractApi from '@/app/services/api/contractApi';
 
 export function CustomersPage() {
   const { customers, user, hasPermission, updateCustomer, updateCustomerProjects, addCustomer } = useAuth();
+  // 撤销 9-A 只读：租户 admin 与超管一致，增删改由 CREATE/UPDATE/DELETE_CUSTOMERS 权限门控；
+  // 普通角色无这些权限，hasPermission 自然返回 false；「查看」按钮与详情弹窗内项目/合同操作不变
+  const isAdminLike = user?.role === 'super_admin' || user?.role === 'admin';
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -48,9 +51,12 @@ export function CustomersPage() {
 
   const filteredCustomers = customers
     .filter(customer => {
-      if (user?.role === 'super_admin') return true;
-      if (user?.appCode) return customer.appCode === user.appCode;
-      return false;
+      if (isAdminLike) return true;                                    // ① 超管/租户 admin 短路：看全部客户（零回归）
+      if (user?.appCode) return customer.appCode === user.appCode;       // ② 正常路径：防御性二次校验
+      // ③ 兼容兜底：AuthContext 已从隔离列表反推 appCode，此分支仅在收敛前的首帧短暂出现。
+      //    不能无条件 return true —— 后端 CustomersController 在 AppCode claim 为空时不过滤，
+      //    前后端同时放行会形成越权窗口；用「已隔离 ⇒ 最多 1 条」这一可证伪状态兜底。
+      return customers.length <= 1;
     })
     .filter(customer =>
       customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

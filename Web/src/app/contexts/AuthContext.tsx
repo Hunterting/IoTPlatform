@@ -2,11 +2,11 @@ import { createContext, useContext, useState, ReactNode, useCallback, useEffect 
 import { DEFAULT_ROLES, RoleDefinition, Permission } from '@/app/config/permissions';
 import { authApi } from '../services/api/authApi';
 import { customerApi } from '../services/api/customerApi';
-import { 
+import {
   adaptLoginResponseToUser,
   adaptCustomerDtoToCustomer,
   adaptCreateCustomerRequest,
-  adaptUpdateCustomerRequest 
+  adaptUpdateCustomerRequest
 } from '../services/adapters';
 
 export type UserRole = 'super_admin' | 'admin' | 'operator' | 'chef' | 'staff';
@@ -102,6 +102,33 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// ── 租户上下文纯函数（模块级，不进入 useCallback 依赖链）────────────────────────
+// 服务端已按 JWT AppCode claim 隔离：非超管拿到的列表即其所属客户，是权威数据源。
+// 优先级：appCode 匹配 → customerId 匹配（String 归一，见 F4）→ 单条收敛态。
+const deriveTenantContext = (u: User | null, list: Customer[]): Customer | null => {
+  if (!u || u.role === 'super_admin' || list.length === 0) return null;
+  const byAppCode = u.appCode ? list.find(c => c.appCode === u.appCode) : undefined;
+  if (byAppCode) return byAppCode;
+  const byId = u.customerId != null
+    ? list.find(c => String(c.id) === String(u.customerId))
+    : undefined;
+  if (byId) return byId;
+  return list.length === 1 ? list[0] : null;   // 隔离后仅 1 条 ⇒ 即本租户（9-B）
+};
+
+// 兼容「修复前已登录」的存量会话：localStorage.user.appCode / customerId 为 null 时静默自愈（9-C），
+// 无需强制重新登录。
+const patchTenantUser = (u: User, cc: Customer | null): User => {
+  if (!cc) return u;
+  if (u.appCode && u.customerId != null) return u;   // 已是完整态，避免无谓 setState / localStorage 写入
+  return {
+    ...u,
+    appCode: u.appCode ?? cc.appCode,
+    // 运行时 id 为 number、TS 声明为 string（F4）；不做 String() 以免与 c.id 类型失配
+    customerId: u.customerId ?? (cc.id as unknown as string),
+  };
+};
+
 // 初始状态，API加载前使用空数据
 
 
@@ -115,57 +142,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 加载客户列表 - 只在用户登录后加载
-  useEffect(() => {
-    const loadCustomers = async () => {
-      // 只有已登录用户才加载客户列表
-      const token = localStorage.getItem('token');
-      if (!token) {
-        return;
+  // ── 租户上下文单一入口 ──────────────────────────────────────────────────────
+  // applyCustomers 统一负责 customers / currentCustomer / user.appCode 三者的收敛，
+  // 任何路径（全新登录 / F5 / 关闭重开 / 旧版本 localStorage 升级 / 手动刷新）都走这里。
+  const applyCustomers = (list: Customer[], u: User | null) => {
+    setCustomers(list);
+    // 超管：只更新列表，绝不设置 currentCustomer（App.tsx 选择租户门控零回归）
+    if (!u || u.role === 'super_admin') return;
+    const cc = deriveTenantContext(u, list);
+    setCurrentCustomer(cc);
+    if (cc) {
+      localStorage.setItem('currentCustomer', JSON.stringify(cc));
+      // 旧会话 appCode / customerId 为 null 时静默自愈（9-C）
+      const patched = patchTenantUser(u, cc);
+      if (patched !== u) {
+        setUser(patched);
+        localStorage.setItem('user', JSON.stringify(patched));
       }
-      
-      try {
-        setLoading(true);
-        const response = await customerApi.getCustomers(1, 100);
-        // 注意：httpClient响应拦截器返回的是AxiosResponse，data是ApiResponse
-        if (response.data.code === 200) {
-          const adaptedCustomers = response.data.data.items.map(adaptCustomerDtoToCustomer);
-          setCustomers(adaptedCustomers);
-        }
-      } catch (err) {
-        console.error('Failed to load customers:', err);
+    } else {
+      localStorage.removeItem('currentCustomer');
+    }
+  };
+
+  // 单一 loadCustomers：保留原有 token 门控，但改为可按登录态 u 重入。
+  const loadCustomers = async (u: User | null): Promise<Customer[]> => {
+    if (!localStorage.getItem('token')) return [];
+    try {
+      setLoading(true);
+      // 注意：httpClient 响应拦截器返回完整 AxiosResponse，业务用 response.data.code / response.data.data.items
+      const response = await customerApi.getCustomers(1, 100);
+      if (response.data.code !== 200) {
         setError('加载客户列表失败');
-      } finally {
-        setLoading(false);
+        return [];
       }
-    };
+      const list = response.data.data.items.map(adaptCustomerDtoToCustomer);
+      applyCustomers(list, u);
+      return list;
+    } catch (err) {
+      console.error('Failed to load customers:', err);
+      setError('加载客户列表失败');
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    loadCustomers();
-  }, []);
-
-  // 检查本地存储的登录状态
+  // 挂载：合并原「加载客户列表」与「恢复本地登录态」两个 useEffect，路径同源
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const storedToken = localStorage.getItem('token');
-    
-    if (storedUser && storedToken) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        
-        // 如果有客户ID，设置当前客户
-        if (parsedUser.customerId) {
-          const storedCustomer = localStorage.getItem('currentCustomer');
-          if (storedCustomer) {
-            setCurrentCustomer(JSON.parse(storedCustomer));
-          }
-        }
-      } catch (err) {
-        console.error('Failed to parse stored user:', err);
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
-        localStorage.removeItem('currentCustomer');
+    if (!storedUser || !storedToken) return;
+    try {
+      const parsedUser: User = JSON.parse(storedUser);
+      setUser(parsedUser);
+      // 首屏快速填充（仅租户）；超管刷新后不恢复 currentCustomer，仍需重新选租户（9-D 本次不改）
+      const storedCustomer = localStorage.getItem('currentCustomer');
+      if (storedCustomer && parsedUser.role !== 'super_admin') {
+        setCurrentCustomer(JSON.parse(storedCustomer));
       }
+      // 服务端列表为准：覆盖旧值 + 自愈 appCode / currentCustomer
+      void loadCustomers(parsedUser);
+    } catch (err) {
+      console.error('Failed to parse stored user:', err);
+      localStorage.removeItem('user');
+      localStorage.removeItem('token');
+      localStorage.removeItem('currentCustomer');
     }
   }, []);
 
@@ -173,39 +214,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setLoading(true);
       setError(null);
-      
+
+      // authApi.login 内部已 setToken（F6），因此紧接着的请求一定带得上 token
       const response = await authApi.login({ email, password });
       console.log('Login success:', response);
-      if (response) {
-        const adaptedUser = adaptLoginResponseToUser(response);
-        
-        // 保存用户信息和token到localStorage
-        localStorage.setItem('user', JSON.stringify(adaptedUser));
-        localStorage.setItem('token', response.token);
-        
-        setUser(adaptedUser);
-        
-        // 如果是超级管理员，设置currentCustomer为null
-        if (adaptedUser.role === 'super_admin') {
-          setCurrentCustomer(null);
-          localStorage.removeItem('currentCustomer');
-          // 超级管理员登录后刷新客户列表
-          const customersResponse = await customerApi.getCustomers(1, 100);
-          if (customersResponse.data.code === 200) {
-            const adaptedCustomers = customersResponse.data.data.items.map(adaptCustomerDtoToCustomer);
-            setCustomers(adaptedCustomers);
-          }
-        } else if (adaptedUser.customerId) {
-          // 根据客户ID查找客户
-          const customerResponse = await customerApi.getCustomer(adaptedUser.customerId);
-          if (customerResponse.data.code === 200) {
-            const customer = adaptCustomerDtoToCustomer(customerResponse.data.data);
-            setCurrentCustomer(customer);
-            localStorage.setItem('currentCustomer', JSON.stringify(customer));
-          }
+      if (!response) throw new Error('登录失败');
+
+      const adaptedUser = adaptLoginResponseToUser(response);
+
+      // 保存用户信息和token到localStorage
+      localStorage.setItem('user', JSON.stringify(adaptedUser));
+      localStorage.setItem('token', response.token);
+
+      setUser(adaptedUser);
+
+      // 超级管理员：currentCustomer 恒 null，语义逐字保留
+      if (adaptedUser.role === 'super_admin') {
+        setCurrentCustomer(null);
+        localStorage.removeItem('currentCustomer');
+      }
+
+      // 超管与租户都无条件加载客户列表（原 else if (adaptedUser.customerId) 分支不可达且用错身份主键，已删除）
+      const list = await loadCustomers(adaptedUser);
+
+      // 兜底：列表为空（网络/权限异常）时，用后端 LoginResponse.CurrentCustomer（F3 → 走同一适配器）
+      if (list.length === 0 && adaptedUser.role !== 'super_admin' && response.currentCustomer) {
+        const cc = adaptCustomerDtoToCustomer(response.currentCustomer);
+        setCurrentCustomer(cc);
+        localStorage.setItem('currentCustomer', JSON.stringify(cc));
+        const patched = patchTenantUser(adaptedUser, cc);
+        if (patched !== adaptedUser) {
+          setUser(patched);
+          localStorage.setItem('user', JSON.stringify(patched));
         }
-      } else {
-        throw new Error('登录失败');
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -227,7 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.removeItem('user');
       localStorage.removeItem('token');
       localStorage.removeItem('currentCustomer');
-      
+
       setUser(null);
       setCurrentCustomer(null);
       setError(null);
@@ -259,7 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       const createRequest = adaptCreateCustomerRequest(customerData);
       const response = await customerApi.createCustomer(createRequest);
-      
+
       if (response.data.code === 200) {
         const newCustomer = adaptCustomerDtoToCustomer(response.data.data);
         setCustomers(prev => [...prev, newCustomer]);
@@ -282,7 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 这里需要根据后端API实现updateUser接口
         // 暂时只更新本地状态
         setUser({ ...user, ...updates });
-        
+
         // 更新localStorage
         const updatedUser = { ...user, ...updates };
         localStorage.setItem('user', JSON.stringify(updatedUser));
@@ -299,21 +340,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       const updateRequest = adaptUpdateCustomerRequest(updates);
       const response = await customerApi.updateCustomer(customerId, updateRequest);
-      
+
       if (response.data.code === 200) {
         const updatedCustomer = adaptCustomerDtoToCustomer(response.data.data);
-        
+
         // 更新客户列表
         setCustomers(prev =>
           prev.map(c => c.id === customerId ? updatedCustomer : c)
         );
-        
+
         // 更新当前客户
         if (currentCustomer?.id === customerId) {
           setCurrentCustomer(updatedCustomer);
           localStorage.setItem('currentCustomer', JSON.stringify(updatedCustomer));
         }
-        
+
         return updatedCustomer;
       } else {
         throw new Error(response.data.message || '更新客户失败');
@@ -381,19 +422,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
         clearError: () => setError(null),
         refreshCustomers: async () => {
-          try {
-            setLoading(true);
-            const response = await customerApi.getCustomers(1, 100);
-            if (response.data.code === 200) {
-              const adaptedCustomers = response.data.data.items.map(adaptCustomerDtoToCustomer);
-              setCustomers(adaptedCustomers);
-            }
-          } catch (err) {
-            console.error('Failed to refresh customers:', err);
-            setError('刷新客户列表失败');
-          } finally {
-            setLoading(false);
-          }
+          await loadCustomers(user);
         },
         login,
         logout,

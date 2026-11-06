@@ -612,7 +612,8 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
   // 可见客户列表
   const visibleCustomers = isSuperAdmin
     ? customers
-    : customers.filter(c => c.id === (user?.customerId ?? currentCustomer?.id));
+    // F4：c.id / customerId 运行时是 number 而 TS 声明为 string，统一 String() 归一避免静默失配
+    : customers.filter(c => String(c.id) === String(user?.customerId ?? currentCustomer?.id));
 
   const totalCustomers = visibleCustomers.length;
 
