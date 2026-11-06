@@ -22,7 +22,9 @@ public interface IDictionaryService
     /// <summary>
     /// 创建字典类型
     /// </summary>
-    Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request);
+    /// <param name="request">字典类型创建请求</param>
+    /// <param name="appCode">服务端从 JWT 解析的租户码，避免前端越权伪造归属</param>
+    Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request, string? appCode = null);
 
     /// <summary>
     /// 更新字典类型
@@ -47,7 +49,9 @@ public interface IDictionaryService
     /// <summary>
     /// 创建字典项
     /// </summary>
-    Task<DictionaryItemDto> CreateDictionaryItemAsync(CreateDictionaryItemRequest request);
+    /// <param name="request">字典项创建请求</param>
+    /// <param name="appCode">服务端从 JWT 解析的租户码，避免前端越权伪造归属</param>
+    Task<DictionaryItemDto> CreateDictionaryItemAsync(CreateDictionaryItemRequest request, string? appCode = null);
 
     /// <summary>
     /// 更新字典项

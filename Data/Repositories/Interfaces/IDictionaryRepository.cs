@@ -115,8 +115,9 @@ public interface IDictionaryRepository : IRepository<DictionaryItem>
     /// <param name="code">字典类型代码</param>
     /// <param name="appCode">应用代码</param>
     /// <param name="excludeTypeId">排除的类型ID（用于更新操作）</param>
+    /// <param name="includeSystem">为 true 时把 AppCode == "system" 的平台共享类型一并纳入（供字典项创建时的类型存在性校验使用）；默认 false 保持唯一性校验的严格相等语义</param>
     /// <returns>是否已存在</returns>
-    Task<bool> TypeCodeExistsAsync(string code, string? appCode = null, long? excludeTypeId = null);
+    Task<bool> TypeCodeExistsAsync(string code, string? appCode = null, long? excludeTypeId = null, bool includeSystem = false);
     
     /// <summary>
     /// 检查字典项代码是否已存在（在同一类型下）

@@ -89,9 +89,10 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 创建字典类型
     /// </summary>
-    public async Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request)
+    public async Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request, string? appCode = null)
     {
-        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Code, request.AppCode);
+        // 唯一性校验必须用服务端 effectiveAppCode：否则租户伪造 appCode=system 可绕过校验、甚至写入 system 命名空间。
+        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Code, appCode);
         if (typeExists)
         {
             throw new InvalidOperationException("字典类型代码已存在");
@@ -104,7 +105,8 @@ public class DictionaryService : IDictionaryService
             Description = request.Description,
             SortOrder = request.SortOrder,
             IsActive = request.IsActive,
-            AppCode = request.AppCode,
+            // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
+            AppCode = appCode ?? request.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -250,15 +252,17 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 创建字典项
     /// </summary>
-    public async Task<DictionaryItemDto> CreateDictionaryItemAsync(CreateDictionaryItemRequest request)
+    public async Task<DictionaryItemDto> CreateDictionaryItemAsync(CreateDictionaryItemRequest request, string? appCode = null)
     {
-        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Type, request.AppCode);
+        // 类型存在性校验：允许引用 appCode=system 的平台共享类型，租户可在共享类型下自建本租户字典项。
+        // 与 CreateDictionaryTypeAsync 的同名唯一性校验（includeSystem 默认 false）语义不同，勿混用。
+        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Type, appCode, includeSystem: true);
         if (!typeExists)
         {
             throw new InvalidOperationException("字典类型不存在");
         }
 
-        var itemExists = await _dictionaryRepository.ItemCodeExistsAsync(request.Type, request.Code, request.AppCode);
+        var itemExists = await _dictionaryRepository.ItemCodeExistsAsync(request.Type, request.Code, appCode);
         if (itemExists)
         {
             throw new InvalidOperationException("字典项代码已存在");
@@ -272,7 +276,8 @@ public class DictionaryService : IDictionaryService
             Sort = request.Sort,
             Description = request.Description,
             Status = "active",
-            AppCode = request.AppCode,
+            // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
+            AppCode = appCode ?? request.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

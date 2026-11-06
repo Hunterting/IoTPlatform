@@ -17,9 +17,11 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
     {
         var query = _context.DictionaryTypeConfigs.AsQueryable();
 
+        // 【共享只读】system 为平台基础字典，对所有租户可见；租户只能看到「本租户 + system」。
+        // 超管（appCode 为空）不加过滤，看全部。写侧由 Service 的 AppCode != appCode 校验保证 system 只读。
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(d => d.AppCode == appCode);
+            query = query.Where(d => d.AppCode == appCode || d.AppCode == "system");
         }
 
         return query.OrderByDescending(d => d.Id);
@@ -29,9 +31,11 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
     {
         var query = _context.DictionaryItems.AsQueryable();
 
+        // 【共享只读】system 为平台基础字典，对所有租户可见；租户只能看到「本租户 + system」。
+        // 超管（appCode 为空）不加过滤，看全部。写侧由 Service 的 AppCode != appCode 校验保证 system 只读。
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(d => d.AppCode == appCode);
+            query = query.Where(d => d.AppCode == appCode || d.AppCode == "system");
         }
 
         if (!string.IsNullOrEmpty(type))
@@ -104,13 +108,17 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
             .ToListAsync();
     }
 
-    public async Task<bool> TypeCodeExistsAsync(string code, string? appCode = null, long? excludeTypeId = null)
+    public async Task<bool> TypeCodeExistsAsync(string code, string? appCode = null, long? excludeTypeId = null, bool includeSystem = false)
     {
         var query = _context.DictionaryTypeConfigs.AsQueryable();
 
         if (!string.IsNullOrEmpty(appCode))
         {
-            query = query.Where(d => d.AppCode == appCode);
+            // 字典项创建时校验「类型是否存在」需允许引用平台共享类型；
+            // 字典类型创建时的唯一性校验（includeSystem=false）仍严格限定本租户。
+            query = includeSystem
+                ? query.Where(d => d.AppCode == appCode || d.AppCode == "system")
+                : query.Where(d => d.AppCode == appCode);
         }
 
         query = query.Where(d => d.Code == code);

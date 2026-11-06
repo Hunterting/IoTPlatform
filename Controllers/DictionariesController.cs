@@ -25,6 +25,18 @@ public class DictionariesController : ControllerBase
         _dictionaryService = dictionaryService;
     }
 
+    /// <summary>
+    /// 租户过滤码：普通租户取自身 AppCode；超管（无 AppCode / system）返回 null 表示看全部。
+    /// </summary>
+    private string? TenantAppCode
+    {
+        get
+        {
+            var c = User.FindFirst("AppCode")?.Value;
+            return string.IsNullOrEmpty(c) || c == "system" ? null : c;
+        }
+    }
+
     #region 字典类型管理
 
     /// <summary>
@@ -38,7 +50,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.GetDictionaryTypesAsync(page, pageSize, keyword, appCode);
             return ApiResponse<PagedResponse<DictionaryTypeDto>>.Success(result);
         }
@@ -56,7 +68,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.GetDictionaryTypeAsync(id, appCode);
             if (result == null)
             {
@@ -82,7 +94,9 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var result = await _dictionaryService.CreateDictionaryTypeAsync(request);
+            // 租户传的 appCode 被 JWT 覆盖（防越权）；超管可代租户创建。
+            var effectiveAppCode = TenantAppCode ?? request.AppCode;
+            var result = await _dictionaryService.CreateDictionaryTypeAsync(request, effectiveAppCode);
             return ApiResponse<DictionaryTypeDto>.Success(result, "字典类型创建成功");
         }
         catch (InvalidOperationException ex)
@@ -106,7 +120,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.UpdateDictionaryTypeAsync(id, request, appCode);
             return ApiResponse<DictionaryTypeDto>.Success(result, "字典类型更新成功");
         }
@@ -136,7 +150,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             await _dictionaryService.DeleteDictionaryTypeAsync(id, appCode);
             return ApiResponse.Success("字典类型删除成功");
         }
@@ -169,7 +183,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.GetDictionaryItemsAsync(type, appCode);
             return ApiResponse<List<DictionaryItemDto>>.Success(result);
         }
@@ -187,7 +201,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.GetDictionaryItemAsync(id, appCode);
             if (result == null)
             {
@@ -213,7 +227,9 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var result = await _dictionaryService.CreateDictionaryItemAsync(request);
+            // 租户传的 appCode 被 JWT 覆盖（防越权）；超管可代租户创建。
+            var effectiveAppCode = TenantAppCode ?? request.AppCode;
+            var result = await _dictionaryService.CreateDictionaryItemAsync(request, effectiveAppCode);
             return ApiResponse<DictionaryItemDto>.Success(result, "字典项创建成功");
         }
         catch (InvalidOperationException ex)
@@ -237,7 +253,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _dictionaryService.UpdateDictionaryItemAsync(id, request, appCode);
             return ApiResponse<DictionaryItemDto>.Success(result, "字典项更新成功");
         }
@@ -267,7 +283,7 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             await _dictionaryService.DeleteDictionaryItemAsync(id, appCode);
             return ApiResponse.Success("字典项删除成功");
         }
