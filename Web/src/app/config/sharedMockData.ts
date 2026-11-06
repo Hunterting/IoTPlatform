@@ -1,41 +1,10 @@
-// ── Shared mock data used across Dashboard, LogManagement, and WorkOrder pages ──
+// ── Shared mock alert records (only consumer: LogManagement page) ─────────────
+// 工单与工作台已接入真实后端接口，工单侧 mock 数据（SHARED_WORK_ORDERS /
+// ACTIVE_WORK_ORDER_COUNT / WorkOrder / WorkOrderLog / WorkOrder* 类型）已删除。
 
-export type WorkOrderStatus = 'pending' | 'assigned' | 'in_progress' | 'resolved' | 'closed' | 'rejected';
-export type WorkOrderPriority = 'low' | 'normal' | 'high' | 'urgent';
-export type WorkOrderType = 'fault' | 'maintenance' | 'inspection' | 'installation' | 'other';
 export type AlertLevel = 'info' | 'warning' | 'critical';
 export type AlertStatus = 'pending' | 'processing' | 'resolved' | 'ignored';
 export type AlertType = 'temperature' | 'pressure' | 'offline' | 'power' | 'smoke' | 'door';
-
-export interface WorkOrderLog {
-  id: string;
-  time: string;
-  operator: string;
-  action: string;
-  comment?: string;
-}
-
-export interface WorkOrder {
-  id: string;
-  orderNo: string;
-  title: string;
-  type: WorkOrderType;
-  priority: WorkOrderPriority;
-  status: WorkOrderStatus;
-  customer: string;
-  project: string;
-  deviceName: string;
-  deviceCode: string;
-  area: string;
-  description: string;
-  reporter: string;
-  reportTime: string;
-  assignee?: string;
-  assigneeAvatar?: string;
-  estimatedTime?: string;
-  resolvedTime?: string;
-  logs: WorkOrderLog[];
-}
 
 export interface AlertRecord {
   id: string;
@@ -54,144 +23,6 @@ export interface AlertRecord {
   remark?: string;
 }
 
-// ── Work Orders ───────────────────────────────────────────────────────────────
-export const SHARED_WORK_ORDERS: WorkOrder[] = [
-  {
-    id: 'wo1',
-    orderNo: 'WO20260301001',
-    title: '中央厨房冷藏柜温度异常告警',
-    type: 'fault',
-    priority: 'urgent',
-    status: 'in_progress',
-    customer: '海底捞火锅连锁',
-    project: '北京朝阳店智能化项目',
-    deviceName: '冷藏柜 SR-F520BX',
-    deviceCode: 'DEV-C-001',
-    area: '中央厨房',
-    description: '冷藏柜温度传感器显示温度持续高于设定值 3°C，已超阈值 2 小时，存在食材安全风险，需立即处理。',
-    reporter: '张经理',
-    reportTime: '2026-03-01 08:23',
-    assignee: '张工',
-    estimatedTime: '2026-03-01 12:00',
-    logs: [
-      { id: 'l1', time: '2026-03-01 08:23', operator: '张经理', action: '创建工单', comment: '冷藏柜温度异常，立即处理' },
-      { id: 'l2', time: '2026-03-01 08:35', operator: '系统管理员', action: '分配工单', comment: '分配给张工处理' },
-      { id: 'l3', time: '2026-03-01 09:10', operator: '张工', action: '开始处理', comment: '已到现场检查，发现压缩机散热异常' },
-    ],
-  },
-  {
-    id: 'wo2',
-    orderNo: 'WO20260301002',
-    title: '排烟系统风机噪音过大',
-    type: 'maintenance',
-    priority: 'high',
-    status: 'assigned',
-    customer: '海底捞火锅连锁',
-    project: '北京望京店智能化项目',
-    deviceName: '变频排风机 FAN-V2000',
-    deviceCode: 'DEV-F-003',
-    area: '主厨房',
-    description: '排烟风机运行时噪音明显增大，比正常噪音高约 15dB，初步判断轴承可能磨损，需检修。',
-    reporter: '李厨师',
-    reportTime: '2026-03-01 10:05',
-    assignee: '李工',
-    estimatedTime: '2026-03-02 18:00',
-    logs: [
-      { id: 'l4', time: '2026-03-01 10:05', operator: '李厨师', action: '创建工单' },
-      { id: 'l5', time: '2026-03-01 10:30', operator: '王管理员', action: '分配工单', comment: '分配给李工，明日上午处理' },
-    ],
-  },
-  {
-    id: 'wo3',
-    orderNo: 'WO20260228001',
-    title: '智能烤箱温控模块季度巡检',
-    type: 'inspection',
-    priority: 'normal',
-    status: 'resolved',
-    customer: '喜茶门店管理',
-    project: '上海旗舰店智能化项目',
-    deviceName: '智能烤箱 OV-X8000',
-    deviceCode: 'DEV-O-002',
-    area: '烘焙区',
-    description: '季度例行巡检，检查烤箱温控系统、加热元件及传感器工作状态。',
-    reporter: '李总监',
-    reportTime: '2026-02-28 09:00',
-    assignee: '赵工',
-    estimatedTime: '2026-02-28 17:00',
-    resolvedTime: '2026-02-28 15:30',
-    logs: [
-      { id: 'l6', time: '2026-02-28 09:00', operator: '李总监', action: '创建工单', comment: '季度巡检计划' },
-      { id: 'l7', time: '2026-02-28 09:10', operator: '系统管理员', action: '分配工单' },
-      { id: 'l8', time: '2026-02-28 10:00', operator: '赵工', action: '开始处理', comment: '开始巡检' },
-      { id: 'l9', time: '2026-02-28 15:30', operator: '赵工', action: '解决工单', comment: '巡检完毕，所有指标正常' },
-    ],
-  },
-  {
-    id: 'wo4',
-    orderNo: 'WO20260227001',
-    title: '咖啡机水路堵塞',
-    type: 'fault',
-    priority: 'high',
-    status: 'closed',
-    customer: '星巴克华东区',
-    project: '杭州西湖店智能化项目',
-    deviceName: '咖啡机 CF-L5000',
-    deviceCode: 'DEV-CF-001',
-    area: '吧台区',
-    description: '咖啡机出水量减少至正常的 30%，检测水路压力不足，需清洗过滤网及水路。',
-    reporter: '王主管',
-    reportTime: '2026-02-27 14:00',
-    assignee: '刘工',
-    estimatedTime: '2026-02-27 18:00',
-    resolvedTime: '2026-02-27 17:20',
-    logs: [
-      { id: 'l10', time: '2026-02-27 14:00', operator: '王主管', action: '创建工单' },
-      { id: 'l11', time: '2026-02-27 14:15', operator: '系统管理员', action: '分配工单' },
-      { id: 'l12', time: '2026-02-27 15:00', operator: '刘工', action: '开始处理' },
-      { id: 'l13', time: '2026-02-27 17:20', operator: '刘工', action: '解决工单', comment: '清洗水路后恢复正常' },
-      { id: 'l14', time: '2026-02-27 18:00', operator: '王主管', action: '关闭工单', comment: '已验收，问题解决' },
-    ],
-  },
-  {
-    id: 'wo5',
-    orderNo: 'WO20260301003',
-    title: '洗碗机控制面板无响应',
-    type: 'fault',
-    priority: 'normal',
-    status: 'pending',
-    customer: '海底捞火锅连锁',
-    project: '北京朝阳店智能化项目',
-    deviceName: '洗碗机 DW-M9000',
-    deviceCode: 'DEV-D-002',
-    area: '清洗区',
-    description: '洗碗机触摸控制面板偶发无响应，重启后可恢复，疑为主控板问题，需专业检测。',
-    reporter: '张经理',
-    reportTime: '2026-03-01 11:40',
-    logs: [
-      { id: 'l15', time: '2026-03-01 11:40', operator: '张经理', action: '创建工单', comment: '请尽快安排处理' },
-    ],
-  },
-  {
-    id: 'wo6',
-    orderNo: 'WO20260301004',
-    title: '新增蒸箱设备安装调试',
-    type: 'installation',
-    priority: 'normal',
-    status: 'pending',
-    customer: '喜茶门店管理',
-    project: '上海旗舰店智能化项目',
-    deviceName: '电蒸箱 ST-E6000',
-    deviceCode: 'DEV-ST-003',
-    area: '烘焙区',
-    description: '新购入 2 台电蒸箱，需要安装接线、联网配置及功能调试，并接入 IoT 平台。',
-    reporter: '李总监',
-    reportTime: '2026-03-01 13:00',
-    logs: [
-      { id: 'l16', time: '2026-03-01 13:00', operator: '李总监', action: '创建工单' },
-    ],
-  },
-];
-
 // ── Alert Records ─────────────────────────────────────────────────────────────
 export const SHARED_ALERT_RECORDS: AlertRecord[] = [
   { id: 'a1', alertNo: 'ALT20260304001', deviceName: '冷藏柜 SR-F520BX', deviceCode: 'DEV-C-001', area: '中央厨房', alertType: 'temperature', level: 'critical', value: '8.5°C', threshold: '5°C', alertTime: '2026-03-04 06:23:11', status: 'processing', assignee: '张工', remark: '已派人现场检修' },
@@ -204,7 +35,7 @@ export const SHARED_ALERT_RECORDS: AlertRecord[] = [
   { id: 'a8', alertNo: 'ALT20260303002', deviceName: '智能货架 SH-200', deviceCode: 'DEV-R-001', area: '储藏室', alertType: 'door', level: 'info', value: '门体开启超时', threshold: '15分钟', alertTime: '2026-03-03 20:10:00', status: 'resolved', assignee: '', resolveTime: '2026-03-03 20:30:00', remark: '人员确认后关闭' },
 ];
 
-// ── Computed stats (used in Dashboard "运营情况") ─────────────────────────────
+// ── Computed stats ────────────────────────────────────────────────────────────
 
 /** 报警：级别=严重 且 状态=待处理|处理中 */
 export const ALARM_COUNT = SHARED_ALERT_RECORDS.filter(
@@ -214,9 +45,4 @@ export const ALARM_COUNT = SHARED_ALERT_RECORDS.filter(
 /** 故障：级别=警告 且 状态=待处理|处理中 */
 export const FAULT_COUNT = SHARED_ALERT_RECORDS.filter(
   r => r.level === 'warning' && (r.status === 'pending' || r.status === 'processing')
-).length;
-
-/** 工单：排除已解决、已关闭、已驳回 */
-export const ACTIVE_WORK_ORDER_COUNT = SHARED_WORK_ORDERS.filter(
-  o => o.status !== 'resolved' && o.status !== 'closed' && o.status !== 'rejected'
 ).length;

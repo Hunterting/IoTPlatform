@@ -17,6 +17,9 @@
   <ItemGroup>
     <!-- 主工程实际解析到 EF Core 8.0.11（Tools/Design 8.0.11 提升），InMemory 必须同版本，否则 CS1705 -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
+    <!-- 显式锁定 Relational 8.0.11：主工程的 Pomelo 8.0.2 会传递引入 Relational 8.0.2，
+         与 Tools/Design 8.0.11 冲突并触发 MSB3277。与 IntegrationTests.csproj 保持一致。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">

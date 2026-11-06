@@ -66,7 +66,9 @@ public class WorkOrderService : IWorkOrderService
             baseQuery = baseQuery.Where(w => w.Priority == priority);
         }
 
-        var query = baseQuery.Include(w => w.Device).Include(w => w.Area).Include(w => w.Customer);
+        // 下方是显式 Select 投影，EF 会忽略 Include；CustomerName 由 w.Customer.Name
+        // 在投影里生成 LEFT JOIN 取得，无需 Include（列表查询不加载实体）。
+        var query = baseQuery;
 
         var totalCount = await query.CountAsync();
         var workOrders = await query
