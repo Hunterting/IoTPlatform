@@ -35,4 +35,10 @@ public class CreateAlertRequest
     public long? DeviceId { get; set; }
 
     public long? AreaId { get; set; }
+
+    /// <summary>
+    /// 目标租户 AppCode（仅超级管理员代其它租户创建时生效；普通租户传值会被服务端 JWT 的 AppCode 覆盖，防越权）。
+    /// </summary>
+    [MaxLength(50)]
+    public string? AppCode { get; set; }
 }

@@ -25,6 +25,19 @@ public class AlertsController : ControllerBase
     }
 
     /// <summary>
+    /// 租户过滤码：普通租户取自身 AppCode；超管（无 AppCode / system）返回 null 表示看全部。
+    /// SwitchCustomer 后超管 token 会带目标租户 AppCode，此时按该租户过滤（符合切换语义）。
+    /// </summary>
+    private string? TenantAppCode
+    {
+        get
+        {
+            var c = User.FindFirst("AppCode")?.Value;
+            return string.IsNullOrEmpty(c) || c == "system" ? null : c;
+        }
+    }
+
+    /// <summary>
     /// 获取告警列表
     /// </summary>
     [HttpGet]
@@ -37,8 +50,12 @@ public class AlertsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var allowedAreaIds = GetAllowedAreaIds();
+            var appCode = TenantAppCode;
+            // 【租户隔离】告警是设备级数据，租户范围已由 AppCode 精确限定。
+            // 不再叠加 AllowedAreaIds 区域过滤：通用 ApplyFilters 的语义是
+            // 「AreaId.HasValue && allowedAreaIds.Contains(AreaId.Value)」，
+            // 会把 AreaId=null 的真实告警（如设备级阈值告警）全部排除，导致租户看不到自己的告警。
+            List<long>? allowedAreaIds = null;
 
             var result = await _alertService.GetAlertsAsync(page, pageSize, status, level, alertType, appCode, allowedAreaIds);
             var response = ApiResponse<PagedResponse<AlertDto>>.Success(result);
@@ -59,8 +76,9 @@ public class AlertsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var allowedAreaIds = GetAllowedAreaIds();
+            var appCode = TenantAppCode;
+            // 同列表：告警按 AppCode 隔离，不叠加区域过滤（避免漏掉 AreaId=null 的设备级告警）。
+            List<long>? allowedAreaIds = null;
 
             var result = await _alertService.GetAlertAsync(id, appCode, allowedAreaIds);
             if (result == null)
@@ -88,7 +106,10 @@ public class AlertsController : ControllerBase
     {
         try
         {
-            var result = await _alertService.CreateAlertAsync(request);
+            // 租户传的 appCode 会被 JWT 的 TenantAppCode 覆盖（防越权）：
+            // 普通租户 TenantAppCode 非空 → 用 JWT 值；超管 TenantAppCode=null → 允许 request.AppCode（代租户创建）。
+            var effectiveAppCode = TenantAppCode ?? request.AppCode;
+            var result = await _alertService.CreateAlertAsync(request, effectiveAppCode);
             var response = ApiResponse<AlertDto>.Success(result, "告警创建成功");
             return Ok(response);
         }
@@ -233,7 +254,7 @@ public class AlertsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
 
             var result = await _alertService.GetAlertSummaryAsync(startTime, endTime, appCode);
             return ApiResponse<AlertSummaryDto>.Success(result);
@@ -245,19 +266,6 @@ public class AlertsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// 获取用户允许的区域ID列表
-    /// </summary>
-    private List<long>? GetAllowedAreaIds()
-    {
-        var allowedAreaIdsClaim = User.FindFirst("AllowedAreaIds")?.Value;
-        if (string.IsNullOrEmpty(allowedAreaIdsClaim))
-            return null;
-
-        return allowedAreaIdsClaim.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(id => long.Parse(id.Trim()))
-            .ToList();
-    }
 }
 
 /// <summary>

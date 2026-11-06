@@ -21,6 +21,8 @@ public class AlertDto
     public string? Remark { get; set; }
     public long? DeviceId { get; set; }
     public long? AreaId { get; set; }
+    /// <summary>告警所属租户 AppCode（用于区分租户；超管可见全部）</summary>
+    public string? AppCode { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

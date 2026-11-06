@@ -416,6 +416,18 @@ public class DataCollectionService : IDataCollectionService
             await _dataRecordRepository.AddAsync(dataRecord);
             await _unitOfWork.SaveChangesAsync();
 
+            // ── Step 2.5: 按设备真实上报值检查阈值产生告警（兜底，独立于数据规则） ──
+            // 独立 try/catch：告警失败绝不影响数据已落库的事实。告警自带 AppCode，
+            // 租户只能看到自己设备的告警。
+            try
+            {
+                await _alertService.CheckAlertRulesAsync(dataRecord);
+            }
+            catch (Exception alertEx)
+            {
+                Log.Warning(alertEx, "设备阈值告警检查失败（数据已落库，不影响采集）: DeviceId={DeviceId}", deviceId);
+            }
+
             // 日志：按能源类型输出结构化信息
             if (activeStrategies.Count > 0)
             {
@@ -522,7 +534,10 @@ public class DataCollectionService : IDataCollectionService
         {
             AlertNo = Guid.NewGuid().ToString("N").Substring(0, 32),
             DeviceId = deviceId,
-            AreaId = rule.AreaId,
+            DeviceName = dataRecord.DeviceName ?? "未知设备",
+            DeviceCode = null,
+            AreaId = rule.AreaId ?? dataRecord.AreaId,
+            AreaName = dataRecord.AreaName,
             AlertType = alertType,
             Level = alertLevel,
             Remark = $"规则 [{rule.Name}] 触发：数据超出阈值",
@@ -532,7 +547,8 @@ public class DataCollectionService : IDataCollectionService
                 : null,
             Threshold = rule.MaxValue ?? rule.MinValue,
             AlertTime = DateTime.UtcNow,
-            AppCode = rule.AppCode,
+            // 租户归属：规则 AppCode 优先，数据记录兜底（保证「按设备真实告警」可被租户过滤）
+            AppCode = !string.IsNullOrEmpty(rule.AppCode) ? rule.AppCode : dataRecord.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };

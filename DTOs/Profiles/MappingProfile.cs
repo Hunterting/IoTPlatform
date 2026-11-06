@@ -186,12 +186,16 @@ public class MappingProfile : Profile
     {
         CreateMap<CreateAlertRequest, AlertRecord>()
             .ForMember(dest => dest.AlertNo, opt => opt.Ignore())
+            .ForMember(dest => dest.AreaName, opt => opt.MapFrom(src => src.Area))
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => "pending"))
             .ForMember(dest => dest.AlertTime, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedAt, opt => opt.Ignore())
             .ForMember(dest => dest.UpdatedAt, opt => opt.Ignore());
 
-        CreateMap<AlertRecord, AlertDto>();
+        // 【字段名不一致】源 AlertRecord.AreaName → 目标 AlertDto.Area，约定映射匹配不上，
+        // 需显式 ForMember，否则告警中心「区域」列恒空。
+        CreateMap<AlertRecord, AlertDto>()
+            .ForMember(dest => dest.Area, opt => opt.MapFrom(src => src.AreaName));
 
         CreateMap<AlertProcessLog, AlertProcessLogDto>();
     }

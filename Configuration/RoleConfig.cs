@@ -177,6 +177,8 @@ public static class Roles
             Permissions.VIEW_DASHBOARD,
             Permissions.VIEW_DEVICES,
             Permissions.VIEW_MONITORING,
+            // 告警中心按 AppCode 区分租户；厨师长负责厨房设备监控，需能查看本租户告警。
+            Permissions.VIEW_ALERT_CENTER,
             Permissions.VIEW_WORK_ORDERS,
             Permissions.UPDATE_WORK_ORDERS
         };
@@ -190,7 +192,10 @@ public static class Roles
         return new List<string>
         {
             Permissions.VIEW_DASHBOARD,
-            Permissions.VIEW_MONITORING
+            Permissions.VIEW_MONITORING,
+            // 告警/工单按 AppCode 区分租户，补只读查看权限，让第二租户（chef 等 staff 角色）能看到本租户数据。
+            Permissions.VIEW_ALERT_CENTER,
+            Permissions.VIEW_WORK_ORDERS
         };
     }
 }

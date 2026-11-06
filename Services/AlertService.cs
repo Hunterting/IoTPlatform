@@ -33,6 +33,21 @@ public class AlertService : IAlertService
         _mapper = mapper;
     }
 
+    /// <summary>按 DeviceId 反查设备所属 AppCode（用于后端产生的告警归属租户）。</summary>
+    private async Task<string?> ResolveDeviceAppCodeAsync(long? deviceId)
+    {
+        if (!deviceId.HasValue) return null;
+        try
+        {
+            var device = await _deviceRepository.GetByIdAsync(deviceId.Value);
+            return device?.AppCode;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
     /// 获取告警列表
     /// </summary>
@@ -58,7 +73,7 @@ public class AlertService : IAlertService
     /// <summary>
     /// 创建告警
     /// </summary>
-    public async Task<AlertDto> CreateAlertAsync(CreateAlertRequest request)
+    public async Task<AlertDto> CreateAlertAsync(CreateAlertRequest request, string? appCode = null)
     {
         // 【BugFix】原先用 IUnitOfWork.BeginTransactionAsync 手动开启事务，
         // 但本库启用了 EnableRetryOnFailure（MySqlRetryingExecutionStrategy），
@@ -82,6 +97,9 @@ public class AlertService : IAlertService
             Remark = request.Remark,
             DeviceId = request.DeviceId,
             AreaId = request.AreaId,
+            // 【租户隔离】告警归属租户：优先服务端解析的 JWT AppCode；
+            // 为空时（超管/后台）按 DeviceId 反查设备所属租户，保证「按设备真实告警」也能被租户过滤。
+            AppCode = !string.IsNullOrEmpty(appCode) ? appCode : await ResolveDeviceAppCodeAsync(request.DeviceId),
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
@@ -225,35 +243,71 @@ public class AlertService : IAlertService
     }
 
     /// <summary>
-    /// 检查告警规则（告警规则引擎）
+    /// 按设备真实上报值检查阈值并产生告警（数据规则引擎之外的兜底）。
+    ///
+    /// 【口径】只依据 DeviceDataRecord 的类型化字段（Temperature/Humidity/PM25/CO2/CO/Smoke）。
+    /// 安圣等设备的原始值主要落在 SensorData JSON，类型化列多为 null，因此本方法在无类型化值时静默跳过，
+    /// 不伪造数据。告警落 AppCode / DeviceName / AreaName（区分租户、按真实设备）。
+    /// 去重：同一设备同一 alertType 若已有 pending 告警则不重复创建，避免每 30s 上报刷屏。
     /// </summary>
+    private static readonly (string AlertType, double Threshold, Func<DeviceDataRecord, double?> Getter, double CriticalAt)[] Thresholds =
+    {
+        ("temperature", 35.0,  d => d.Temperature,      40.0),
+        ("humidity",    85.0,  d => d.Humidity,         95.0),
+        ("pm25",        150.0, d => d.PM25,             250.0),
+        ("co2",         2000.0,d => d.CO2,              3000.0),
+        ("co",          50.0,  d => d.CO,               100.0),
+        ("smoke",       50.0,  d => d.Smoke,            100.0),
+    };
+
     public async Task CheckAlertRulesAsync(DeviceDataRecord data)
     {
-        // 【BugFix】移除手动事务（见 CreateAlertAsync 说明）。
-        // 同时修掉原实现的两处问题：① 超阈值时 Commit 两次（第二次会因「没有活动的事务」抛异常）；
-        // ② 未超阈值时也 Commit（空事务）。现改为 AddAsync 自带的一次 SaveChanges。
-        // TODO: 实现告警规则引擎（阈值配置化、SignalR 推送等）
-        if (data.Temperature.HasValue && data.Temperature.Value > 35)
+        // 【BugFix】移除手动事务（见 CreateAlertAsync 说明）：Repository.AddAsync 已自带 SaveChanges。
+        var now = DateTime.UtcNow;
+
+        // 先收集本条数据触发的阈值项
+        var triggered = new List<(string AlertType, double Threshold, double Value, string Level)>();
+        foreach (var (alertType, threshold, getter, criticalAt) in Thresholds)
         {
-            var alert = new AlertRecord
+            var value = getter(data);
+            if (value.HasValue && value.Value > threshold)
             {
-                AlertNo = $"ALT{DateTime.UtcNow:yyyyMMddHHmmss}",
-                DeviceName = data.Device?.Name ?? "未知设备",
+                triggered.Add((alertType, threshold, value.Value,
+                    value.Value >= criticalAt ? "critical" : "warning"));
+            }
+        }
+        if (triggered.Count == 0) return;
+
+        // 去重：该设备已存在的 pending 告警类型
+        var existingPending = await _alertRecordRepository.GetByDeviceIdAsync(data.DeviceId, data.AppCode, "pending");
+        var pendingTypes = new HashSet<string>(
+            (existingPending ?? Enumerable.Empty<AlertRecord>())
+                .Select(a => a.AlertType), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var t in triggered)
+        {
+            if (pendingTypes.Contains(t.AlertType)) continue; // 已有未处理同类告警，跳过
+
+            await _alertRecordRepository.AddAsync(new AlertRecord
+            {
+                AlertNo = $"ALT-{now:yyyyMMddHHmmss}-{data.DeviceId}-{t.AlertType}",
+                DeviceName = data.DeviceName ?? data.Device?.Name ?? "未知设备",
                 DeviceCode = data.Device?.SerialNumber,
-                AlertType = "temperature",
-                Level = data.Temperature.Value > 40 ? "critical" : "warning",
-                Value = data.Temperature.Value,
-                Threshold = 35.0,
-                AlertTime = DateTime.UtcNow,
+                AreaName = data.AreaName,
+                AlertType = t.AlertType,
+                Level = t.Level,
+                Value = t.Value,
+                Threshold = t.Threshold,
+                AlertTime = now,
                 Status = "pending",
                 DeviceId = data.DeviceId,
-                AreaId = data.Device?.AreaId,
-                AppCode = data.AppCode
-            };
-
-            await _alertRecordRepository.AddAsync(alert);
-            // TODO: SignalR 推送告警
+                AreaId = data.AreaId ?? data.Device?.AreaId,
+                AppCode = data.AppCode ?? data.Device?.AppCode, // 区分租户
+                Remark = $"设备「{data.DeviceName ?? "未知设备"}」{t.AlertType} 上报值 {t.Value:F2} 超过阈值 {t.Threshold:F2}",
+                CreatedAt = now,
+                UpdatedAt = now,
+            });
+            pendingTypes.Add(t.AlertType);
         }
-        // 可以添加更多告警规则...
     }
 }

@@ -85,12 +85,22 @@ public class AuthService : IAuthService
 
         // 生成JWT Token
         var allowedAreaIdsStr = user.AllowedAreaIds;
+        // 【租户隔离修复】AppCode 优先取用户自身字段，customer?.AppCode 兜底。
+        // 种子/存量用户可能只有 User.AppCode 而未设 CustomerId（此时 customer 为 null），
+        // 旧逻辑只用 customer?.AppCode 会签发不带 AppCode 的 token，导致租户越权看到全部数据。
+        //
+        // 【超管特例】超管不签发 AppCode claim：ApplyFilters 是「appCode 非空才过滤」，
+        // 签发 system 会把超管过滤成只看 AppCode=system 的数据（真实告警均属 customer_xxx），
+        // 反而看不到全部。超管看全部由「无 AppCode claim + 全局过滤器跳过」共同保证。
+        var effectiveAppCode = user.IsSuperAdmin
+            ? null
+            : (!string.IsNullOrEmpty(user.AppCode) ? user.AppCode : customer?.AppCode);
         var token = _jwtHelper.GenerateToken(
             user.Id,
             user.Email,
             user.Role,
             user.CustomerId,
-            customer?.AppCode,
+            effectiveAppCode,
             allowedAreaIdsStr);
 
         // 解析允许的区域ID
