@@ -757,6 +757,8 @@ public class AppDbContext : DbContext
             entity.HasIndex(e => e.TypeCode);
             entity.HasIndex(e => e.Code);
             entity.HasIndex(e => e.AppCode);
+            // 库级兜底：复合唯一 (Type, Code, AppCode)，杜绝租户在共享类型下与 system 项产生双行
+            entity.HasIndex(e => new { e.Type, e.Code, e.AppCode }).IsUnique();
         });
     }
 

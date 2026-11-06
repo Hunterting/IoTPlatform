@@ -1961,6 +1961,9 @@ namespace IoTPlatform.Migrations
 
                     b.HasIndex("TypeCode");
 
+                    b.HasIndex("Type", "Code", "AppCode")
+                        .IsUnique();
+
                     b.ToTable("dictionary_items");
                 });
 

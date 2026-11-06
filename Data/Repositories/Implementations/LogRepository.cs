@@ -161,6 +161,13 @@ public class LogRepository : Repository<LoginLog>, ILogRepository
     public async Task LogOperationAsync(long userId, string? userName, string? role, string? module, string action, string? target = null,
         string? detail = null, string? ip = null, string status = "success", int? duration = null, string? appCode = null)
     {
+        const int DetailMax = 2000; // OperationLog.Detail 列上限 [MaxLength(2000)]
+        string? safeDetail = detail;
+        if (!string.IsNullOrEmpty(detail) && detail.Length > DetailMax)
+        {
+            safeDetail = detail.Substring(0, DetailMax - 3) + "...";
+        }
+
         var operationLog = new OperationLog
         {
             UserId = userId,
@@ -169,7 +176,7 @@ public class LogRepository : Repository<LoginLog>, ILogRepository
             Module = module,
             Action = action,
             Target = target,
-            Detail = detail,
+            Detail = safeDetail,
             IP = ip,
             Status = status,
             Duration = duration,

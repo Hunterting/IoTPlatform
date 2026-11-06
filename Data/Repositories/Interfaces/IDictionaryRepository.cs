@@ -128,6 +128,15 @@ public interface IDictionaryRepository : IRepository<DictionaryItem>
     /// <param name="excludeItemId">排除的项ID（用于更新操作）</param>
     /// <returns>是否已存在</returns>
     Task<bool> ItemCodeExistsAsync(string typeCode, string itemCode, string? appCode = null, long? excludeItemId = null);
+
+    /// <summary>
+    /// 检查字典项代码是否已存在（跨「本租户 + system」scope，用于创建时杜绝与平台项重复产生双行）
+    /// </summary>
+    /// <param name="typeCode">字典类型代码</param>
+    /// <param name="itemCode">字典项代码</param>
+    /// <param name="appCode">应用代码（为 null 时扫描全部，符合全局语义）</param>
+    /// <returns>是否已存在</returns>
+    Task<bool> ItemCodeExistsIncludingSystemAsync(string typeCode, string itemCode, string? appCode = null);
     
     /// <summary>
     /// 获取活动的字典项列表

@@ -145,6 +145,18 @@ public class DictionaryRepository : Repository<DictionaryItem>, IDictionaryRepos
         return await query.AnyAsync();
     }
 
+    public async Task<bool> ItemCodeExistsIncludingSystemAsync(string typeCode, string itemCode, string? appCode = null)
+    {
+        var query = _context.DictionaryItems.AsQueryable();
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            // 跨 scope 校验：本租户自建项 + 平台共享 system 项，任一存在即视为重复
+            query = query.Where(d => d.AppCode == appCode || d.AppCode == "system");
+        }
+        query = query.Where(d => d.Type == typeCode && d.Code == itemCode);
+        return await query.AnyAsync();
+    }
+
     public async Task<IEnumerable<DictionaryItem>> GetActiveItemsByTypeAsync(string typeCode, string? appCode = null)
     {
         var query = ApplyFilters(_context.DictionaryItems.AsQueryable(), appCode, null);

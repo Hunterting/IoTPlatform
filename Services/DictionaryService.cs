@@ -91,11 +91,11 @@ public class DictionaryService : IDictionaryService
     /// </summary>
     public async Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request, string? appCode = null)
     {
-        // 唯一性校验必须用服务端 effectiveAppCode：否则租户伪造 appCode=system 可绕过校验、甚至写入 system 命名空间。
-        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Code, appCode);
+        // 全局唯一：类型 Code 跨所有租户 + system 不得重复（用户确认「全局唯一·禁止复用」）
+        var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Code, appCode: null, includeSystem: true);
         if (typeExists)
         {
-            throw new InvalidOperationException("字典类型代码已存在");
+            throw new InvalidOperationException("字典类型代码已存在（与平台或租户已有类型重复）");
         }
 
         var type = new DictionaryTypeConfig
@@ -262,10 +262,10 @@ public class DictionaryService : IDictionaryService
             throw new InvalidOperationException("字典类型不存在");
         }
 
-        var itemExists = await _dictionaryRepository.ItemCodeExistsAsync(request.Type, request.Code, appCode);
+        var itemExists = await _dictionaryRepository.ItemCodeExistsIncludingSystemAsync(request.Type, request.Code, appCode);
         if (itemExists)
         {
-            throw new InvalidOperationException("字典项代码已存在");
+            throw new InvalidOperationException("字典项代码已存在（与平台或本租户已有项重复）");
         }
 
         var item = new DictionaryItem
