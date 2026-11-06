@@ -26,6 +26,18 @@ public class ProtocolConfigsController : ControllerBase
     }
 
     /// <summary>
+    /// 租户过滤码：普通租户取自身 AppCode；超管（无 AppCode / system）返回 null 表示看全部。
+    /// </summary>
+    private string? TenantAppCode
+    {
+        get
+        {
+            var c = User.FindFirst("AppCode")?.Value;
+            return string.IsNullOrEmpty(c) || c == "system" ? null : c;
+        }
+    }
+
+    /// <summary>
     /// 获取协议配置列表
     /// </summary>
     [HttpGet]
@@ -37,7 +49,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _protocolConfigService.GetProtocolConfigsAsync(page, pageSize, keyword, type, appCode);
             return ApiResponse<PagedResponse<ProtocolConfigDto>>.Success(result);
         }
@@ -55,7 +67,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _protocolConfigService.GetProtocolConfigAsync(id, appCode);
             if (result == null)
             {
@@ -81,7 +93,10 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var result = await _protocolConfigService.CreateProtocolConfigAsync(request);
+            // 租户传的 appCode 会被 JWT 的 TenantAppCode 覆盖（防越权）；
+            // 超管 TenantAppCode=null 时允许 request.AppCode（代租户创建）。
+            var effectiveAppCode = TenantAppCode ?? request.AppCode;
+            var result = await _protocolConfigService.CreateProtocolConfigAsync(request, effectiveAppCode);
             return ApiResponse<ProtocolConfigDto>.Success(result, "协议配置创建成功");
         }
         catch (InvalidOperationException ex)
@@ -105,7 +120,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             var result = await _protocolConfigService.UpdateProtocolConfigAsync(id, request, appCode);
             return ApiResponse<ProtocolConfigDto>.Success(result, "协议配置更新成功");
         }
@@ -135,7 +150,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             await _protocolConfigService.DeleteProtocolConfigAsync(id, appCode);
             return ApiResponse.Success("协议配置删除成功");
         }
@@ -165,7 +180,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             await _protocolConfigService.StartProtocolAsync(id, appCode);
             return ApiResponse.Success("协议启动成功");
         }
@@ -195,7 +210,7 @@ public class ProtocolConfigsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var appCode = TenantAppCode;
             await _protocolConfigService.StopProtocolAsync(id, appCode);
             return ApiResponse.Success("协议停止成功");
         }

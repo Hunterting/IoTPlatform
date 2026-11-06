@@ -22,7 +22,9 @@ public interface IProtocolConfigService
     /// <summary>
     /// 创建协议配置
     /// </summary>
-    Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request);
+    /// <param name="request">协议配置创建请求</param>
+    /// <param name="appCode">服务端从 JWT 解析的租户码，避免前端越权伪造归属</param>
+    Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request, string? appCode = null);
 
     /// <summary>
     /// 更新协议配置

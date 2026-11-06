@@ -21,4 +21,8 @@ public class UpdateProtocolConfigRequest
     public List<long>? DeviceIds { get; set; }
 
     public Dictionary<string, object>? Config { get; set; }
+
+    /// <summary>目标租户 AppCode（仅超级管理员编辑时生效，用于指派归属；普通租户传值被忽略）</summary>
+    [MaxLength(50)]
+    public string? AppCode { get; set; }
 }

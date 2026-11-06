@@ -5,7 +5,7 @@ import {
   RefreshCw, CheckCircle2, XCircle, Clock, Activity,
   ChevronDown, ChevronRight, Settings, Wifi, WifiOff,
   X, Save, AlertCircle, Server, Loader2, Cpu, Monitor,
-  Folder, MapPin, Check,
+  Folder, MapPin, Check, Building2,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS } from '@/app/config/permissions';
@@ -456,15 +456,14 @@ const EMPTY_FORM = {
   description: '',
   config: {},
   isActive: true,
+  appCode: '',
 };
 
 // ── 主组件 ─────────────────────────────────────────────────────────────────────
 export function ProtocolManagementPage() {
-  const { hasPermission, currentCustomer } = useAuth();
+  const { hasPermission, user } = useAuth();
   const canManage = hasPermission(PERMISSIONS.MANAGE_PROTOCOLS);
-
-  // 获取当前租户代码
-  const appCode = currentCustomer?.appCode;
+  const isSuperAdmin = user?.role === 'super_admin';
 
   // 数据状态
   const [protocols, setProtocols] = useState<ProtocolConfig[]>([]);
@@ -582,6 +581,7 @@ export function ProtocolManagementPage() {
       isActive: p.isActive,
       status: p.status,
       config: nextConfig,
+      appCode: p.appCode ?? '',
     });
     setShowModal(true);
   };
@@ -601,6 +601,8 @@ export function ProtocolManagementPage() {
           description: form.description,
           deviceIds: form.deviceIds,
           config: form.config,
+          // 仅超管可代租户编辑/指派归属；普通租户不传 appCode，避免越权。
+          appCode: isSuperAdmin && form.appCode ? form.appCode : undefined,
         };
         const response = await protocolApi.updateProtocolConfig(editTarget.id, request);
         if (response.code === 200) {
@@ -608,7 +610,7 @@ export function ProtocolManagementPage() {
           loadProtocols();
         }
       } else {
-        // 创建 - 传递 appCode
+        // 创建 - 归属由服务端 JWT 决定，仅超管可代租户创建
         const request: CreateProtocolConfigRequest = {
           name: form.name!,
           type: form.type!,
@@ -616,7 +618,7 @@ export function ProtocolManagementPage() {
           deviceIds: form.deviceIds,
           config: form.config,
           isActive: form.isActive,
-          appCode: appCode, // 传递租户代码
+          appCode: isSuperAdmin && form.appCode ? form.appCode : undefined, // 仅超管可代租户创建；普通租户由服务端 JWT 决定
         };
         const response = await protocolApi.createProtocolConfig(request);
         if (response.code === 200) {
@@ -904,7 +906,7 @@ export function ProtocolManagementPage() {
             <Globe className="w-6 h-6 text-blue-400" />
             协议管理
           </h1>
-          <p className="text-slate-400 text-sm mt-1">管理物联网协议接入配置及连接状态</p>
+          <p className="text-slate-400 text-sm mt-1">管理物联网协议接入配置及连接状态（按租户隔离）</p>
         </div>
         <div className="flex items-center gap-3">
           {/* 搜索框 */}
@@ -935,6 +937,15 @@ export function ProtocolManagementPage() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* ── 租户范围提示 ─────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+        style={{ background: 'rgba(0,195,255,0.06)', border: '1px solid rgba(0,195,255,0.2)', color: '#8ecfff' }}>
+        <Building2 className="w-3.5 h-3.5" />
+        {isSuperAdmin
+          ? '超级管理员视图：展示全部租户协议配置'
+          : '当前租户视图：仅展示本租户协议配置（按登录账号自动隔离）'}
       </div>
 
       {/* ── 统计卡片 ──────────────────────────────────────────────────────── */}
@@ -1004,6 +1015,11 @@ export function ProtocolManagementPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-white font-medium truncate">{protocol.name}</span>
+                      {isSuperAdmin && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-700/60 text-slate-400 border border-slate-600/50 flex-shrink-0">
+                          {protocol.appCode || '未分配租户'}
+                        </span>
+                      )}
                       <span className="px-2 py-0.5 rounded-md text-xs bg-slate-700 text-slate-300">
                         {getProtocolLabel(protocol.type)}
                       </span>
@@ -1320,6 +1336,19 @@ export function ProtocolManagementPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* 目标租户 AppCode：仅超管可见，用于代租户创建或指派归属 */}
+                {isSuperAdmin && (
+                  <div>
+                    <label className="text-sm text-slate-300 mb-1 block">目标租户 AppCode（超管代建/指派归属；留空则由登录账号决定）</label>
+                    <input
+                      value={form.appCode ?? ''}
+                      onChange={e => setForm(f => ({ ...f, appCode: e.target.value }))}
+                      placeholder="例如 customer_001"
+                      className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                )}
 
                 {/* ── 通用连接配置 ───────────────────────────────────────────
                     键名统一 PascalCase，与后端各协议 Options 属性一一对应：

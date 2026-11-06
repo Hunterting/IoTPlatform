@@ -287,7 +287,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// <summary>
     /// 创建协议配置
     /// </summary>
-    public async Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request)
+    public async Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request, string? appCode = null)
     {
         var config = new ProtocolConfig
         {
@@ -302,7 +302,9 @@ public class ProtocolConfigService : IProtocolConfigService
             // 让所有按 IsActive 的筛选把一个尚未启动的配置当成活跃配置。
             IsActive = false,
             Description = request.Description,
-            AppCode = request.AppCode,
+            // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
+            // 普通租户的 appCode 由控制器 TenantAppCode 强制注入，忽略前端伪造值。
+            AppCode = appCode ?? request.AppCode,
             DeviceIds = request.DeviceIds != null
                 ? JsonSerializer.Serialize(request.DeviceIds)
                 : null,
@@ -349,6 +351,13 @@ public class ProtocolConfigService : IProtocolConfigService
         if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该协议配置");
+        }
+
+        // 【租户归属】仅超管（TenantAppCode 为空）可通过编辑指派目标租户，用于修复历史无主配置；
+        // 普通租户传值一律忽略，防止越权改归属。
+        if (string.IsNullOrEmpty(appCode) && !string.IsNullOrWhiteSpace(request.AppCode))
+        {
+            config.AppCode = request.AppCode;
         }
 
         config.Name = request.Name;
