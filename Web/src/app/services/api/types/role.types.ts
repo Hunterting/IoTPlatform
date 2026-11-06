@@ -27,6 +27,7 @@ export interface RoleDto {
   permissions: string[];
   dataScope: string;
   appCode: string | null;
+  customerId?: string | null;
   isSystem: boolean;
   createdAt: string;
   updatedAt: string;
@@ -39,6 +40,7 @@ export interface CreateRoleRequest {
   description?: string;
   permissions?: string[];
   dataScope: string;
+  customerId?: number | null;
 }
 
 // 更新角色请求

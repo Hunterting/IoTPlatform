@@ -2,7 +2,7 @@
  * 角色数据适配器
  * 负责前后端数据格式转换
  */
-import { adaptIdFromBackend, adaptDateTime } from './index';
+import { adaptIdFromBackend, adaptIdToBackend, adaptDateTime } from './index';
 import {
   BackendRoleDto,
   RoleDto,
@@ -51,7 +51,8 @@ export const adaptCreateRoleToBackend = (role: Partial<RoleDto>): CreateRoleRequ
     name: role.name || '',
     description: role.description || undefined,
     permissions: role.permissions || [],
-    dataScope: role.dataScope || DATA_SCOPE.CUSTOM
+    dataScope: role.dataScope || DATA_SCOPE.CUSTOM,
+    customerId: adaptIdToBackend(role.customerId)
   };
 };
 

@@ -54,8 +54,11 @@ export function UserManagementPage({ activePage }: UserManagementPageProps) {
 // 用户列表组件
 function UserList() {
   const authContext = useAuth();
-  const { currentCustomer, roles, hasPermission } = authContext;
+  const { currentCustomer, roles, hasPermission, customers, user } = authContext;
   const { flattenAreas, areas } = useArea();
+
+  // 超管「目标客户」下拉的合法选项：仅启用中且带 appCode 的真实客户。
+  const activeCustomers = customers.filter(c => !!c.appCode && c.status === 'active');
   
   const availableAreas = flattenAreas(areas);
 
@@ -456,6 +459,21 @@ function UserList() {
                             <option value="inactive">未激活</option>
                         </select>
                     </div>
+                    {user?.role === 'super_admin' && (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">目标客户（超管代租户建用户）</label>
+                        <select
+                            value={newUserForm.customerId ?? ''}
+                            onChange={(e) => setNewUserForm({ ...newUserForm, customerId: e.target.value ? Number(e.target.value) : null })}
+                            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800"
+                        >
+                            <option value="">不指定（归属当前登录租户）</option>
+                            {activeCustomers.map((c) => (
+                                <option key={c.id} value={c.id}>{c.name}（{c.appCode}）</option>
+                            ))}
+                        </select>
+                    </div>
+                    )}
                 </div>
 
                 {showAreaSelection && (
@@ -536,7 +554,11 @@ function UserList() {
 
 // 角色管理组件
 function RoleManagement() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, customers, user } = useAuth();
+
+  // 超管「目标客户」下拉的合法选项：仅启用中且带 appCode 的真实客户。
+  const activeCustomers = customers.filter(c => !!c.appCode && c.status === 'active');
+
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [editingRoleCode, setEditingRoleCode] = useState<string | null>(null);
@@ -551,6 +573,7 @@ function RoleManagement() {
     description: '',
     permissions: [] as string[],
     dataScope: 'CUSTOM',
+    customerId: null,
   });
 
   // 加载角色列表
@@ -593,6 +616,7 @@ function RoleManagement() {
       description: '',
       permissions: [],
       dataScope: 'CUSTOM',
+      customerId: null,
     });
     setShowRoleModal(true);
   };
@@ -606,6 +630,7 @@ function RoleManagement() {
       description: role.description || '',
       permissions: role.permissions,
       dataScope: role.dataScope,
+      customerId: role.customerId ?? null,
     });
     setShowRoleModal(true);
   };
@@ -854,6 +879,22 @@ function RoleManagement() {
                                 placeholder="角色职责描述"
                             />
                         </div>
+
+                        {user?.role === 'super_admin' && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-300 mb-2">目标客户（超管代租户建角色）</label>
+                            <select
+                                value={roleForm.customerId ?? ''}
+                                onChange={(e) => setRoleForm({ ...roleForm, customerId: e.target.value ? Number(e.target.value) : null })}
+                                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800"
+                            >
+                                <option value="">不指定（平台级角色，仅超管可见/管理）</option>
+                                {activeCustomers.map((c) => (
+                                    <option key={c.id} value={c.id}>{c.name}（{c.appCode}）</option>
+                                ))}
+                            </select>
+                        </div>
+                        )}
 
                          {/* Data Scope */}
                          <div>
