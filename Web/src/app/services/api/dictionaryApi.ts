@@ -19,6 +19,8 @@ export interface CreateDictionaryItemRequest {
   sort?: number;
   description?: string;
   status?: string;
+  /** 仅超管代租户创建时由前端传；普通租户不传，由服务端 JWT 决定 */
+  appCode?: string;
 }
 
 export interface UpdateDictionaryItemRequest {
@@ -35,6 +37,8 @@ export interface CreateDictionaryTypeRequest {
   description?: string;
   sortOrder?: number;
   isActive?: boolean;
+  /** 仅超管代租户创建时由前端传；普通租户不传，由服务端 JWT 决定 */
+  appCode?: string;
 }
 
 export interface UpdateDictionaryTypeRequest {

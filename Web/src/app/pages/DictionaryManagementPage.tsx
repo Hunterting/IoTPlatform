@@ -4,7 +4,7 @@ import {
   Plus, Edit2, Trash2, Search, 
   Cpu, Archive, Activity, Tag, 
   FileText, AlertTriangle, Bell, Radio,
-  LucideIcon, Settings, Loader2, RefreshCw
+  LucideIcon, Settings, Loader2, RefreshCw, Building2
 } from 'lucide-react';
 import { 
   useDictionary, 
@@ -14,6 +14,7 @@ import {
   getDictionaryTypeConfig,
   DictionaryType
 } from '@/app/contexts/DictionaryContext';
+import { useAuth } from '@/app/contexts/AuthContext';
 import { useTheme } from '@/app/contexts/ThemeContext';
 import * as dictionaryApi from '@/app/services/api/dictionaryApi';
 import { DictionaryTypeDto, DictionaryItemDto } from '@/app/services/api/types/dictionary.types';
@@ -60,6 +61,11 @@ const defaultIconMap: Record<string, string> = {
 export function DictionaryManagementPage() {
   const { themeConfig } = useTheme();
   const { getAllItems, getItemsByType, addItem, updateItem, deleteItem, typeConfigs, addTypeConfig, updateTypeConfig, loadFromBackend } = useDictionary();
+  const { user, customers } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
+
+  // 超管「目标租户」下拉的合法选项：仅启用中且带 appCode 的真实客户。
+  const activeCustomers = customers.filter(c => !!c.appCode && c.status === 'active');
   
   // 状态管理
   const [activeTab, setActiveTab] = useState<DictionaryTypeValue | null>(null); // 初始为null，表示未选择
@@ -78,6 +84,7 @@ export function DictionaryManagementPage() {
     icon: 'Settings',
     description: '',
     color: 'blue',
+    appCode: '',
   });
   
   // 是否已加载过字典项（用于显示空状态提示）
@@ -89,6 +96,7 @@ export function DictionaryManagementPage() {
     sort: 1,
     description: '',
     status: 'active' as 'active' | 'inactive',
+    appCode: '',
   });
 
   // API 数据状态
@@ -178,6 +186,7 @@ export function DictionaryManagementPage() {
       sort: dictionaryItems.length + 1,
       description: '',
       status: 'active',
+      appCode: '',
     });
     setIsAddModalOpen(true);
   };
@@ -191,6 +200,7 @@ export function DictionaryManagementPage() {
       sort: item.sort,
       description: item.description || '',
       status: item.status === 'active' ? 'active' : 'inactive',
+      appCode: '',
     });
     setIsEditModalOpen(true);
   };
@@ -221,6 +231,7 @@ export function DictionaryManagementPage() {
       icon: 'Settings',
       description: '',
       color: 'blue',
+      appCode: '',
     });
     setIsAddTypeModalOpen(true);
   };
@@ -243,6 +254,7 @@ export function DictionaryManagementPage() {
       icon: defaultIconMap[type.code] || 'Settings',
       description: type.description || '',
       color: 'blue',
+      appCode: '',
     });
     setIsEditTypeModalOpen(true);
   };
@@ -260,6 +272,8 @@ export function DictionaryManagementPage() {
         name: typeFormData.name.trim(),
         description: typeFormData.description.trim(),
         isActive: true,
+        // 仅超管可代租户创建（含 platform system）；普通租户不传，由服务端 JWT 决定。
+        appCode: isSuperAdmin && typeFormData.appCode ? typeFormData.appCode : undefined,
       });
 
       if (response.data?.code === 200) {
@@ -320,6 +334,8 @@ export function DictionaryManagementPage() {
         sort: formData.sort,
         description: formData.description.trim(),
         status: formData.status,
+        // 仅超管可代租户创建（含 platform system）；普通租户不传，由服务端 JWT 决定。
+        appCode: isSuperAdmin && formData.appCode ? formData.appCode : undefined,
       });
 
       if (response.data?.code === 200) {
@@ -383,7 +399,7 @@ export function DictionaryManagementPage() {
             字典管理
           </h1>
           <p className="text-sm mt-1 text-gray-400">
-            统一管理系统中的所有字典数据，支持灵活扩展
+            统一管理系统中的所有字典数据（按租户区分记录，平台字典只读共享）
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -395,6 +411,15 @@ export function DictionaryManagementPage() {
             刷新
           </button>
         </div>
+      </div>
+
+      {/* ── 租户范围提示 ─────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs mb-4"
+        style={{ background: 'rgba(0,195,255,0.06)', border: '1px solid rgba(0,195,255,0.2)', color: '#8ecfff' }}>
+        <Building2 className="w-3.5 h-3.5" />
+        {isSuperAdmin
+          ? '超级管理员视图：展示全部租户字典（含平台共享字典，可编辑）'
+          : '当前租户视图：本租户字典可编辑，平台共享（system）字典只读'}
       </div>
 
       {/* 主体：左右布局 */}
@@ -452,8 +477,13 @@ export function DictionaryManagementPage() {
                           <Icon className={`w-5 h-5 ${isActive ? colors.text : 'text-gray-400'}`} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className={`font-medium truncate ${isActive ? colors.text : 'text-gray-300'}`}>
-                            {type.name}
+                          <div className={`flex items-center gap-2 font-medium truncate ${isActive ? colors.text : 'text-gray-300'}`}>
+                            <span className="truncate">{type.name}</span>
+                            {isSuperAdmin && (
+                              <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono bg-white/10 text-gray-400 border border-white/10">
+                                {type.appCode === 'system' ? '平台共享' : (type.appCode || '未分配')}
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-gray-500 mt-0.5">
                             {itemCount} 项数据
@@ -474,17 +504,19 @@ export function DictionaryManagementPage() {
                         </div>
                       )}
                     </button>
-                    {/* 编辑按钮 - 在hover时显示 */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenEditType(type.code);
-                      }}
-                      className="absolute top-2 right-2 p-1.5 bg-gray-800/90 text-gray-300 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:text-blue-400 hover:bg-gray-700"
-                      title="编辑字典类型"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                    </button>
+                    {/* 编辑按钮 - 在hover时显示；平台共享（system）字典仅超管可改，普通租户隐藏避免出现可点却 403 的按钮 */}
+                    {(isSuperAdmin || type.appCode !== 'system') && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenEditType(type.code);
+                        }}
+                        className="absolute top-2 right-2 p-1.5 bg-gray-800/90 text-gray-300 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:text-blue-400 hover:bg-gray-700"
+                        title="编辑字典类型"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -553,6 +585,11 @@ export function DictionaryManagementPage() {
                         <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
                           状态
                         </th>
+                        {isSuperAdmin && (
+                          <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-400">
+                            租户
+                          </th>
+                        )}
                         <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-400">
                           操作
                         </th>
@@ -561,13 +598,13 @@ export function DictionaryManagementPage() {
                     <tbody className="divide-y divide-white/10">
                       {loadingItems ? (
                         <tr>
-                          <td colSpan={6} className="px-6 py-8 text-center">
+                          <td colSpan={isSuperAdmin ? 7 : 6} className="px-6 py-8 text-center">
                             <Loader2 className="w-6 h-6 text-gray-400 animate-spin mx-auto" />
                           </td>
                         </tr>
                       ) : currentItems.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
+                          <td colSpan={isSuperAdmin ? 7 : 6} className="px-6 py-8 text-center text-gray-400">
                             {searchQuery ? '没有找到匹配的字典项' : `暂无${currentConfig?.name || '字典项'}数据`}
                           </td>
                         </tr>
@@ -604,21 +641,34 @@ export function DictionaryManagementPage() {
                                 {item.status === 'active' ? '启用' : '禁用'}
                               </span>
                             </td>
+                            {isSuperAdmin && (
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-white/10 text-gray-400 border border-white/10">
+                                  {item.appCode === 'system' ? '平台共享' : (item.appCode || '未分配')}
+                                </span>
+                              </td>
+                            )}
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2">
-                              <button
-                                onClick={() => handleOpenEdit(item)}
-                                className="inline-flex items-center gap-1 px-3 py-1 text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
-                              >
-                                <Edit2 className="w-3 h-3" />
-                                编辑
-                              </button>
-                              <button
-                                onClick={() => handleDelete(item)}
-                                className="inline-flex items-center gap-1 px-3 py-1 text-red-400 hover:bg-red-900/20 rounded transition-colors"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                                删除
-                              </button>
+                              {!isSuperAdmin && item.appCode === 'system' ? (
+                                <span className="text-xs text-gray-500">平台共享 · 只读</span>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handleOpenEdit(item)}
+                                    className="inline-flex items-center gap-1 px-3 py-1 text-blue-400 hover:bg-blue-900/20 rounded transition-colors"
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                    编辑
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(item)}
+                                    className="inline-flex items-center gap-1 px-3 py-1 text-red-400 hover:bg-red-900/20 rounded transition-colors"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    删除
+                                  </button>
+                                </>
+                              )}
                             </td>
                           </motion.tr>
                         ))
@@ -730,6 +780,25 @@ export function DictionaryManagementPage() {
                     <option value="inactive" className="bg-gray-800 text-white">禁用</option>
                   </select>
                 </div>
+                {/* 目标租户：仅超管可见，只能从真实客户或平台共享中选择；留空则由登录账号决定 */}
+                {isSuperAdmin && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-300">
+                      目标租户（超管代建 / 指派归属）
+                    </label>
+                    <select
+                      value={formData.appCode}
+                      onChange={(e) => setFormData({ ...formData, appCode: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border border-white/10 bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="" className="bg-gray-800 text-white">不指定（由登录账号决定）</option>
+                      <option value="system" className="bg-gray-800 text-white">平台共享（system，所有租户只读可见）</option>
+                      {activeCustomers.map(c => (
+                        <option key={c.id} value={c.appCode} className="bg-gray-800 text-white">{c.name}（{c.appCode}）</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 mt-6">
                 <button
@@ -947,6 +1016,25 @@ export function DictionaryManagementPage() {
                     placeholder="请输入字典类型的描述信息"
                   />
                 </div>
+                {/* 目标租户：仅超管可见，只能从真实客户或平台共享中选择；留空则由登录账号决定 */}
+                {isSuperAdmin && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1 text-gray-300">
+                      目标租户（超管代建 / 指派归属）
+                    </label>
+                    <select
+                      value={typeFormData.appCode}
+                      onChange={(e) => setTypeFormData({ ...typeFormData, appCode: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border border-white/10 bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                      <option value="" className="bg-gray-800 text-white">不指定（由登录账号决定）</option>
+                      <option value="system" className="bg-gray-800 text-white">平台共享（system，所有租户只读可见）</option>
+                      {activeCustomers.map(c => (
+                        <option key={c.id} value={c.appCode} className="bg-gray-800 text-white">{c.name}（{c.appCode}）</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="flex gap-3 mt-6">
                 <button
