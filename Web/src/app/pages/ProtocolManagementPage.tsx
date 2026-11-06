@@ -461,9 +461,12 @@ const EMPTY_FORM = {
 
 // ── 主组件 ─────────────────────────────────────────────────────────────────────
 export function ProtocolManagementPage() {
-  const { hasPermission, user } = useAuth();
+  const { hasPermission, user, customers } = useAuth();
   const canManage = hasPermission(PERMISSIONS.MANAGE_PROTOCOLS);
   const isSuperAdmin = user?.role === 'super_admin';
+
+  // 超管「目标租户」下拉的合法选项：仅启用中且带 appCode 的真实客户。
+  const activeCustomers = customers.filter(c => !!c.appCode && c.status === 'active');
 
   // 数据状态
   const [protocols, setProtocols] = useState<ProtocolConfig[]>([]);
@@ -1337,16 +1340,26 @@ export function ProtocolManagementPage() {
                   </div>
                 </div>
 
-                {/* 目标租户 AppCode：仅超管可见，用于代租户创建或指派归属 */}
+                {/* 目标租户：仅超管可见，只能从真实客户中选择，杜绝手输写出孤儿配置 */}
                 {isSuperAdmin && (
                   <div>
-                    <label className="text-sm text-slate-300 mb-1 block">目标租户 AppCode（超管代建/指派归属；留空则由登录账号决定）</label>
-                    <input
+                    <label className="text-sm text-slate-300 mb-1 block">目标租户（超管代建 / 指派归属）</label>
+                    <select
                       value={form.appCode ?? ''}
                       onChange={e => setForm(f => ({ ...f, appCode: e.target.value }))}
-                      placeholder="例如 customer_001"
                       className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-                    />
+                    >
+                      {/* 留空语义必须保留：创建时前端不传 appCode 由服务端 JWT 决定；编辑时不改归属 */}
+                      <option value="" className="bg-slate-800 text-white">不指定（新建由登录账号决定 / 编辑保持原归属）</option>
+                      {activeCustomers.map(c => (
+                        <option key={c.id} value={c.appCode} className="bg-slate-800 text-white">{c.name}（{c.appCode}）</option>
+                      ))}
+                      {/* 兜底：历史脏值 / 已停用客户等不在合法列表中的当前值，仍渲染为可见 option，
+                          避免 <select value> 指向不存在的 option 而显示空白、误导超管以为「没选」就保存 */}
+                      {form.appCode && !activeCustomers.some(c => c.appCode === form.appCode) && (
+                        <option value={form.appCode} className="bg-slate-800 text-white">⚠ 当前值：{form.appCode}（不在客户列表中）</option>
+                      )}
+                    </select>
                   </div>
                 )}
 
