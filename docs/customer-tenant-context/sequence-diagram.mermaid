@@ -1,0 +1,60 @@
+%% 客户管理页租户无数据 —— 根因时序图（3 处断点）
+%% 身份示例：tenantA manager@haidilao.com (role=admin)，存量库 users.CustomerId 全 NULL
+%% 配套文档：docs/customer-tenant-context/solution.md 第 2 节
+sequenceDiagram
+    autonumber
+    actor U as 用户/浏览器
+    participant LP as LoginPage
+    participant AC as AuthController
+    participant AS as AuthService
+    participant REPO as UserRepository / CustomerRepository
+    participant JWT as JwtHelper + JWT claim
+    participant AD as authAdapter.adaptLoginResponseToUser
+    participant CTX as AuthContext
+    participant CP as CustomersPage
+    participant CC as CustomersController
+
+    U->>LP: 输入 tenantA 凭据
+    LP->>AC: POST /api/v1/auth/login
+    AC->>AS: LoginAsync(request)
+    AS->>REPO: GetByEmailAsync → user
+    REPO-->>AS: CustomerId=NULL，AppCode=customer_001
+
+    rect rgb(230, 245, 230)
+    AS->>AS: 计算 effectiveAppCode（AuthService.cs L98）= customer_001
+    AS->>JWT: GenerateToken(..., effectiveAppCode, ...)（L101-107）
+    JWT-->>AS: token 含 AppCode=customer_001 【正确，后端隔离靠它】
+    end
+
+    rect rgb(255, 232, 232)
+    Note over AS: 【断点 1】new UserDto（L119-128）漏填 AppCode/CustomerId/CustomerName
+    Note over AS: 【断点 1'】L77-80 仅在 CustomerId.HasValue 时查 Customer → customer=null → currentCustomer=null
+    end
+
+    AS-->>AC: LoginResponse 中 user 的 appCode 与 customerId 均为 null，currentCustomer 为 null
+    AC-->>LP: 200 ApiResponse
+    LP->>AD: adaptLoginResponseToUser(response)
+    AD-->>CTX: { appCode:null, customerId:null, role:'admin' }（映射本身正确，源为 null）
+
+    rect rgb(255, 232, 232)
+    Note over CTX: 【断点 2】login() 仅超管分支 setCustomers（L189-196）；租户分支 else if(customerId)（L198）不进入
+    Note over CTX: useEffect([]) loadCustomers（L119-125）挂载时无 token 已 return → 本次会话不再重试
+    end
+    CTX->>CTX: setUser + localStorage（customers=[]，currentCustomer=null）
+
+    U->>U: F5 刷新页面
+    CTX->>CTX: 恢复 localStorage，此时 token 已存在
+    CTX->>CC: GET /api/v1/customers（带 JWT AppCode claim）
+    CC-->>CTX: 200 / 1 条 customer_001 【服务端隔离正常，非 403、非过滤错】
+    CTX->>CP: customers=[1条]，user.appCode=null，currentCustomer=null
+
+    rect rgb(255, 232, 232)
+    Note over CP: 【断点 3】filteredCustomers（L49-54）中 appCode 为空 → return false → 0 条
+    end
+    CP-->>U: 客户管理页空白（表象）
+
+    %% 修复后对应：
+    %% 断点 1 → AuthService 三处 UserDto 回填 AppCode=effectiveAppCode / CustomerId / CustomerName
+    %% 断点 1' → CustomerId 优先、GetByAppCodeAsync 兜底反查 Customer（存量库 CustomerId 全 NULL）
+    %% 断点 2 → AuthContext.login() 无条件 loadCustomers，deriveTenantContext 按 appCode 建立 currentCustomer
+    %% 断点 3 → CustomersPage 在 appCode 为空时按「已隔离单条」兜底，不再全砍

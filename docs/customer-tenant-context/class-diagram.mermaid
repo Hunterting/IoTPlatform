@@ -1,0 +1,121 @@
+%% 租户上下文数据契约关系图
+%% 重点：存在两个同名不同形的 CustomerDto，且 UserDto 字段齐全、缺陷仅在手工赋值
+%% 配套文档：docs/customer-tenant-context/solution.md 第 2.3 节
+classDiagram
+    class IHasAppCode {
+        <<interface>>
+        +string AppCode
+    }
+    class User {
+        +long Id
+        +long? CustomerId
+        +string? AppCode
+        +string Role
+        +bool IsSuperAdmin
+        +bool IsActive
+        +Customer? Customer
+    }
+    class Customer {
+        +long Id
+        +string Code
+        +string AppCode
+        +string Name
+        +string Status
+    }
+    class UserDto {
+        +long Id
+        +string Name
+        +string Email
+        +string Role
+        +long? CustomerId
+        +string? CustomerName
+        +string? AppCode
+        +bool IsSuperAdmin
+        +bool IsActive
+        +List~long~ AllowedAreaIds
+        +List~string~ Permissions
+    }
+    class LoginResponse {
+        +string Token
+        +UserDto User
+        +CustomerDto? CurrentCustomer
+    }
+    class CustomerDto_登录响应 {
+        +long Id
+        +string Name
+        +string Code
+        +string AppCode
+        +string? ContactPerson
+        +string? ContactPhone
+        +string? ContactEmail
+        +string? Address
+        +int DeviceCount
+        +int ProjectCount
+    }
+    class CustomerDto_客户列表 {
+        +long Id
+        +string Name
+        +string Code
+        +string AppCode
+        +string? Contact
+        +string? Phone
+        +string? Address
+        +int DeviceCount
+        +int ProjectCount
+    }
+    class ICustomerRepository {
+        <<interface>>
+        +GetByIdAsync(long id)
+        +GetByAppCodeAsync(string appCode)
+        +GetByCodeAsync(string code)
+    }
+    class AuthService {
+        +LoginAsync(LoginRequest)
+        +GetCurrentUserAsync(long)
+        +SwitchCustomerAsync(long, long)
+        -ComputeEffectiveAppCode(User, Customer)
+        -BuildUserDto(...)
+        -ResolveCustomer(...)
+    }
+    class JwtHelper {
+        +GenerateToken(...)
+    }
+    class CustomersController {
+        +GetCustomers()
+    }
+    class AuthContext {
+        +User? user
+        +Customer[] customers
+        +Customer? currentCustomer
+        +login()
+        +refreshCustomers()
+        -deriveTenantContext() 新增
+        -patchTenantUser() 新增
+        -applyCustomers() 新增
+        -loadCustomers() 重构
+    }
+    class CustomersPage {
+        +filteredCustomers
+    }
+    class AuthAdapter {
+        +adaptLoginResponseToUser() 不改
+        +adaptCustomerDtoToCustomer() 复用
+    }
+
+    IHasAppCode <|.. User
+    IHasAppCode <|.. Customer
+    User "1" o--> "0..1" Customer : CustomerId 可空（存量库全 NULL）
+    LoginResponse *-- UserDto
+    LoginResponse *-- CustomerDto_登录响应 : DTOs/Responses/LoginResponse.cs:16
+    AuthService ..> User : 以 AppCode 为身份主源
+    AuthService ..> ICustomerRepository : GetByIdAsync 优先 / GetByAppCodeAsync 兜底
+    AuthService ..> LoginResponse : 手工 new UserDto ×3（修复点）
+    AuthService ..> JwtHelper : effectiveAppCode 同时喂 token 与 DTO
+    CustomersController ..> CustomerDto_客户列表 : 内联 DTO（:348），不改
+    CustomersController ..> JwtHelper : 只读 AppCode claim，不改
+    JwtHelper ..> UserDto : claim 与响应体必须一致（本方案契约）
+    AuthContext ..> AuthAdapter : adaptLoginResponseToUser / adaptCustomerDtoToCustomer
+    AuthContext ..> LoginResponse : 消费登录响应
+    AuthContext ..> CustomerDto_客户列表 : 消费 GET /customers（服务端已隔离）
+    CustomersPage ..> AuthContext : useAuth()
+    CustomerDto_登录响应 .. CustomerDto_客户列表 : 同名不同命名空间且字段不一致，禁止混用比较
