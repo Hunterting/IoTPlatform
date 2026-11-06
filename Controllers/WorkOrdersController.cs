@@ -25,6 +25,19 @@ public class WorkOrdersController : ControllerBase
     }
 
     /// <summary>
+    /// 租户过滤码：普通租户取自身 AppCode；超管（无 AppCode / system）返回 null 表示看全部。
+    /// SwitchCustomer 后超管 token 带目标租户 AppCode，此时按该租户过滤。
+    /// </summary>
+    private string? TenantAppCode
+    {
+        get
+        {
+            var c = User.FindFirst("AppCode")?.Value;
+            return string.IsNullOrEmpty(c) || c == "system" ? null : c;
+        }
+    }
+
+    /// <summary>
     /// 获取工单列表
     /// </summary>
     [HttpGet]
@@ -37,10 +50,10 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var allowedAreaIds = GetAllowedAreaIds();
-
-            var result = await _workOrderService.GetWorkOrdersAsync(page, pageSize, status, type, priority, appCode, allowedAreaIds);
+            var appCode = TenantAppCode;
+            // 【租户隔离】只按 JWT AppCode 隔离，不叠加区域过滤。
+            // 服务层 allowedAreaIds 语义为 AreaId.HasValue && Contains(...)，会把真实工单按区域白名单排除（与 AlertsController 同源问题）。
+            var result = await _workOrderService.GetWorkOrdersAsync(page, pageSize, status, type, priority, appCode, null);
             return ApiResponse<PagedResponse<WorkOrderDto>>.Success(result);
         }
         catch (Exception ex)
@@ -57,10 +70,9 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var allowedAreaIds = GetAllowedAreaIds();
-
-            var result = await _workOrderService.GetWorkOrderAsync(id, appCode, allowedAreaIds);
+            var appCode = TenantAppCode;
+            // 【租户隔离】同上，详情只按 AppCode 隔离，不叠加区域过滤。
+            var result = await _workOrderService.GetWorkOrderAsync(id, appCode, null);
             if (result == null)
             {
                 var response = ApiResponse.NotFound("工单不存在");
@@ -85,7 +97,10 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.CreateWorkOrderAsync(request);
+            // 租户传的 appCode 会被 JWT 的 TenantAppCode 覆盖（防越权）；
+            // 超管 TenantAppCode=null 时允许 request.AppCode（代租户创建）。
+            var effectiveAppCode = TenantAppCode ?? request.AppCode;
+            var result = await _workOrderService.CreateWorkOrderAsync(request, effectiveAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单创建成功");
         }
         catch (InvalidOperationException ex)
@@ -109,7 +124,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.UpdateWorkOrderAsync(id, request);
+            var result = await _workOrderService.UpdateWorkOrderAsync(id, request, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单更新成功");
         }
         catch (InvalidOperationException ex)
@@ -133,7 +148,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.AssignWorkOrderAsync(id, request.Assignee);
+            var result = await _workOrderService.AssignWorkOrderAsync(id, request.Assignee, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单分配成功");
         }
         catch (InvalidOperationException ex)
@@ -157,7 +172,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.StartWorkOrderAsync(id);
+            var result = await _workOrderService.StartWorkOrderAsync(id, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单开始处理");
         }
         catch (InvalidOperationException ex)
@@ -181,7 +196,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.ResolveWorkOrderAsync(id, request.ResolveDescription);
+            var result = await _workOrderService.ResolveWorkOrderAsync(id, request.ResolveDescription, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已解决");
         }
         catch (InvalidOperationException ex)
@@ -205,7 +220,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.CloseWorkOrderAsync(id);
+            var result = await _workOrderService.CloseWorkOrderAsync(id, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已关闭");
         }
         catch (InvalidOperationException ex)
@@ -229,7 +244,7 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.RejectWorkOrderAsync(id, request.Reason);
+            var result = await _workOrderService.RejectWorkOrderAsync(id, request.Reason, TenantAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已拒绝");
         }
         catch (InvalidOperationException ex)
@@ -252,8 +267,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.GetWorkOrderLogsAsync(id);
+            var result = await _workOrderService.GetWorkOrderLogsAsync(id, TenantAppCode);
             return ApiResponse<List<WorkOrderLogDto>>.Success(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ApiResponse<List<WorkOrderLogDto>>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -269,8 +288,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.GetWorkOrderAttachmentsAsync(id);
+            var result = await _workOrderService.GetWorkOrderAttachmentsAsync(id, TenantAppCode);
             return ApiResponse<List<WorkOrderAttachmentDto>>.Success(result);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ApiResponse<List<WorkOrderAttachmentDto>>.BadRequest(ex.Message);
         }
         catch (Exception ex)
         {
@@ -289,8 +312,13 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.AddAttachmentAsync(id, request.FileName, request.FileUrl, request.FileSize, request.FileType);
+            var result = await _workOrderService.AddAttachmentAsync(id, request.FileName, request.FileUrl, request.FileSize, request.FileType, TenantAppCode);
             return ApiResponse<WorkOrderAttachmentDto>.Success(result, "附件添加成功");
+        }
+        catch (InvalidOperationException ex)
+        {
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -308,8 +336,13 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            await _workOrderService.DeleteAttachmentAsync(attachmentId);
+            await _workOrderService.DeleteAttachmentAsync(attachmentId, TenantAppCode);
             return ApiResponse.Success("附件删除成功");
+        }
+        catch (InvalidOperationException ex)
+        {
+            var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -318,19 +351,6 @@ public class WorkOrdersController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// 获取用户允许的区域ID列表
-    /// </summary>
-    private List<long>? GetAllowedAreaIds()
-    {
-        var allowedAreaIdsClaim = User.FindFirst("AllowedAreaIds")?.Value;
-        if (string.IsNullOrEmpty(allowedAreaIdsClaim))
-            return null;
-
-        return allowedAreaIdsClaim.Split(',', StringSplitOptions.RemoveEmptyEntries)
-            .Select(id => long.Parse(id.Trim()))
-            .ToList();
-    }
 }
 
 /// <summary>

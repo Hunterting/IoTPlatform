@@ -246,6 +246,27 @@ public class WorkOrderRepository : Repository<WorkOrder>, IWorkOrderRepository
         }
     }
 
+    public async Task<(bool Exists, string? AppCode)> GetWorkOrderOwnershipAsync(long workOrderId)
+    {
+        var row = await _context.WorkOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(w => w.Id == workOrderId)
+            .Select(w => new { w.Id, w.AppCode })
+            .FirstOrDefaultAsync();
+        return row == null ? (false, null) : (true, row.AppCode);
+    }
+
+    public async Task<long?> GetAttachmentWorkOrderIdAsync(long attachmentId)
+    {
+        return await _context.WorkOrderAttachments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(a => a.Id == attachmentId)
+            .Select(a => (long?)a.WorkOrderId)
+            .FirstOrDefaultAsync();
+    }
+
     public async Task<WorkOrderStats> GetWorkOrderStatsAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null)
     {
         var query = ApplyFilters(_context.WorkOrders.AsQueryable(), appCode, null);

@@ -41,4 +41,10 @@ public class CreateWorkOrderRequest
 
     [MaxLength(100, ErrorMessage = "项目名称长度不能超过100字符")]
     public string? ProjectName { get; set; }
+
+    /// <summary>
+    /// 目标租户 AppCode（仅超级管理员代其它租户创建时生效；普通租户传值会被服务端 JWT 的 AppCode 覆盖，防越权）。
+    /// </summary>
+    [MaxLength(50)]
+    public string? AppCode { get; set; }
 }

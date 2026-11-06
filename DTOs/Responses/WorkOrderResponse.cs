@@ -28,6 +28,8 @@ public class WorkOrderDto
     public DateTime? ClosedTime { get; set; }
     public string? ResolveDescription { get; set; }
     public string? ProjectName { get; set; }
+    /// <summary>工单所属租户 AppCode（区分租户；超管可见全部）</summary>
+    public string? AppCode { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

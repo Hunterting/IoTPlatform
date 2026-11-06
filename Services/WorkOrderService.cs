@@ -82,6 +82,7 @@ public class WorkOrderService : IWorkOrderService
                 Priority = w.Priority,
                 Status = w.Status,
                 CustomerId = w.CustomerId,
+                CustomerName = w.Customer.Name,
                 DeviceId = w.DeviceId,
                 AreaId = w.AreaId,
                 DeviceName = w.DeviceName,
@@ -97,6 +98,7 @@ public class WorkOrderService : IWorkOrderService
                 ClosedTime = w.ClosedTime,
                 ResolveDescription = w.ResolveDescription,
                 ProjectName = w.ProjectName,
+                AppCode = w.AppCode,
                 CreatedAt = w.CreatedAt,
                 UpdatedAt = w.UpdatedAt
             })
@@ -124,7 +126,7 @@ public class WorkOrderService : IWorkOrderService
             baseQuery = baseQuery.Where(w => w.AreaId == null || allowedAreaIds.Contains(w.AreaId.Value));
         }
 
-        var query = baseQuery.Include(w => w.Device).Include(w => w.Area);
+        var query = baseQuery.Include(w => w.Device).Include(w => w.Area).Include(w => w.Customer);
 
         var workOrder = await query.FirstOrDefaultAsync(w => w.Id == id);
         if (workOrder == null) return null;
@@ -138,6 +140,7 @@ public class WorkOrderService : IWorkOrderService
             Priority = workOrder.Priority,
             Status = workOrder.Status,
             CustomerId = workOrder.CustomerId,
+            CustomerName = workOrder.Customer?.Name ?? string.Empty,
             DeviceId = workOrder.DeviceId,
             AreaId = workOrder.AreaId,
             DeviceName = workOrder.DeviceName,
@@ -153,6 +156,7 @@ public class WorkOrderService : IWorkOrderService
             ClosedTime = workOrder.ClosedTime,
             ResolveDescription = workOrder.ResolveDescription,
             ProjectName = workOrder.ProjectName,
+            AppCode = workOrder.AppCode,
             CreatedAt = workOrder.CreatedAt,
             UpdatedAt = workOrder.UpdatedAt
         };
@@ -161,12 +165,12 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 创建工单
     /// </summary>
-    public async Task<WorkOrderDto> CreateWorkOrderAsync(CreateWorkOrderRequest request)
+    public async Task<WorkOrderDto> CreateWorkOrderAsync(CreateWorkOrderRequest request, string? appCode = null)
     {
         var orderNo = $"WO{DateTime.UtcNow:yyyyMMddHHmmss}";
 
-        // 获取AppCode
-        string? appCode = null;
+        // 【租户隔离】AppCode 由服务端 JWT 决定（优先）；设备反查仅作兜底，
+        // 保证不带 DeviceId 创建的工单也归属当前租户（否则租户看不到自己的工单）。
         if (request.DeviceId.HasValue)
         {
             var device = await _deviceRepository.GetByIdAsync(request.DeviceId.Value);
@@ -176,7 +180,7 @@ public class WorkOrderService : IWorkOrderService
                 request.DeviceCode = device.SerialNumber;
                 request.AreaId = device.AreaId;
                 request.ProjectName = device.ProjectName;
-                appCode = device.AppCode;
+                appCode ??= device.AppCode;
             }
         }
 
@@ -218,6 +222,14 @@ public class WorkOrderService : IWorkOrderService
         // 记录日志
         await _workOrderRepository.AddLogAsync(workOrder.Id, request.Reporter ?? "System", "create", request.Description);
 
+        // 新建实体未加载 Customer 导航，单独回填客户名，避免创建响应中该字段为空。
+        string? createdCustomerName = null;
+        if (request.CustomerId.HasValue)
+        {
+            var customer = await _unitOfWork.CustomerRepository.GetByIdAsync(request.CustomerId.Value);
+            createdCustomerName = customer?.Name;
+        }
+
         return new WorkOrderDto
         {
             Id = workOrder.Id,
@@ -227,6 +239,7 @@ public class WorkOrderService : IWorkOrderService
             Priority = workOrder.Priority,
             Status = workOrder.Status,
             CustomerId = workOrder.CustomerId,
+            CustomerName = createdCustomerName ?? string.Empty,
             DeviceId = workOrder.DeviceId,
             AreaId = workOrder.AreaId,
             DeviceName = workOrder.DeviceName,
@@ -242,6 +255,7 @@ public class WorkOrderService : IWorkOrderService
             ClosedTime = workOrder.ClosedTime,
             ResolveDescription = workOrder.ResolveDescription,
             ProjectName = workOrder.ProjectName,
+            AppCode = workOrder.AppCode,
             CreatedAt = workOrder.CreatedAt,
             UpdatedAt = workOrder.UpdatedAt
         };
@@ -250,12 +264,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 更新工单
     /// </summary>
-    public async Task<WorkOrderDto> UpdateWorkOrderAsync(long id, UpdateWorkOrderRequest request)
+    public async Task<WorkOrderDto> UpdateWorkOrderAsync(long id, UpdateWorkOrderRequest request, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         workOrder.Title = request.Title;
@@ -274,12 +294,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 分配工单
     /// </summary>
-    public async Task<WorkOrderDto> AssignWorkOrderAsync(long id, string assignee)
+    public async Task<WorkOrderDto> AssignWorkOrderAsync(long id, string assignee, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         workOrder.Status = "assigned";
@@ -300,12 +326,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 开始处理工单
     /// </summary>
-    public async Task<WorkOrderDto> StartWorkOrderAsync(long id)
+    public async Task<WorkOrderDto> StartWorkOrderAsync(long id, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         workOrder.Status = "in_progress";
@@ -324,12 +356,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 解决工单
     /// </summary>
-    public async Task<WorkOrderDto> ResolveWorkOrderAsync(long id, string resolveDescription)
+    public async Task<WorkOrderDto> ResolveWorkOrderAsync(long id, string resolveDescription, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         workOrder.Status = "resolved";
@@ -350,12 +388,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 关闭工单
     /// </summary>
-    public async Task<WorkOrderDto> CloseWorkOrderAsync(long id)
+    public async Task<WorkOrderDto> CloseWorkOrderAsync(long id, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         if (workOrder.Status != "resolved")
@@ -380,12 +424,18 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 拒绝工单
     /// </summary>
-    public async Task<WorkOrderDto> RejectWorkOrderAsync(long id, string reason)
+    public async Task<WorkOrderDto> RejectWorkOrderAsync(long id, string reason, string? appCode = null)
     {
         var workOrder = await _workOrderRepository.GetByIdAsync(id, new[] { "Customer", "Device", "Area" });
         if (workOrder == null)
         {
             throw new InvalidOperationException("工单不存在");
+        }
+
+        // 【租户隔离】普通租户只能操作本租户工单；超管 appCode=null 不校验。
+        if (!string.IsNullOrEmpty(appCode) && workOrder.AppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
         }
 
         workOrder.Status = "rejected";
@@ -404,8 +454,9 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 获取工单日志
     /// </summary>
-    public async Task<List<WorkOrderLogDto>> GetWorkOrderLogsAsync(long workOrderId)
+    public async Task<List<WorkOrderLogDto>> GetWorkOrderLogsAsync(long workOrderId, string? appCode = null)
     {
+        await EnsureWorkOrderOwnedAsync(workOrderId, appCode);
         var logs = await _workOrderRepository.GetLogsAsync(workOrderId);
         return logs.Select(l => new WorkOrderLogDto
         {
@@ -421,8 +472,9 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 获取工单附件
     /// </summary>
-    public async Task<List<WorkOrderAttachmentDto>> GetWorkOrderAttachmentsAsync(long workOrderId)
+    public async Task<List<WorkOrderAttachmentDto>> GetWorkOrderAttachmentsAsync(long workOrderId, string? appCode = null)
     {
+        await EnsureWorkOrderOwnedAsync(workOrderId, appCode);
         var attachments = await _workOrderRepository.GetAttachmentsAsync(workOrderId);
         return attachments.Select(a => new WorkOrderAttachmentDto
         {
@@ -439,8 +491,9 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 添加附件
     /// </summary>
-    public async Task<WorkOrderAttachmentDto> AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string fileSize, string fileType)
+    public async Task<WorkOrderAttachmentDto> AddAttachmentAsync(long workOrderId, string fileName, string fileUrl, string fileSize, string fileType, string? appCode = null)
     {
+        await EnsureWorkOrderOwnedAsync(workOrderId, appCode);
         var attachment = await _workOrderRepository.AddAttachmentAsync(workOrderId, fileName, fileUrl, fileSize, fileType);
         return new WorkOrderAttachmentDto
         {
@@ -457,9 +510,34 @@ public class WorkOrderService : IWorkOrderService
     /// <summary>
     /// 删除附件
     /// </summary>
-    public async Task DeleteAttachmentAsync(long attachmentId)
+    public async Task DeleteAttachmentAsync(long attachmentId, string? appCode = null)
     {
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            var workOrderId = await _workOrderRepository.GetAttachmentWorkOrderIdAsync(attachmentId);
+            if (!workOrderId.HasValue)
+            {
+                throw new InvalidOperationException("无权操作该工单");
+            }
+            await EnsureWorkOrderOwnedAsync(workOrderId.Value, appCode);
+        }
         await _workOrderRepository.DeleteAttachmentAsync(attachmentId);
+    }
+
+    /// <summary>
+    /// 【租户隔离】校验附属资源（日志/附件）所属工单是否属于当前租户。
+    /// 超管 appCode=null 不校验；工单不存在也按「无权」处理，避免泄露资源存在性。
+    /// 不依赖 EF 全局查询过滤器（该过滤器在 DbContext 构造时静态生成，AppCode 变更后不刷新）。
+    /// </summary>
+    private async Task EnsureWorkOrderOwnedAsync(long workOrderId, string? appCode)
+    {
+        if (string.IsNullOrEmpty(appCode)) return;
+
+        var (exists, ownerAppCode) = await _workOrderRepository.GetWorkOrderOwnershipAsync(workOrderId);
+        if (!exists || ownerAppCode != appCode)
+        {
+            throw new InvalidOperationException("无权操作该工单");
+        }
     }
 
     /// <summary>
@@ -492,6 +570,7 @@ public class WorkOrderService : IWorkOrderService
             ClosedTime = workOrder.ClosedTime,
             ResolveDescription = workOrder.ResolveDescription,
             ProjectName = workOrder.ProjectName,
+            AppCode = workOrder.AppCode,
             CreatedAt = workOrder.CreatedAt,
             UpdatedAt = workOrder.UpdatedAt
         };

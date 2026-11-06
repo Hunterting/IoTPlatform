@@ -139,6 +139,17 @@ public interface IWorkOrderRepository : IRepository<WorkOrder>
     /// </summary>
     /// <param name="attachmentId">附件ID</param>
     Task DeleteAttachmentAsync(long attachmentId);
+
+    /// <summary>
+    /// 查询工单归属租户（绕过全局查询过滤器），供日志/附件等附属资源做显式租户校验。
+    /// Exists=false 表示工单不存在，调用方应按「无权」处理，避免泄露资源存在性。
+    /// </summary>
+    Task<(bool Exists, string? AppCode)> GetWorkOrderOwnershipAsync(long workOrderId);
+
+    /// <summary>
+    /// 按附件ID反查所属工单ID（绕过全局查询过滤器），供删除附件前校验归属。
+    /// </summary>
+    Task<long?> GetAttachmentWorkOrderIdAsync(long attachmentId);
     
     /// <summary>
     /// 获取工单统计信息
