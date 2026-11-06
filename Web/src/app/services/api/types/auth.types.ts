@@ -22,6 +22,7 @@ export interface UserDto {
   appCode?: string | null;
   avatar?: string | null;
   allowedAreaIds?: string[] | null; // 后端是List<long>?，前端转为string[]
+  permissions?: string[]; // 后端下发的有效权限（单一事实来源 = DB Role.Permissions）
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

@@ -16,6 +16,7 @@ public class UserDto
     public List<long>? AllowedAreaIds { get; set; }
     public bool IsActive { get; set; }
     public bool IsSuperAdmin { get; set; }
+    public List<string> Permissions { get; set; } = new List<string>();
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

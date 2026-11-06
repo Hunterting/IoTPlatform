@@ -20,6 +20,7 @@ export interface User {
   appCode?: string;
   avatar?: string;
   allowedAreaIds?: string[];
+  permissions?: string[]; // 服务端下发的有效权限（单一事实来源 = DB Role.Permissions）
 }
 
 // 项目下的合同
@@ -361,11 +362,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user, roles]);
 
   const hasPermission = useCallback((permission: Permission) => {
-    const roleDef = getUserRole();
-    if (!roleDef) return false;
-    if (roleDef.code === 'super_admin') return true;
-    return roleDef.permissions.includes(permission);
-  }, [getUserRole]);
+    const currentUser = user;
+    if (!currentUser) return false;
+    // 超级管理员直接放行（角色名短路，与后端 PermissionFilter 一致）
+    if (currentUser.role === 'super_admin') return true;
+    // 基于服务端下发的权限数组判定（单一事实来源 = 后端 permissions）
+    return currentUser.permissions?.includes(permission) ?? false;
+  }, [user]);
 
   return (
     <AuthContext.Provider

@@ -1,6 +1,7 @@
 using IoTPlatform.Configuration;
 using IoTPlatform.Helpers;
 using IoTPlatform.Infrastructure.Tenant;
+using IoTPlatform.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -9,10 +10,10 @@ using System.Security.Claims;
 namespace IoTPlatform.Filters;
 
 /// <summary>
-/// 权限验证过滤器
+/// 权限验证过滤器（异步实现，避免同步阻塞 DB 调用）
 /// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFilter
+public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAsyncAuthorizationFilter
 {
     private readonly string[] _requiredPermissions;
 
@@ -21,7 +22,7 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
         _requiredPermissions = permissions;
     }
 
-    public void OnAuthorization(AuthorizationFilterContext context)
+    public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
         var user = context.HttpContext.User;
 
@@ -32,9 +33,9 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
             return;
         }
 
-        // 超级管理员拥有所有权限
+        // 超级管理员拥有所有权限（短路放行，不查 DB）
         var roleClaim = user.FindFirst(ClaimTypes.Role);
-        if (roleClaim?.Value == IoTPlatform.Configuration.Roles.SUPER_ADMIN)
+        if (IoTPlatform.Configuration.Roles.IsSuperAdmin(roleClaim?.Value))
         {
             return;
         }
@@ -45,8 +46,8 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
             return;
         }
 
-        // 获取用户权限
-        var userPermissions = GetUserPermissions(user);
+        // 获取用户权限（异步解析，单一事实来源 = DB Role.Permissions）
+        var userPermissions = await GetUserPermissionsAsync(context.HttpContext);
 
         // 检查用户是否拥有所需权限
         var hasPermission = _requiredPermissions.Any(perm => userPermissions.Contains(perm));
@@ -58,18 +59,24 @@ public class PermissionAuthorizeAttribute : AuthorizeAttribute, IAuthorizationFi
     }
 
     /// <summary>
-    /// 根据用户角色获取权限列表
+    /// 通过 RequestServices 获取 IPermissionService，异步解析角色的有效权限（跨租户 + 静态回退）。
+    /// 服务为 null（未注册）时兜底空列表，避免过滤器自身崩溃。
     /// </summary>
-    private List<string> GetUserPermissions(ClaimsPrincipal user)
+    private async Task<List<string>> GetUserPermissionsAsync(HttpContext httpContext)
     {
-        var roleClaim = user.FindFirst(ClaimTypes.Role);
+        var roleClaim = httpContext.User.FindFirst(ClaimTypes.Role);
         if (roleClaim == null || string.IsNullOrEmpty(roleClaim.Value))
         {
             return new List<string>();
         }
 
-        // 使用 RoleConfig 中定义的权限映射
-        return IoTPlatform.Configuration.Roles.GetRolePermissions(roleClaim.Value);
+        var permissionService = httpContext.RequestServices.GetService<IPermissionService>();
+        if (permissionService == null)
+        {
+            return new List<string>();
+        }
+
+        return await permissionService.GetEffectivePermissionsAsync(roleClaim.Value);
     }
 }
 

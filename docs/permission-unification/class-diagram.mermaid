@@ -1,0 +1,81 @@
+classDiagram
+    direction LR
+
+    class IPermissionService {
+        <<interface>>
+        +List~string~ GetRolePermissions(string roleCode)
+        +List~string~ GetAllPermissionCodes()
+        +GetEffectivePermissionsAsync(string roleCode) Task
+    }
+
+    class PermissionService {
+        -IRoleRepository _roleRepository
+        -ILogger _logger
+        +List~string~ GetRolePermissions(string)
+        +List~string~ GetAllPermissionCodes()
+        +GetEffectivePermissionsAsync(string) Task
+    }
+    PermissionService ..|> IPermissionService
+
+    class IRoleRepository {
+        <<interface>>
+        +GetByCodeAsync(string code, string? appCode) Task~Role?~
+    }
+    class RoleRepository {
+        +GetByCodeAsync(string, string?) Task~Role?~
+    }
+    RoleRepository ..|> IRoleRepository
+
+    class Role {
+        +string Code
+        +string? Permissions
+    }
+
+    class Roles {
+        <<static>>
+        +string SUPER_ADMIN
+        +List~string~ GetRolePermissions(string)
+        +bool IsSuperAdmin(string?)
+    }
+
+    class Permissions {
+        <<static>>
+        +string VIEW_DASHBOARD
+        +... 全部权限常量
+        +IReadOnlyList~string~ All
+    }
+
+    PermissionService --> IRoleRepository : 跨租户解析 Role
+    PermissionService --> Roles : 回退静态表
+    PermissionService --> Permissions : 超管全量
+    RoleRepository --> Role : 查询
+
+    class PermissionAuthorizeAttribute {
+        -string[] _requiredPermissions
+        +OnAuthorizationAsync(context)
+        -GetUserPermissions(user) List~string~
+    }
+    PermissionAuthorizeAttribute --> IPermissionService : RequestServices.GetService
+
+    class PermissionsController {
+        -IPermissionService _permissionService
+        +GetCurrentUserPermissions() Task
+    }
+    PermissionsController --> IPermissionService
+
+    class AuthService {
+        -IPermissionService _permissionService
+        +LoginAsync(request) Task
+        +GetCurrentUserAsync(userId) Task
+        +SwitchCustomerAsync(userId, custId) Task
+    }
+    AuthService --> IPermissionService
+
+    class UserDto {
+        +long Id
+        +string Role
+        +bool IsSuperAdmin
+        +List~string~ Permissions
+    }
+    PermissionsController ..> UserDto : 返回
+    AuthService ..> UserDto : 返回

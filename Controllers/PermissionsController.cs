@@ -24,7 +24,7 @@ public class PermissionsController : ControllerBase
     /// 获取当前用户的权限列表
     /// </summary>
     [HttpGet("current")]
-    public ActionResult<ApiResponse<object>> GetCurrentUserPermissions()
+    public async Task<ActionResult<ApiResponse<object>>> GetCurrentUserPermissions()
     {
         try
         {
@@ -35,24 +35,15 @@ public class PermissionsController : ControllerBase
                 return ApiResponse<object>.Unauthorized("未获取到用户角色");
             }
 
-            // 超级管理员拥有所有权限
-            if (role == Roles.SUPER_ADMIN)
-            {
-                return ApiResponse<object>.Success(new
-                {
-                    Role = role,
-                    Permissions = _permissionService.GetAllPermissionCodes(),
-                    IsSuperAdmin = true
-                });
-            }
-
-            var permissions = _permissionService.GetRolePermissions(role);
+            // 统一解析有效权限（单一事实来源 = DB Role.Permissions）：
+            // 超管→全量；自定义/内置角色→跨租户解析 DB 权限 JSON 或回退静态表。
+            var permissions = await _permissionService.GetEffectivePermissionsAsync(role);
 
             return ApiResponse<object>.Success(new
             {
                 Role = role,
                 Permissions = permissions,
-                IsSuperAdmin = false
+                IsSuperAdmin = Roles.IsSuperAdmin(role)
             });
         }
         catch (Exception ex)

@@ -1,4 +1,6 @@
 using IoTPlatform.Configuration;
+using IoTPlatform.Data.Repositories.Interfaces;
+using System.Text.Json;
 
 namespace IoTPlatform.Services;
 
@@ -31,6 +33,14 @@ public interface IPermissionService
     /// 检查角色是否拥有指定权限
     /// </summary>
     bool HasPermission(string roleCode, string permissionCode);
+
+    /// <summary>
+    /// 统一解析某角色的有效权限（单一事实来源 = DB Role.Permissions）。
+    /// 解析顺序：超管→全量；否则跨租户取 Role.Permissions(JSON)解析；DB为空/解析失败→回退静态表。
+    /// </summary>
+    /// <param name="roleCode">来自 JWT 的 ClaimTypes.Role 值（即 user.Role）。</param>
+    /// <returns>去重后的权限字符串列表。</returns>
+    Task<List<string>> GetEffectivePermissionsAsync(string roleCode);
 }
 
 /// <summary>
@@ -38,6 +48,15 @@ public interface IPermissionService
 /// </summary>
 public class PermissionService : IPermissionService
 {
+    private readonly IRoleRepository _roleRepository;
+    private readonly ILogger<PermissionService> _logger;
+
+    public PermissionService(IRoleRepository roleRepository, ILogger<PermissionService> logger)
+    {
+        _roleRepository = roleRepository;
+        _logger = logger;
+    }
+
     /// <inheritdoc />
     public List<string> GetRolePermissions(string roleCode)
     {
@@ -254,5 +273,36 @@ public class PermissionService : IPermissionService
     {
         var permissions = GetRolePermissions(roleCode);
         return permissions.Contains(permissionCode);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<string>> GetEffectivePermissionsAsync(string roleCode)
+    {
+        // ① 超管短路：返回全量（单一事实来源的"全量例外"）
+        if (Roles.IsSuperAdmin(roleCode))
+        {
+            return Permissions.All;
+        }
+
+        // ② 跨租户按 Code 唯一定位自定义角色，解析 DB 的 Permissions JSON
+        var role = await _roleRepository.GetByCodeAsync(roleCode, null);
+        if (role != null && !string.IsNullOrWhiteSpace(role.Permissions))
+        {
+            try
+            {
+                var perms = JsonSerializer.Deserialize<List<string>>(role.Permissions);
+                if (perms != null && perms.Count > 0)
+                {
+                    return perms.Distinct().ToList();
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "角色 {RoleCode} 的 Permissions 不是合法 JSON，回退至静态表", roleCode);
+            }
+        }
+
+        // ③ 回退：内置角色静态表；未知 Code 返回空列表（与现状一致，5 内置角色零回归）
+        return Roles.GetRolePermissions(roleCode);
     }
 }

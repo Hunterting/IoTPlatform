@@ -12,6 +12,15 @@ public static class Roles
     public const string STAFF = "staff";
 
     /// <summary>
+    /// 判断给定角色是否为超级管理员（统一超管判定信号）。
+    /// 与 PermissionFilter / GetEffectivePermissionsAsync 共用，避免两处逻辑漂移。
+    /// </summary>
+    public static bool IsSuperAdmin(string? role)
+    {
+        return role == SUPER_ADMIN;
+    }
+
+    /// <summary>
     /// 获取角色所有权限
     /// </summary>
     public static List<string> GetRolePermissions(string roleCode)

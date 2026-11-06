@@ -30,6 +30,7 @@ public class AuthService : IAuthService
     private readonly IUnitOfWork _unitOfWork;
     private readonly JwtHelper _jwtHelper;
     private readonly IRedisCacheService _cache;
+    private readonly IPermissionService _permissionService;
 
     public AuthService(
         IUserRepository userRepository,
@@ -38,7 +39,8 @@ public class AuthService : IAuthService
         ILogRepository logRepository,
         IUnitOfWork unitOfWork,
         JwtHelper jwtHelper,
-        IRedisCacheService cache)
+        IRedisCacheService cache,
+        IPermissionService permissionService)
     {
         _userRepository = userRepository;
         _customerRepository = customerRepository;
@@ -47,6 +49,7 @@ public class AuthService : IAuthService
         _unitOfWork = unitOfWork;
         _jwtHelper = jwtHelper;
         _cache = cache;
+        _permissionService = permissionService;
     }
 
     /// <summary>
@@ -124,6 +127,9 @@ public class AuthService : IAuthService
             IsSuperAdmin = user.IsSuperAdmin
         };
 
+        // 计算并下发当前用户的有效权限（单一事实来源 = DB Role.Permissions）
+        userDto.Permissions = await _permissionService.GetEffectivePermissionsAsync(user.Role);
+
         // 构建当前客户DTO
         CustomerDto? currentCustomer = null;
         if (customer != null)
@@ -183,6 +189,9 @@ public class AuthService : IAuthService
             AllowedAreaIds = allowedAreaIds,
             IsSuperAdmin = user.IsSuperAdmin
         };
+
+        // 计算并下发当前用户的有效权限（单一事实来源 = DB Role.Permissions）
+        userDto.Permissions = await _permissionService.GetEffectivePermissionsAsync(user.Role);
 
         CustomerDto? currentCustomer = null;
         if (user.Customer != null)
@@ -247,6 +256,10 @@ public class AuthService : IAuthService
             Avatar = user.Avatar,
             AllowedAreaIds = allowedAreaIds
         };
+
+        // 计算并下发当前用户的有效权限（单一事实来源 = DB Role.Permissions）；
+        // SwitchCustomerAsync 中 user.Role 仍是超管自身角色，逻辑一致。
+        userDto.Permissions = await _permissionService.GetEffectivePermissionsAsync(user.Role);
 
         var currentCustomer = new CustomerDto
         {

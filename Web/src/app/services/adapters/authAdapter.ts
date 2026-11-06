@@ -27,6 +27,7 @@ interface BackendUserDto {
   appCode?: string | null;
   avatar?: string | null;
   allowedAreaIds?: number[] | null;
+  permissions?: string[] | null; // 后端下发的有效权限
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -78,6 +79,7 @@ export const adaptUserFromBackend = (backendUser: BackendUserDto): UserDto => {
     appCode: backendUser.appCode,
     avatar: backendUser.avatar,
     allowedAreaIds: backendUser.allowedAreaIds?.map(id => adaptIdFromBackend(id)),
+    permissions: backendUser.permissions ?? [],
     isActive: backendUser.isActive,
     createdAt: adaptDateTime(backendUser.createdAt),
     updatedAt: adaptDateTime(backendUser.updatedAt)
@@ -264,6 +266,7 @@ export const adaptLoginResponseToUser = (loginResponse: LoginResponse): any => {
     appCode: loginResponse.user.appCode,
     avatar: loginResponse.user.avatar,
     allowedAreaIds: loginResponse.user.allowedAreaIds,
+    permissions: loginResponse.user.permissions ?? [],
     isActive: loginResponse.user.isActive
   };
 };

@@ -123,4 +123,109 @@ public static class Permissions
     public const string VIEW_DEVICE_COMMANDS = "view_device_commands";
     public const string SEND_DEVICE_COMMANDS = "send_device_commands";
     public const string CANCEL_DEVICE_COMMANDS = "cancel_device_commands";
+
+    /// <summary>
+    /// 系统全部已知权限的单一集合（超管全量即此列表）。
+    /// 新增权限常量时必须同步加入此处，否则超管将"看不到"新权限。
+    /// </summary>
+    public static List<string> All => new List<string>
+    {
+        // 工作台
+        VIEW_DASHBOARD,
+        // 客户管理
+        VIEW_CUSTOMERS,
+        CREATE_CUSTOMERS,
+        UPDATE_CUSTOMERS,
+        DELETE_CUSTOMERS,
+        // 设备管理
+        VIEW_DEVICES,
+        CREATE_DEVICES,
+        UPDATE_DEVICES,
+        DELETE_DEVICES,
+        // 项目管理
+        VIEW_PROJECTS,
+        MANAGE_PROJECTS,
+        // 区域管理
+        VIEW_AREAS,
+        CREATE_AREAS,
+        UPDATE_AREAS,
+        DELETE_AREAS,
+        // 告警中心
+        VIEW_ALERT_CENTER,
+        CREATE_ALERTS,
+        UPDATE_ALERTS,
+        DELETE_ALERTS,
+        // 实时监控
+        VIEW_MONITORING,
+        // 智能分析
+        VIEW_ANALYTICS,
+        // 空气质量
+        VIEW_AIR_QUALITY,
+        // 环境监测
+        VIEW_ENVIRONMENT_MONITORING,
+        // 档案管理
+        VIEW_ARCHIVES,
+        CREATE_ARCHIVES,
+        UPDATE_ARCHIVES,
+        DELETE_ARCHIVES,
+        // 工单管理
+        VIEW_WORK_ORDERS,
+        CREATE_WORK_ORDERS,
+        UPDATE_WORK_ORDERS,
+        DELETE_WORK_ORDERS,
+        // 日志管理
+        VIEW_LOGS,
+        // 用户管理
+        VIEW_USERS,
+        CREATE_USERS,
+        UPDATE_USERS,
+        DELETE_USERS,
+        // 角色管理
+        VIEW_ROLES,
+        CREATE_ROLES,
+        UPDATE_ROLES,
+        DELETE_ROLES,
+        // 系统设置
+        VIEW_SETTINGS,
+        UPDATE_SETTINGS,
+        // API配置（仅超级管理员）
+        VIEW_API_CONFIG,
+        UPDATE_API_CONFIG,
+        // 字典管理
+        VIEW_DICTIONARY,
+        CREATE_DICTIONARY,
+        UPDATE_DICTIONARY,
+        DELETE_DICTIONARY,
+        // 数据采集
+        VIEW_DATA_COLLECTION,
+        MANAGE_PROTOCOLS,
+        MANAGE_RULES,
+        EXPORT_DATA,
+        // 协议与接入管理
+        VIEW_PROTOCOL_CONFIG,
+        MANAGE_PROTOCOL_CONFIG,
+        VIEW_PROTOCOL_GATEWAY,
+        MANAGE_PROTOCOL_GATEWAY,
+        MANAGE_GATEWAY_CONFIG,
+        VIEW_NETWORK_TUNNEL,
+        MANAGE_NETWORK_TUNNEL,
+        MANAGE_TUNNEL_CONFIG,
+        VIEW_PLUGIN_SYSTEM,
+        MANAGE_PLUGIN_SYSTEM,
+        // 数据处理
+        VIEW_DATA_CENTER,
+        MANAGE_DATA_CENTER,
+        VIEW_RULE_ENGINE,
+        MANAGE_RULE_ENGINE,
+        VIEW_DATA_TRANSFORM,
+        MANAGE_DATA_TRANSFORM,
+        VIEW_DATABASE_CONFIG,
+        MANAGE_DATABASE_CONFIG,
+        VIEW_DATA_EXPORT,
+        PERFORM_DATA_EXPORT,
+        // 设备指令控制
+        VIEW_DEVICE_COMMANDS,
+        SEND_DEVICE_COMMANDS,
+        CANCEL_DEVICE_COMMANDS
+    };
 }
