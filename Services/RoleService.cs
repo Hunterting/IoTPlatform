@@ -15,15 +15,18 @@ public class RoleService : IRoleService
 {
     private readonly IRoleRepository _roleRepository;
     private readonly IUserRepository _userRepository;
+    private readonly ICustomerRepository _customerRepository;
     private readonly IUnitOfWork _unitOfWork;
 
     public RoleService(
         IRoleRepository roleRepository,
         IUserRepository userRepository,
+        ICustomerRepository customerRepository,
         IUnitOfWork unitOfWork)
     {
         _roleRepository = roleRepository;
         _userRepository = userRepository;
+        _customerRepository = customerRepository;
         _unitOfWork = unitOfWork;
     }
 
@@ -100,7 +103,7 @@ public class RoleService : IRoleService
     /// <summary>
     /// 创建角色
     /// </summary>
-    public async Task<RoleDto> CreateRoleAsync(CreateRoleRequest request)
+    public async Task<RoleDto> CreateRoleAsync(CreateRoleRequest request, string? appCode = null, string? currentUserRole = null)
     {
         // 检查角色代码是否已存在
         var exists = await _roleRepository.CodeExistsAsync(request.Code);
@@ -114,6 +117,14 @@ public class RoleService : IRoleService
             ? JsonSerializer.Serialize(request.Permissions)
             : null;
 
+        // 超管可指定目标租户（CustomerId）归属角色；普通租户忽略该字段，沿用自身 AppCode
+        string? resolvedAppCode = appCode;
+        if (currentUserRole == Configuration.Roles.SUPER_ADMIN && request.CustomerId.HasValue)
+        {
+            var targetCustomer = await _customerRepository.GetByIdAsync(request.CustomerId.Value);
+            resolvedAppCode = targetCustomer?.AppCode;
+        }
+
         var role = new Role
         {
             Code = request.Code,
@@ -121,7 +132,7 @@ public class RoleService : IRoleService
             Description = request.Description,
             Permissions = permissionsJson,
             DataScope = request.DataScope,
-            AppCode = null, // 新角色默认为系统级，可根据需求调整
+            AppCode = resolvedAppCode, // 角色归属当前租户 AppCode；超管 JWT AppCode 为空 → null（平台级角色）；超管指定 CustomerId 时归属到该租户
             IsSystem = false,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow

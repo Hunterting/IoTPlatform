@@ -83,7 +83,9 @@ public class RolesController : ControllerBase
     {
         try
         {
-            var result = await _roleService.CreateRoleAsync(request);
+            var appCode = User.FindFirst("AppCode")?.Value;
+            var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var result = await _roleService.CreateRoleAsync(request, appCode, role);
             return ApiResponse<RoleDto>.Success(result, "角色创建成功");
         }
         catch (InvalidOperationException ex)

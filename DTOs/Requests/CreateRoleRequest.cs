@@ -23,4 +23,7 @@ public class CreateRoleRequest
     [Required(ErrorMessage = "数据范围不能为空")]
     [MaxLength(10, ErrorMessage = "数据范围长度不能超过10字符")]
     public string DataScope { get; set; } = "CUSTOM";
+
+    /// <summary>归属客户（仅超管可指定，用于把角色归属到某租户；普通租户忽略）</summary>
+    public long? CustomerId { get; set; }
 }
