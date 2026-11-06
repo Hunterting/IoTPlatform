@@ -312,6 +312,9 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // 全局 DateTime 统一出网 "yyyy-MM-dd HH:mm:ss"（本地时间、到秒）。
+        // System.Text.Json 会用 NullableConverter<DateTime> 自动包装，DateTime? 同样生效。
+        options.JsonSerializerOptions.Converters.Add(new LocalDateTimeJsonConverter());
     });
 
 // 配置Swagger

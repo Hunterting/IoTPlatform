@@ -28,6 +28,12 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
 
     public int ExpiringSoonDays => 30;
 
+    /// <summary>把 DateTime 截断到秒（去掉微秒），保证入库/比较/出网一致，避免边界抖动。</summary>
+    private static DateTime TruncateToSecond(DateTime dt) =>
+        new DateTime(dt.Ticks - (dt.Ticks % TimeSpan.TicksPerSecond), dt.Kind);
+
+    private static DateTime UtcNowSecond() => TruncateToSecond(DateTime.UtcNow);
+
     // ── 列表 ──────────────────────────────────────────────────────────────────
 
     public async Task<List<DeviceAuthorizationDto>> GetListAsync(string? appCode, CancellationToken ct = default)
@@ -51,7 +57,7 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
                 byDevice[a.DeviceId] = a;
         }
 
-        var now = DateTime.UtcNow;
+        var now = UtcNowSecond();
         var threshold = now.AddDays(ExpiringSoonDays);
         var result = new List<DeviceAuthorizationDto>(devices.Count);
 
@@ -147,7 +153,9 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
             ? request.AppCode
             : (!string.IsNullOrWhiteSpace(callerAppCode) ? callerAppCode : device.AppCode);
 
-        var expireAt = request.ExpireAt ?? DateTime.UtcNow.AddDays(Math.Max(1, request.ExpireDays));
+        // 请求显式传入的 ExpireAt 也截断到秒，保证「保存只需要秒」
+        var expireAt = TruncateToSecond(
+            request.ExpireAt ?? UtcNowSecond().AddDays(Math.Max(1, request.ExpireDays)));
 
         var existing = await _db.DeviceAuthorizations.IgnoreQueryFilters()
             .FirstOrDefaultAsync(a => a.DeviceId == request.DeviceId && a.AppCode == effectiveAppCode, ct);
@@ -158,8 +166,8 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
             {
                 DeviceId = request.DeviceId,
                 AppCode = effectiveAppCode,
-                AuthorizedAt = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow,
+                AuthorizedAt = UtcNowSecond(),
+                CreatedAt = UtcNowSecond(),
             };
             _db.DeviceAuthorizations.Add(existing);
         }
@@ -169,7 +177,7 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
         existing.AuthorizedBy = operatorId;
         existing.AuthorizedByName = operatorName;
         existing.Remark = request.Remark;
-        existing.UpdatedAt = DateTime.UtcNow;
+        existing.UpdatedAt = UtcNowSecond();
         await _db.SaveChangesAsync(ct);
 
         var list = await GetListAsync(null, ct);
@@ -195,7 +203,7 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
 
         existing.Status = "revoked";
         existing.Remark = request.Remark ?? existing.Remark;
-        existing.UpdatedAt = DateTime.UtcNow;
+        existing.UpdatedAt = UtcNowSecond();
         await _db.SaveChangesAsync(ct);
 
         var list = await GetListAsync(null, ct);
@@ -213,14 +221,14 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
             .IgnoreQueryFilters()
             .AnyAsync(a => a.DeviceId == deviceId
                 && a.Status != "revoked"
-                && a.ExpireAt <= DateTime.UtcNow, ct);
+                && a.ExpireAt <= UtcNowSecond(), ct);
     }
 
     // ── 定时扫描：生成去重告警，按租户隔离 ─────────────────────────────────────
 
     public async Task<int> ScanAndNotifyExpiringAsync(CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
+        var now = UtcNowSecond();
         var threshold = now.AddDays(ExpiringSoonDays);
         var today = now.Date;
 

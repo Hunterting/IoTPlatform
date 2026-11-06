@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using IoTPlatform.Data;
+using IoTPlatform.Helpers;
 using IoTPlatform.IntegrationTests.Infrastructure.Mqtt;
 using IoTPlatform.IntegrationTests.Seed;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,10 +59,14 @@ public abstract class IntegrationTestBase : IAsyncLifetime
     ///   枚举以原名（PascalCase，如 "RejectedByKind"）出网；测试客户端必须装同一个
     ///   转换器才能读回强类型 DTO，否则 <c>ReadFromJsonAsync</c> 会抛
     ///   "The JSON value could not be converted to ...Enum"。
+    /// 【DateTime 格式】服务端已全局注册 <see cref="LocalDateTimeJsonConverter"/>，
+    ///   日期统一出网 "yyyy-MM-dd HH:mm:ss"（本地时间、到秒）；测试客户端必须装同一个
+    ///   转换器，否则 <c>Utf8JsonReader.GetDateTime()</c> 会因非 ISO 格式抛
+    ///   "The JSON value is not in a supported DateTime format"。
     /// </summary>
     protected static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
     {
-        Converters = { new JsonStringEnumConverter() }
+        Converters = { new JsonStringEnumConverter(), new LocalDateTimeJsonConverter() }
     };
 
     public virtual async Task InitializeAsync()
