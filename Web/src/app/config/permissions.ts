@@ -477,8 +477,17 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.VIEW_DASHBOARD,
       PERMISSIONS.VIEW_DEVICES,
       PERMISSIONS.VIEW_MONITORING,
+      // 与后端 RoleConfig.GetChefPermissions 对齐：告警中心/工单菜单依赖这两项前端权限，
+      // 否则第二租户登录后菜单不可见、但后端 API 已放行（#20~#26 阶段遗留差异）。
+      PERMISSIONS.VIEW_ALERT_CENTER,
       PERMISSIONS.VIEW_WORK_ORDERS,
       PERMISSIONS.UPDATE_WORK_ORDERS,
+      // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
+      PERMISSIONS.MANAGE_PROTOCOLS,
+      PERMISSIONS.VIEW_PROTOCOL_CONFIG,
+      PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
+      PERMISSIONS.VIEW_PROTOCOL_GATEWAY,
+      PERMISSIONS.MANAGE_PROTOCOL_GATEWAY,
     ],
     dataScope: 'CUSTOM',
   },
@@ -490,6 +499,16 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
     permissions: [
       PERMISSIONS.VIEW_DASHBOARD,
       PERMISSIONS.VIEW_MONITORING,
+      // 与后端 RoleConfig.GetStaffPermissions 对齐：告警中心/工单菜单依赖这两项前端权限，
+      // 否则第二租户登录后菜单不可见、但后端 API 已放行（#20~#26 阶段遗留差异）。
+      PERMISSIONS.VIEW_ALERT_CENTER,
+      PERMISSIONS.VIEW_WORK_ORDERS,
+      // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
+      PERMISSIONS.MANAGE_PROTOCOLS,
+      PERMISSIONS.VIEW_PROTOCOL_CONFIG,
+      PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
+      PERMISSIONS.VIEW_PROTOCOL_GATEWAY,
+      PERMISSIONS.MANAGE_PROTOCOL_GATEWAY,
     ],
     dataScope: 'CUSTOM',
   },

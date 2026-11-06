@@ -180,7 +180,13 @@ public static class Roles
             // 告警中心按 AppCode 区分租户；厨师长负责厨房设备监控，需能查看本租户告警。
             Permissions.VIEW_ALERT_CENTER,
             Permissions.VIEW_WORK_ORDERS,
-            Permissions.UPDATE_WORK_ORDERS
+            Permissions.UPDATE_WORK_ORDERS,
+            // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
+            Permissions.MANAGE_PROTOCOLS,
+            Permissions.VIEW_PROTOCOL_CONFIG,
+            Permissions.MANAGE_PROTOCOL_CONFIG,
+            Permissions.VIEW_PROTOCOL_GATEWAY,
+            Permissions.MANAGE_PROTOCOL_GATEWAY
         };
     }
 
@@ -195,7 +201,13 @@ public static class Roles
             Permissions.VIEW_MONITORING,
             // 告警/工单按 AppCode 区分租户，补只读查看权限，让第二租户（chef 等 staff 角色）能看到本租户数据。
             Permissions.VIEW_ALERT_CENTER,
-            Permissions.VIEW_WORK_ORDERS
+            Permissions.VIEW_WORK_ORDERS,
+            // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
+            Permissions.MANAGE_PROTOCOLS,
+            Permissions.VIEW_PROTOCOL_CONFIG,
+            Permissions.MANAGE_PROTOCOL_CONFIG,
+            Permissions.VIEW_PROTOCOL_GATEWAY,
+            Permissions.MANAGE_PROTOCOL_GATEWAY
         };
     }
 }
