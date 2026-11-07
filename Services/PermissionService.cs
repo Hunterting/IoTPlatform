@@ -79,97 +79,7 @@ public class PermissionService : IPermissionService
     /// <inheritdoc />
     public List<string> GetAllPermissionCodes()
     {
-        return new List<string>
-        {
-            // 工作台
-            Permissions.VIEW_DASHBOARD,
-            // 客户管理
-            Permissions.VIEW_CUSTOMERS,
-            Permissions.CREATE_CUSTOMERS,
-            Permissions.UPDATE_CUSTOMERS,
-            Permissions.DELETE_CUSTOMERS,
-            // 设备管理
-            Permissions.VIEW_DEVICES,
-            Permissions.CREATE_DEVICES,
-            Permissions.UPDATE_DEVICES,
-            Permissions.DELETE_DEVICES,
-            // 项目管理
-            Permissions.VIEW_PROJECTS,
-            Permissions.MANAGE_PROJECTS,
-            // 区域管理
-            Permissions.VIEW_AREAS,
-            // 告警中心
-            Permissions.VIEW_ALERT_CENTER,
-            Permissions.CREATE_ALERTS,
-            Permissions.UPDATE_ALERTS,
-            Permissions.DELETE_ALERTS,
-            // 实时监控
-            Permissions.VIEW_MONITORING,
-            // 智能分析
-            Permissions.VIEW_ANALYTICS,
-            // 空气质量
-            Permissions.VIEW_AIR_QUALITY,
-            // 环境监测
-            Permissions.VIEW_ENVIRONMENT_MONITORING,
-            // 档案管理
-            Permissions.VIEW_ARCHIVES,
-            Permissions.CREATE_ARCHIVES,
-            Permissions.UPDATE_ARCHIVES,
-            Permissions.DELETE_ARCHIVES,
-            // 工单管理
-            Permissions.VIEW_WORK_ORDERS,
-            Permissions.CREATE_WORK_ORDERS,
-            Permissions.UPDATE_WORK_ORDERS,
-            Permissions.DELETE_WORK_ORDERS,
-            // 日志管理
-            Permissions.VIEW_LOGS,
-            // 用户管理
-            Permissions.VIEW_USERS,
-            Permissions.CREATE_USERS,
-            Permissions.UPDATE_USERS,
-            Permissions.DELETE_USERS,
-            // 角色管理
-            Permissions.VIEW_ROLES,
-            Permissions.CREATE_ROLES,
-            Permissions.UPDATE_ROLES,
-            Permissions.DELETE_ROLES,
-            // 系统设置
-            Permissions.VIEW_SETTINGS,
-            Permissions.UPDATE_SETTINGS,
-            // API配置
-            Permissions.VIEW_API_CONFIG,
-            Permissions.UPDATE_API_CONFIG,
-            // 字典管理
-            Permissions.VIEW_DICTIONARY,
-            Permissions.CREATE_DICTIONARY,
-            Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY,
-            // 数据采集
-            Permissions.VIEW_DATA_COLLECTION,
-            Permissions.MANAGE_PROTOCOLS,
-            Permissions.MANAGE_RULES,
-            Permissions.EXPORT_DATA,
-            // 协议与接入管理
-            Permissions.VIEW_PROTOCOL_CONFIG,
-            Permissions.MANAGE_PROTOCOL_CONFIG,
-            Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY,
-            Permissions.VIEW_NETWORK_TUNNEL,
-            Permissions.MANAGE_NETWORK_TUNNEL,
-            Permissions.VIEW_PLUGIN_SYSTEM,
-            Permissions.MANAGE_PLUGIN_SYSTEM,
-            // 数据处理
-            Permissions.VIEW_DATA_CENTER,
-            Permissions.MANAGE_DATA_CENTER,
-            Permissions.VIEW_RULE_ENGINE,
-            Permissions.MANAGE_RULE_ENGINE,
-            Permissions.VIEW_DATA_TRANSFORM,
-            Permissions.MANAGE_DATA_TRANSFORM,
-            Permissions.VIEW_DATABASE_CONFIG,
-            Permissions.MANAGE_DATABASE_CONFIG,
-            Permissions.VIEW_DATA_EXPORT,
-            Permissions.PERFORM_DATA_EXPORT
-        };
+        return Permissions.All;
     }
 
     /// <inheritdoc />
@@ -194,6 +104,9 @@ public class PermissionService : IPermissionService
             { Permissions.MANAGE_PROJECTS, "管理项目" },
             // 区域管理
             { Permissions.VIEW_AREAS, "查看区域" },
+            { Permissions.CREATE_AREAS, "创建区域" },
+            { Permissions.UPDATE_AREAS, "更新区域" },
+            { Permissions.DELETE_AREAS, "删除区域" },
             // 告警中心
             { Permissions.VIEW_ALERT_CENTER, "查看告警中心" },
             { Permissions.CREATE_ALERTS, "创建告警" },
@@ -254,6 +167,8 @@ public class PermissionService : IPermissionService
             { Permissions.MANAGE_NETWORK_TUNNEL, "管理网络隧道" },
             { Permissions.VIEW_PLUGIN_SYSTEM, "查看插件系统" },
             { Permissions.MANAGE_PLUGIN_SYSTEM, "管理插件系统" },
+            { Permissions.MANAGE_GATEWAY_CONFIG, "管理网关配置" },
+            { Permissions.MANAGE_TUNNEL_CONFIG, "管理隧道配置" },
             // 数据处理
             { Permissions.VIEW_DATA_CENTER, "查看数据中心" },
             { Permissions.MANAGE_DATA_CENTER, "管理数据中心" },
@@ -264,7 +179,11 @@ public class PermissionService : IPermissionService
             { Permissions.VIEW_DATABASE_CONFIG, "查看数据库配置" },
             { Permissions.MANAGE_DATABASE_CONFIG, "管理数据库配置" },
             { Permissions.VIEW_DATA_EXPORT, "查看数据导出" },
-            { Permissions.PERFORM_DATA_EXPORT, "执行数据导出" }
+            { Permissions.PERFORM_DATA_EXPORT, "执行数据导出" },
+            // 设备指令控制
+            { Permissions.VIEW_DEVICE_COMMANDS, "查看设备指令" },
+            { Permissions.SEND_DEVICE_COMMANDS, "下发设备指令" },
+            { Permissions.CANCEL_DEVICE_COMMANDS, "取消设备指令" }
         };
     }
 

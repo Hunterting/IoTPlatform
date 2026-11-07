@@ -41,103 +41,13 @@ public static class Roles
     }
 
     /// <summary>
-    /// 超级管理员权限（全部权限）
+    /// 超级管理员权限（全部权限）。
+    /// 直接复用 Permissions.All 作为唯一事实来源，避免与 Permissions.All 手工副本漂移
+    /// （历史上曾因此漏授 5 个权限：区域增改删、网关配置管理、隧道配置管理）。
     /// </summary>
     public static List<string> GetSuperAdminPermissions()
     {
-        return new List<string>
-        {
-            // 工作台
-            Permissions.VIEW_DASHBOARD,
-            // 客户
-            Permissions.VIEW_CUSTOMERS,
-            Permissions.CREATE_CUSTOMERS,
-            Permissions.UPDATE_CUSTOMERS,
-            Permissions.DELETE_CUSTOMERS,
-            // 设备
-            Permissions.VIEW_DEVICES,
-            Permissions.CREATE_DEVICES,
-            Permissions.UPDATE_DEVICES,
-            Permissions.DELETE_DEVICES,
-            // 区域
-            Permissions.VIEW_AREAS,
-            // 告警
-            Permissions.VIEW_ALERT_CENTER,
-            Permissions.CREATE_ALERTS,
-            Permissions.UPDATE_ALERTS,
-            Permissions.DELETE_ALERTS,
-            // 监控 & 分析
-            Permissions.VIEW_MONITORING,
-            Permissions.VIEW_ANALYTICS,
-            // 空气质量
-            Permissions.VIEW_AIR_QUALITY,
-            // 环境监测
-            Permissions.VIEW_ENVIRONMENT_MONITORING,
-            // 档案
-            Permissions.VIEW_ARCHIVES,
-            Permissions.CREATE_ARCHIVES,
-            Permissions.UPDATE_ARCHIVES,
-            Permissions.DELETE_ARCHIVES,
-            // 工单
-            Permissions.VIEW_WORK_ORDERS,
-            Permissions.CREATE_WORK_ORDERS,
-            Permissions.UPDATE_WORK_ORDERS,
-            Permissions.DELETE_WORK_ORDERS,
-            // 日志
-            Permissions.VIEW_LOGS,
-            // 用户
-            Permissions.VIEW_USERS,
-            Permissions.CREATE_USERS,
-            Permissions.UPDATE_USERS,
-            Permissions.DELETE_USERS,
-            // 角色
-            Permissions.VIEW_ROLES,
-            Permissions.CREATE_ROLES,
-            Permissions.UPDATE_ROLES,
-            Permissions.DELETE_ROLES,
-            // 设置
-            Permissions.VIEW_SETTINGS,
-            Permissions.UPDATE_SETTINGS,
-            Permissions.VIEW_API_CONFIG,
-            Permissions.UPDATE_API_CONFIG,
-            // 字典管理
-            Permissions.VIEW_DICTIONARY,
-            Permissions.CREATE_DICTIONARY,
-            Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY,
-            // 数据采集
-            Permissions.VIEW_DATA_COLLECTION,
-            Permissions.MANAGE_PROTOCOLS,
-            Permissions.MANAGE_RULES,
-            Permissions.EXPORT_DATA,
-            // 协议与接入管理
-            Permissions.VIEW_PROTOCOL_CONFIG,
-            Permissions.MANAGE_PROTOCOL_CONFIG,
-            Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY,
-            Permissions.VIEW_NETWORK_TUNNEL,
-            Permissions.MANAGE_NETWORK_TUNNEL,
-            Permissions.VIEW_PLUGIN_SYSTEM,
-            Permissions.MANAGE_PLUGIN_SYSTEM,
-            // 数据处理
-            Permissions.VIEW_DATA_CENTER,
-            Permissions.MANAGE_DATA_CENTER,
-            Permissions.VIEW_RULE_ENGINE,
-            Permissions.MANAGE_RULE_ENGINE,
-            Permissions.VIEW_DATA_TRANSFORM,
-            Permissions.MANAGE_DATA_TRANSFORM,
-            Permissions.VIEW_DATABASE_CONFIG,
-            Permissions.MANAGE_DATABASE_CONFIG,
-            Permissions.VIEW_DATA_EXPORT,
-            Permissions.PERFORM_DATA_EXPORT,
-            // 设备指令控制
-            Permissions.VIEW_DEVICE_COMMANDS,
-            Permissions.SEND_DEVICE_COMMANDS,
-            Permissions.CANCEL_DEVICE_COMMANDS,
-            // 项目管理
-            Permissions.VIEW_PROJECTS,
-            Permissions.MANAGE_PROJECTS
-        };
+        return Permissions.All;
     }
 
     /// <summary>
