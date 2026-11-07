@@ -10,6 +10,8 @@ public static class Roles
     public const string OPERATOR = "operator";
     public const string CHEF = "chef";
     public const string STAFF = "staff";
+    public const string CUSTOMER_ADMIN = "customer_admin";
+    public const string USER = "user";
 
     /// <summary>
     /// 判断给定角色是否为超级管理员（统一超管判定信号）。
@@ -29,9 +31,11 @@ public static class Roles
         {
             SUPER_ADMIN => GetSuperAdminPermissions(),
             ADMIN => GetAdminPermissions(),
+            CUSTOMER_ADMIN => GetCustomerAdminPermissions(),
             OPERATOR => GetOperatorPermissions(),
             CHEF => GetChefPermissions(),
             STAFF => GetStaffPermissions(),
+            USER => GetUserPermissions(),
             _ => new List<string>()
         };
     }
@@ -172,7 +176,9 @@ public static class Roles
             // 运维主管有指令查看和下发权限
             Permissions.VIEW_DEVICE_COMMANDS,
             Permissions.SEND_DEVICE_COMMANDS,
-            Permissions.CANCEL_DEVICE_COMMANDS
+            Permissions.CANCEL_DEVICE_COMMANDS,
+            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
+            Permissions.VIEW_LOGS
         };
     }
 
@@ -200,7 +206,9 @@ public static class Roles
             Permissions.VIEW_DICTIONARY,
             Permissions.CREATE_DICTIONARY,
             Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY
+            Permissions.DELETE_DICTIONARY,
+            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
+            Permissions.VIEW_LOGS
         };
     }
 
@@ -226,7 +234,34 @@ public static class Roles
             Permissions.VIEW_DICTIONARY,
             Permissions.CREATE_DICTIONARY,
             Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY
+            Permissions.DELETE_DICTIONARY,
+            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
+            Permissions.VIEW_LOGS
+        };
+    }
+
+    /// <summary>
+    /// 客户管理员权限（与租户管理员 admin 同级，含日志查看）
+    /// </summary>
+    public static List<string> GetCustomerAdminPermissions()
+    {
+        // 客户管理员职责等同租户管理员，复用 admin 权限集（已含 VIEW_LOGS）。
+        return GetAdminPermissions();
+    }
+
+    /// <summary>
+    /// 普通用户权限（基础查看 + 日志查看）
+    /// </summary>
+    public static List<string> GetUserPermissions()
+    {
+        return new List<string>
+        {
+            Permissions.VIEW_DASHBOARD,
+            Permissions.VIEW_MONITORING,
+            Permissions.VIEW_ALERT_CENTER,
+            Permissions.VIEW_WORK_ORDERS,
+            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
+            Permissions.VIEW_LOGS
         };
     }
 }
