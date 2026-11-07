@@ -139,7 +139,7 @@ public class LogRepository : Repository<LoginLog>, ILogRepository
     }
 
     public async Task LogLoginAsync(long? userId, string? email, string? userName, string? ipAddress, string? userAgent,
-        string status, string? failureReason = null, string? location = null)
+        string status, string? failureReason = null, string? location = null, string? appCode = null)
     {
         var loginLog = new LoginLog
         {
@@ -151,6 +151,7 @@ public class LogRepository : Repository<LoginLog>, ILogRepository
             Status = status,
             FailureReason = failureReason,
             Location = location,
+            AppCode = appCode,
             LoginTime = DateTime.UtcNow
         };
 

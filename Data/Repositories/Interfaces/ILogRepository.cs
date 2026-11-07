@@ -64,8 +64,9 @@ public interface ILogRepository : IRepository<LoginLog>
     /// <param name="status">登录状态</param>
     /// <param name="failureReason">失败原因</param>
     /// <param name="location">位置</param>
-    Task LogLoginAsync(long? userId, string? email, string? userName, string? ipAddress, string? userAgent, 
-        string status, string? failureReason = null, string? location = null);
+    /// <param name="appCode">应用代码（租户隔离标识；由 AuthService 的 effectiveAppCode 透传，写入后登录日志才能按租户命中查询）</param>
+    Task LogLoginAsync(long? userId, string? email, string? userName, string? ipAddress, string? userAgent,
+        string status, string? failureReason = null, string? location = null, string? appCode = null);
     
     /// <summary>
     /// 记录操作日志

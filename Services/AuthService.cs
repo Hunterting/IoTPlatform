@@ -143,8 +143,8 @@ public class AuthService : IAuthService
             ? BuildCustomerDto(customer, deviceCount)
             : null;
 
-        // 记录登录日志
-        await RecordLoginLogAsync(user, true);
+        // 记录登录日志（透传 effectiveAppCode，确保登录日志按租户归属，查询侧才能按 AppCode 命中）
+        await RecordLoginLogAsync(user, true, effectiveAppCode);
 
         return new LoginResponse
         {
@@ -337,7 +337,7 @@ public class AuthService : IAuthService
     /// <summary>
     /// 记录登录日志
     /// </summary>
-    private async Task RecordLoginLogAsync(User user, bool success)
+    private async Task RecordLoginLogAsync(User user, bool success, string? appCode = null)
     {
         try
         {
@@ -347,7 +347,8 @@ public class AuthService : IAuthService
                 userName: user.FullName,
                 ipAddress: null,
                 userAgent: null,
-                status: success ? "success" : "failed"
+                status: success ? "success" : "failed",
+                appCode: appCode
             );
         }
         catch
