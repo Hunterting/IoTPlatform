@@ -35,7 +35,13 @@ public class EzvizController : ControllerBase
 
     private ActionResult<ApiResponse<T>> Fail<T>(EzvizException ex)
     {
-        return ApiResponse<T>.Fail(ex.EzvizCode == "NOT_CONFIGURED" ? 503 : 502, ex.Message);
+        var status = ex.EzvizCode switch
+        {
+            "NOT_CONFIGURED" => 503,
+            "40301" => 403,
+            _ => 502,
+        };
+        return ApiResponse<T>.Fail(status, ex.Message);
     }
 
     /// <summary>萤石配置状态（前端首屏调用，决定是否展示真实画面）</summary>
@@ -48,11 +54,12 @@ public class EzvizController : ControllerBase
     public async Task<ActionResult<ApiResponse<EzvizPagedResult<EzvizDeviceDto>>>> GetDevices(
         [FromQuery] int pageStart = 0,
         [FromQuery] int pageSize = 20,
+        [FromQuery] bool includeUnbound = false,
         CancellationToken ct = default)
     {
         try
         {
-            var result = await _ezviz.GetDevicesAsync(pageStart, pageSize, AppCode, ct);
+            var result = await _ezviz.GetDevicesAsync(pageStart, pageSize, AppCode, includeUnbound, ct);
             return ApiResponse<EzvizPagedResult<EzvizDeviceDto>>.Success(result);
         }
         catch (EzvizException ex) { return Fail<EzvizPagedResult<EzvizDeviceDto>>(ex); }

@@ -72,6 +72,7 @@ export interface EzvizLiveAddressRequest {
   type?: number; // 1-预览 2-回放
   startTime?: string;
   stopTime?: string;
+  ewcode?: string; // 设备验证码（设备加密时必填）
 }
 
 /** 抓拍 */
@@ -129,6 +130,7 @@ export interface EzvizBindRequest {
   name: string;
   areaId?: number | null;
   channelNo?: number;
+  ewcode?: string; // 设备验证码（设备加密时必填）
 }
 
 // ── API 函数 ──────────────────────────────────────────────────────────────────
@@ -145,10 +147,12 @@ export async function getConfigStatus(): Promise<ApiResponse<EzvizConfigStatus>>
 export async function getDevices(params?: {
   pageStart?: number;
   pageSize?: number;
+  includeUnbound?: boolean;
 }): Promise<ApiResponse<EzvizPagedResult<EzvizDevice>>> {
   const sp = new URLSearchParams();
   if (params?.pageStart !== undefined) sp.set('pageStart', String(params.pageStart));
   if (params?.pageSize !== undefined) sp.set('pageSize', String(params.pageSize));
+  if (params?.includeUnbound !== undefined) sp.set('includeUnbound', String(params.includeUnbound));
   const q = sp.toString();
   const r = await apiClient.get<ApiResponse<EzvizPagedResult<EzvizDevice>>>(
     `${BASE_URL}/devices${q ? `?${q}` : ''}`

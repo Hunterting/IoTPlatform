@@ -15,6 +15,7 @@ public class Camera : IHasAppCode
     public long? AreaId { get; set; }
     [MaxLength(500)] public string? StreamUrl { get; set; }
     [MaxLength(500)] public string? ImageUrl { get; set; }
+    [MaxLength(200)] public string? EncryptionCode { get; set; }
     [MaxLength(20)] public string? Protocol { get; set; } // rtsp, rtmp, hls, http
     [MaxLength(50)] public string? Type { get; set; } // bullet, dome, ptz
     [MaxLength(20)] public string? Resolution { get; set; } // 720p, 1080p, 4k

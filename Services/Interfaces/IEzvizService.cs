@@ -15,7 +15,7 @@ public interface IEzvizService
     EzvizConfigStatusDto GetConfigStatus();
 
     /// <summary>设备列表（device/list，含本地区域绑定信息）</summary>
-    Task<EzvizPagedResult<EzvizDeviceDto>> GetDevicesAsync(int pageStart, int pageSize, string? appCode, CancellationToken ct = default);
+    Task<EzvizPagedResult<EzvizDeviceDto>> GetDevicesAsync(int pageStart, int pageSize, string? appCode, bool includeUnbound = false, CancellationToken ct = default);
 
     /// <summary>通道列表（camera/list）</summary>
     Task<List<EzvizCameraDto>> GetCamerasAsync(string deviceSerial, CancellationToken ct = default);

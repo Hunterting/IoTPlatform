@@ -148,6 +148,8 @@ public class EzvizLiveAddressRequest
     public int Type { get; set; } = 1;
     public string? StartTime { get; set; }
     public string? StopTime { get; set; }
+    /// <summary>设备验证码（设备开启视频加密时必填，对应萤石 ewcode）</summary>
+    public string? EwCode { get; set; }
 }
 
 public class EzvizCaptureRequest
@@ -184,4 +186,6 @@ public class EzvizBindCameraRequest
     public string Name { get; set; } = string.Empty;
     public long? AreaId { get; set; }
     public int ChannelNo { get; set; } = 1;
+    /// <summary>设备验证码（设备开启视频加密时必填，对应萤石 ewcode）</summary>
+    public string? EwCode { get; set; }
 }

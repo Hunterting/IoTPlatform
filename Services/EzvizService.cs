@@ -1,6 +1,7 @@
 using IoTPlatform.Configuration;
 using IoTPlatform.Data;
 using IoTPlatform.DTOs.Responses;
+using IoTPlatform.Infrastructure.Tenant;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -30,6 +31,7 @@ public class EzvizService : IEzvizService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<EzvizService> _logger;
     private readonly AppDbContext _dbContext;
+    private readonly ITenantContextAccessor _tenantContextAccessor;
 
     // 进程内 token 缓存（appSecret 变更或过期前自动刷新）
     private static readonly SemaphoreSlim TokenLock = new(1, 1);
@@ -41,12 +43,14 @@ public class EzvizService : IEzvizService
         IOptions<EzvizOptions> options,
         IHttpClientFactory httpClientFactory,
         ILogger<EzvizService> logger,
-        AppDbContext dbContext)
+        AppDbContext dbContext,
+        ITenantContextAccessor tenantContextAccessor)
     {
         _options = options;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _dbContext = dbContext;
+        _tenantContextAccessor = tenantContextAccessor;
     }
 
     private EzvizOptions Opt => _options.Value;
@@ -120,7 +124,7 @@ public class EzvizService : IEzvizService
     // ── 设备列表 ──────────────────────────────────────────────────────────────
 
     public async Task<EzvizPagedResult<EzvizDeviceDto>> GetDevicesAsync(
-        int pageStart, int pageSize, string? appCode, CancellationToken ct = default)
+        int pageStart, int pageSize, string? appCode, bool includeUnbound = false, CancellationToken ct = default)
     {
         var token = await GetAccessTokenAsync(ct);
         var page = Math.Max(0, pageStart);
@@ -212,33 +216,87 @@ public class EzvizService : IEzvizService
             _logger.LogWarning("萤石 camera/list 回退失败（不影响 device/list 结果）: {Message}", ex.Message);
         }
 
-        result.TotalCount = Math.Max(ownedCount, result.Items.Count);
-        await ApplyLocalBindingsAsync(result.Items, appCode, ct);
+        result.Items = await ApplyLocalBindingsAsync(result.Items, appCode, IsSuperAdmin(), includeUnbound, ct);
+        result.TotalCount = result.Items.Count;
         return result;
     }
 
-    /// <summary>把萤石设备与本地 cameras 表的区域绑定合并（萤石无区域概念）</summary>
-    private async Task ApplyLocalBindingsAsync(List<EzvizDeviceDto> devices, string? appCode, CancellationToken ct)
+    /// <summary>
+    /// 把萤石设备与本地 cameras 表的区域绑定合并，并按租户隔离设备列表。
+    /// - 已绑定（当前租户 cameras 中存在 StreamUrl 前缀匹配）：合并 AreaId/AreaName 后保留。
+    /// - 未绑定：默认仅超管可见（监控宫格只显示本租户已绑定摄像头）；
+    ///   includeUnbound=true 时（绑定/添加摄像头选择器）普通租户也可选，否则无法自助绑定新设备。
+    /// 注：全局查询过滤器已按当前租户 AppCode 隔离 cameras 行，故 bindings 本就是当前租户绑定。
+    /// </summary>
+    private async Task<List<EzvizDeviceDto>> ApplyLocalBindingsAsync(List<EzvizDeviceDto> devices, string? appCode, bool isSuperAdmin, bool includeUnbound, CancellationToken ct)
     {
-        if (devices.Count == 0) return;
+        var kept = new List<EzvizDeviceDto>();
+        if (devices.Count == 0) return kept;
         // StreamUrl 保存 "ezviz:{deviceSerial}:{channelNo}"（见 BindCameraAsync）。
-        // 绑定量很小，直接取全部 ezviz: 前缀行在内存做前缀匹配，避免 EF 翻译 Contains(prefix) 的歧义。
         var bindings = await _dbContext.Cameras
             .AsNoTracking()
             .Include(c => c.Area)
             .Where(c => c.StreamUrl != null && c.StreamUrl.StartsWith("ezviz:"))
             .Select(c => new { c.StreamUrl, c.AreaId, AreaName = c.Area != null ? c.Area.Name : null })
             .ToListAsync(ct);
+
+        // 当前租户已绑定的 deviceSerial 集合（全局过滤器已按 AppCode 隔离）
+        var boundSerials = new HashSet<string>(
+            bindings.Select(b => ExtractSerial(b.StreamUrl!)).OfType<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
         foreach (var d in devices)
         {
             if (string.IsNullOrEmpty(d.DeviceSerial)) continue;
+            // 未绑定：超管或绑定选择器(includeUnbound)可见，普通租户监控宫格丢弃
+            if (!boundSerials.Contains(d.DeviceSerial))
+            {
+                if (isSuperAdmin || includeUnbound) kept.Add(d);
+                continue;
+            }
+            // 已绑定：合并区域归属后保留
             var prefix = "ezviz:" + d.DeviceSerial + ":";
             var b = bindings.FirstOrDefault(x => x.StreamUrl != null &&
                 x.StreamUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-            if (b == null) continue;
-            d.AreaId = b.AreaId;
-            d.AreaName = b.AreaName;
+            if (b != null)
+            {
+                d.AreaId = b.AreaId;
+                d.AreaName = b.AreaName;
+            }
+            kept.Add(d);
         }
+        return kept;
+    }
+
+    /// <summary>
+    /// 按「当前租户 + deviceSerial」解析出 cameras 行。
+    /// - 普通租户：全局查询过滤器已按 AppCode 隔离，只匹配本租户绑定；
+    /// - 超管：过滤器被跳过，可匹配任意租户绑定（便于运维）。
+    /// 返回 null 表示当前租户未绑定该设备（= 无权访问）。
+    /// </summary>
+    private async Task<Camera?> ResolveTenantCameraAsync(string deviceSerial, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(deviceSerial)) return null;
+        // 注意：Pomelo MySQL 默认无法把 StartsWith(string, StringComparison) 翻译成 SQL（会抛
+        // "Translation of method 'string.StartsWith' failed"）。改用 EF.Functions.Like，既可翻译，
+        // 又保持 deviceSerial 大小写不敏感（MySQL 默认 collation 大小写不敏感）。
+        var pattern = "ezviz:" + deviceSerial + ":%";
+        return await _dbContext.Cameras
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.StreamUrl != null && EF.Functions.Like(c.StreamUrl, pattern), ct);
+    }
+
+    /// <summary>当前请求是否为超管（与 AppDbContext 全局过滤器判定一致）</summary>
+    private bool IsSuperAdmin() => _tenantContextAccessor?.Current?.IsSuperAdmin ?? false;
+
+    /// <summary>从 "ezviz:{serial}:{channel}" 解析 deviceSerial</summary>
+    private static string? ExtractSerial(string streamUrl)
+    {
+        const string prefix = "ezviz:";
+        if (!streamUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var rest = streamUrl.Substring(prefix.Length);
+        var idx = rest.LastIndexOf(':');
+        return idx > 0 ? rest.Substring(0, idx) : rest;
     }
 
     // ── 通道列表 ──────────────────────────────────────────────────────────────
@@ -280,6 +338,11 @@ public class EzvizService : IEzvizService
     {
         if (string.IsNullOrWhiteSpace(request.DeviceSerial))
             throw new EzvizException("deviceSerial 不能为空", "10001");
+        // 所有权校验：解析本租户绑定的 cameras 行（超管可操作任意设备）
+        var cam = await ResolveTenantCameraAsync(request.DeviceSerial, ct);
+        if (cam == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
+
         var token = await GetAccessTokenAsync(ct);
         var form = new Dictionary<string, string>
         {
@@ -290,6 +353,10 @@ public class EzvizService : IEzvizService
             ["expireTime"] = Opt.LiveExpireSeconds.ToString(CultureInfo.InvariantCulture),
             ["type"] = request.Type.ToString(CultureInfo.InvariantCulture),
         };
+        // 设备加密：优先用请求里的 ewcode，否则用绑定存储的 EncryptionCode（修复 60019）
+        var ewCode = !string.IsNullOrWhiteSpace(request.EwCode) ? request.EwCode
+            : (cam != null ? cam.EncryptionCode : null);
+        if (!string.IsNullOrWhiteSpace(ewCode)) form["ewcode"] = ewCode!;
         if (!string.IsNullOrWhiteSpace(request.StartTime)) form["startTime"] = request.StartTime!;
         if (!string.IsNullOrWhiteSpace(request.StopTime)) form["stopTime"] = request.StopTime!;
 
@@ -313,6 +380,8 @@ public class EzvizService : IEzvizService
     {
         if (string.IsNullOrWhiteSpace(request.DeviceSerial))
             throw new EzvizException("deviceSerial 不能为空", "10001");
+        if (await ResolveTenantCameraAsync(request.DeviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
         var token = await GetAccessTokenAsync(ct);
         var form = new Dictionary<string, string>
         {
@@ -338,6 +407,8 @@ public class EzvizService : IEzvizService
     {
         if (string.IsNullOrWhiteSpace(request.DeviceSerial))
             throw new EzvizException("deviceSerial 不能为空", "10001");
+        if (await ResolveTenantCameraAsync(request.DeviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
         var token = await GetAccessTokenAsync(ct);
         var form = new Dictionary<string, string>
         {
@@ -388,6 +459,8 @@ public class EzvizService : IEzvizService
     {
         if (string.IsNullOrWhiteSpace(request.DeviceSerial))
             throw new EzvizException("deviceSerial 不能为空", "10001");
+        if (await ResolveTenantCameraAsync(request.DeviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
         var token = await GetAccessTokenAsync(ct);
         var form = new Dictionary<string, string>
         {
@@ -405,6 +478,8 @@ public class EzvizService : IEzvizService
 
     public async Task<EzvizDeviceStatusDto> GetDeviceStatusAsync(string deviceSerial, CancellationToken ct = default)
     {
+        if (await ResolveTenantCameraAsync(deviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
         var token = await GetAccessTokenAsync(ct);
         var form = new Dictionary<string, string>
         {
@@ -454,6 +529,7 @@ public class EzvizService : IEzvizService
             existing.UpdatedAt = DateTime.UtcNow;
         }
         existing.AreaId = request.AreaId;
+        existing.EncryptionCode = request.EwCode;
         await _dbContext.SaveChangesAsync(ct);
         return new EzvizDeviceDto
         {
@@ -507,6 +583,7 @@ public class EzvizService : IEzvizService
         ["10030"] = "appKey 与 appSecret 不匹配",
         ["60000"] = "设备不支持云台控制",
         ["60001"] = "用户无云台控制权限",
+        ["60019"] = "设备已开启视频加密，请在绑定摄像头时录入设备验证码(ewcode)，可在萤石APP-设备-安全中查看",
     };
 
     private static void EnsureSuccess(JsonElement root)

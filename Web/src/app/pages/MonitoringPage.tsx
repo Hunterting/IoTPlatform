@@ -60,6 +60,8 @@ export function MonitoringPage() {
   // ── 真实萤石数据 ──
   const [configStatus, setConfigStatus] = useState<EzvizConfigStatus | null>(null);
   const [devices, setDevices] = useState<EzvizDevice[]>([]);
+  // 绑定弹窗专用：萤石账号下全部设备（含未绑定），与宫格的租户隔离列表分开
+  const [bindableDevices, setBindableDevices] = useState<EzvizDevice[]>([]);
   const [alerts, setAlerts] = useState<AlertView[]>([]);
   const [alertTotal, setAlertTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -87,7 +89,7 @@ export function MonitoringPage() {
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   // 添加摄像头（真实：把萤石设备绑定到本地区域）
-  const [bindForm, setBindForm] = useState({ deviceSerial: '', name: '', areaId: '' });
+  const [bindForm, setBindForm] = useState({ deviceSerial: '', name: '', areaId: '', ewcode: '' });
 
   // ── 数据加载（每源独立容错，单接口失败不影响整页） ──
   const loadConfig = useCallback(async () => {
@@ -104,6 +106,14 @@ export function MonitoringPage() {
       if (r.code === 200 && r.data) { setDevices(r.data.items || []); setPanelError(p => { const n = { ...p }; delete n.devices; return n; }); }
       else setPanelError(p => ({ ...p, devices: r.message || '设备列表不可用' }));
     } catch { setPanelError(p => ({ ...p, devices: '无权限或网络错误' })); }
+  }, []);
+
+  // 绑定弹窗：拉取萤石账号全部设备（含未绑定），供下拉选择
+  const loadBindableDevices = useCallback(async () => {
+    try {
+      const r = await ezvizApi.getDevices({ pageStart: 0, pageSize: 50, includeUnbound: true });
+      if (r.code === 200 && r.data) setBindableDevices(r.data.items || []);
+    } catch { /* 绑定弹窗加载失败时保留空列表，不阻断其它面板 */ }
   }, []);
 
   const loadAlerts = useCallback(async () => {
@@ -278,11 +288,12 @@ export function MonitoringPage() {
         name: bindForm.name || bindForm.deviceSerial,
         areaId: bindForm.areaId ? Number(bindForm.areaId) : null,
         channelNo: 1,
+        ewcode: bindForm.ewcode || undefined,
       });
       if (r.code === 200) {
         setActionMsg('设备已绑定区域');
         setShowAddCameraModal(false);
-        setBindForm({ deviceSerial: '', name: '', areaId: '' });
+        setBindForm({ deviceSerial: '', name: '', areaId: '', ewcode: '' });
         await loadDevices();
       } else setActionMsg(r.message || '绑定失败');
     } catch { setActionMsg('绑定请求失败'); }
@@ -410,9 +421,10 @@ export function MonitoringPage() {
                     const err = panelError[`live:${dev.deviceSerial}`];
                     const isOnline = dev.status === 1;
                     const notOperable = dev.operable === false;
+                    const isEncryptErr = !!err && (err.includes('加密') || err.includes('60019'));
                     const hint = notOperable
                       ? '分享设备：账号无直播/抓拍权限（萤石侧限制）'
-                      : !isOnline ? '设备离线' : err || '获取直播地址中…';
+                      : !isOnline ? '设备离线' : isEncryptErr ? '该设备已加密，请到「添加/绑定摄像头」处录入设备验证码' : err || '获取直播地址中…';
                     return (
                       <div key={dev.deviceSerial} className="relative bg-black rounded overflow-hidden border border-white/10 group">
                         {live?.url ? (
@@ -465,7 +477,7 @@ export function MonitoringPage() {
             <ToolButton icon={<CameraIcon className="w-3 h-3" />} label="截图取证" onClick={() => { setCaptureResults(null); setShowScreenshotModal(true); }} disabled={!configured} />
             <ToolButton icon={<Clock className="w-3 h-3" />} label="回放查询" onClick={() => { setPlaybackRecords(null); setShowPlaybackModal(true); }} disabled={!configured} />
             <ToolButton icon={<Settings className="w-3 h-3" />} label="系统设置" onClick={() => setShowSettingsModal(true)} />
-            <ToolButton icon={<Plus className="w-3 h-3" />} label="添加/绑定" onClick={() => setShowAddCameraModal(true)} disabled={!configured} />
+            <ToolButton icon={<Plus className="w-3 h-3" />} label="添加/绑定" onClick={() => { loadBindableDevices(); setBindableDevices([]); setShowAddCameraModal(true); }} disabled={!configured} />
           </div>
         </div>
 
@@ -700,11 +712,12 @@ export function MonitoringPage() {
           <p className="text-xs text-gray-400">萤石设备来自开放平台账号，此处把设备绑定到本地「区域导航」以便按区域筛选。</p>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">萤石设备</label>
-            <select value={bindForm.deviceSerial} onChange={e => setBindForm({ ...bindForm, deviceSerial: e.target.value, name: devices.find(d => d.deviceSerial === e.target.value)?.deviceName || '' })}
+            <select value={bindForm.deviceSerial} onChange={e => setBindForm({ ...bindForm, deviceSerial: e.target.value, name: bindableDevices.find(d => d.deviceSerial === e.target.value)?.deviceName || '' })}
               className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm [&>option]:bg-gray-800">
               <option value="">请选择设备</option>
-              {devices.map(d => <option key={d.deviceSerial} value={d.deviceSerial}>{d.deviceName || d.deviceSerial} ({d.deviceSerial})</option>)}
+              {bindableDevices.map(d => <option key={d.deviceSerial} value={d.deviceSerial}>{d.deviceName || d.deviceSerial} ({d.deviceSerial})</option>)}
             </select>
+            {bindableDevices.length === 0 && <p className="text-[10px] text-gray-500 mt-1">未加载到设备，请确认萤石已配置且账号下有设备</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">显示名称</label>
@@ -718,6 +731,12 @@ export function MonitoringPage() {
               <option value="">不绑定（全局）</option>
               {flattenAreas(areas).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">设备验证码 (ewcode，可选)</label>
+            <input type="text" value={bindForm.ewcode} onChange={e => setBindForm({ ...bindForm, ewcode: e.target.value })}
+              placeholder="设备开启视频加密时必填，可在萤石APP-设备-安全中查看" className="w-full px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm" />
+            <p className="text-[10px] text-gray-500 mt-1">未加密设备可留空；加密设备不填将无法取流（报错 60019）</p>
           </div>
           <div className="flex gap-3 pt-2">
             <button onClick={() => setShowAddCameraModal(false)} className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm">取消</button>
