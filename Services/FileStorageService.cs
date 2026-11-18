@@ -1,5 +1,6 @@
 using IoTPlatform.Data;
 using IoTPlatform.Models;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using System.Security.Claims;
@@ -13,16 +14,31 @@ public class FileStorageService
 {
     private readonly AppDbContext _dbContext;
     private readonly IConfiguration _configuration;
+    private readonly IWebHostEnvironment _environment;
     private readonly ILogger<FileStorageService> _logger;
 
     public FileStorageService(
         AppDbContext dbContext,
         IConfiguration configuration,
+        IWebHostEnvironment environment,
         ILogger<FileStorageService> logger)
     {
         _dbContext = dbContext;
         _configuration = configuration;
+        _environment = environment;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 解析上传根目录：配置为绝对路径时原样使用（便于指向独立数据卷）；
+    /// 为相对路径时相对于应用内容根目录（ContentRootPath）解析，保证部署到任意环境都可移植。
+    /// </summary>
+    private string GetUploadRoot()
+    {
+        var configured = _configuration["FileStorage:UploadPath"] ?? "uploads";
+        return Path.IsPathRooted(configured)
+            ? configured
+            : Path.Combine(_environment.ContentRootPath, configured);
     }
 
     /// <summary>
@@ -45,8 +61,8 @@ public class FileStorageService
         string? appCode,
         string? remark = null)
     {
-        // 获取配置
-        var uploadPath = _configuration["FileStorage:UploadPath"] ?? "uploads";
+        // 解析上传根目录（绝对路径原样使用；相对路径相对应用根目录解析，跨环境可移植）
+        var uploadRoot = GetUploadRoot();
         var maxFileSize = int.Parse(_configuration["FileStorage:MaxFileSizeMB"] ?? "50") * 1024 * 1024;
         var allowedExtensions = _configuration.GetSection("FileStorage:AllowedExtensions").Get<string[]>()
             ?? Array.Empty<string>();
@@ -77,10 +93,10 @@ public class FileStorageService
             string.Join("_", appCode.Split(invalidChars, StringSplitOptions.RemoveEmptyEntries));
         
         var relativePath = Path.Combine(safeAppCode, module.ToLower(), dateFolder, fileName);
-        var fullPath = Path.Combine(uploadPath, relativePath);
-        
-        _logger.LogInformation("准备保存文件: {FullPath}, 上传路径: {UploadPath}, 相对路径: {RelativePath}", 
-            fullPath, uploadPath, relativePath);
+        var fullPath = Path.Combine(uploadRoot, relativePath);
+
+        _logger.LogInformation("准备保存文件: {FullPath}, 上传根目录: {UploadRoot}, 相对路径: {RelativePath}",
+            fullPath, uploadRoot, relativePath);
 
         // 确保目录存在
         var directory = Path.GetDirectoryName(fullPath);
@@ -204,14 +220,18 @@ public class FileStorageService
             return false;
         }
 
-        // 删除物理文件
+        // 删除物理文件（必须用与上传一致的 UploadRoot 前缀，否则找不到文件）
         if (!string.IsNullOrEmpty(attachment.FileUrl))
         {
-            var filePath = attachment.FileUrl.TrimStart('/');
+            var filePath = Path.Combine(GetUploadRoot(), attachment.FileUrl.TrimStart('/'));
             if (System.IO.File.Exists(filePath))
             {
                 System.IO.File.Delete(filePath);
                 _logger.LogInformation("物理文件已删除: {FilePath}", filePath);
+            }
+            else
+            {
+                _logger.LogWarning("待删除的物理文件不存在: {FilePath}", filePath);
             }
         }
 
@@ -232,7 +252,7 @@ public class FileStorageService
             return null;
         }
 
-        var filePath = attachment.FileUrl.TrimStart('/');
+        var filePath = Path.Combine(GetUploadRoot(), attachment.FileUrl.TrimStart('/'));
         if (!System.IO.File.Exists(filePath))
         {
             return null;

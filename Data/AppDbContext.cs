@@ -76,6 +76,7 @@ public class AppDbContext : DbContext
     public DbSet<AnShengDelayTask> AnShengDelayTasks { get; set; }
     public DbSet<AnShengTimeTask> AnShengTimeTasks { get; set; }
     public DbSet<AnShengEmStatistic> AnShengEmStatistics { get; set; }
+    public DbSet<AnShengWaterFlowConfig> AnShengWaterFlowConfigs { get; set; }
     public DbSet<DataRule> DataRules { get; set; }
     public DbSet<ETLTask> EtlTasks { get; set; }
     public DbSet<Gateway> Gateways { get; set; }
@@ -135,6 +136,7 @@ public class AppDbContext : DbContext
         ConfigureAnShengDelayTasks(modelBuilder);
         ConfigureAnShengTimeTasks(modelBuilder);
         ConfigureAnShengEmStatistics(modelBuilder);
+        ConfigureAnShengWaterFlowConfig(modelBuilder);
         ConfigureLoginLogs(modelBuilder);
         ConfigureOperationLogs(modelBuilder);
         ConfigureDictionaryItems(modelBuilder);
@@ -604,6 +606,33 @@ public class AppDbContext : DbContext
 
             entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
             entity.Property(e => e.PeriodKey).HasMaxLength(AnShengEmStatistic.PeriodKeyMaxLength).IsRequired();
+        });
+    }
+
+    /// <summary>
+    /// 安圣水流量配置镜像表配置（T12）。
+    ///
+    /// 【索引设计理由】
+    ///   · <c>(DeviceId, AppCode)</c>：唯一幂等键。后台作用域（Router 钩子）用 <c>IgnoreQueryFilters</c> 时
+    ///     仍能走索引快速定位；AppCode 打头是因为显式定位查询会带它（见 <see cref="Services.AnShengWaterFlowService"/>）。
+    ///     <see cref="DeviceId"/> 全局唯一即可唯一定位一台设备，附带 AppCode 只是为了适配全局租户过滤器
+    ///     （过滤器按 AppCode 过滤，索引含 AppCode 才能被命中）。
+    ///   · 命名 <c>IX_ansheng_wf_config_DeviceId</c>（含 AppCode）与 T11 的
+    ///     <c>IX_ansheng_em_statistics_DeviceId</c> 同口径，保证过滤器下的查询都能命中索引。
+    ///
+    /// 【MySQL 5.7.26 约束】不使用 CHECK 约束、不使用函数索引；K / Offset / MinFlow / MaxFlow 为 double（默认映射）。
+    /// </summary>
+    private void ConfigureAnShengWaterFlowConfig(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AnShengWaterFlowConfig>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.DeviceId, e.AppCode }).IsUnique()
+                .HasDatabaseName("IX_ansheng_wf_config_DeviceId");
+            entity.HasIndex(e => e.DeviceId);
+
+            entity.Property(e => e.AppCode).HasMaxLength(50).IsRequired();
         });
     }
 

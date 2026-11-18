@@ -717,6 +717,49 @@ namespace IoTPlatform.Migrations
                     b.ToTable("ansheng_time_tasks");
                 });
 
+            modelBuilder.Entity("IoTPlatform.Models.AnShengWaterFlowConfig", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AppCode")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("varchar(50)");
+
+                    b.Property<long>("DeviceId")
+                        .HasColumnType("bigint");
+
+                    b.Property<double>("K")
+                        .HasColumnType("double");
+
+                    b.Property<double>("MaxFlow")
+                        .HasColumnType("double");
+
+                    b.Property<double>("MinFlow")
+                        .HasColumnType("double");
+
+                    b.Property<double>("Offset")
+                        .HasColumnType("double");
+
+                    b.Property<DateTime>("SyncedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceId")
+                        .HasDatabaseName("IX_ansheng_wf_config_DeviceId1");
+
+                    b.HasIndex("DeviceId", "AppCode")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ansheng_wf_config_DeviceId");
+
+                    b.ToTable("ansheng_wf_config");
+                });
+
             modelBuilder.Entity("IoTPlatform.Models.Archive", b =>
                 {
                     b.Property<long>("Id")
@@ -1041,6 +1084,10 @@ namespace IoTPlatform.Migrations
                     b.Property<string>("ImageUrl")
                         .HasMaxLength(500)
                         .HasColumnType("varchar(500)");
+
+                    b.Property<string>("EncryptionCode")
+                        .HasMaxLength(200)
+                        .HasColumnType("varchar(200)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1847,6 +1894,9 @@ namespace IoTPlatform.Migrations
 
                     b.Property<double?>("WaterFlow")
                         .HasColumnType("double");
+
+                    b.Property<long?>("WaterPulses")
+                        .HasColumnType("bigint");
 
                     b.Property<double?>("WaterTotal")
                         .HasColumnType("double");

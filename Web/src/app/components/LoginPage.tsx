@@ -24,19 +24,6 @@ export function LoginPage() {
     }
   };
 
-  const quickLogin = (role: string) => {
-    if (role === 'super_admin') {
-      setEmail('admin@system.com');
-      setPassword('admin123');
-    } else if (role === 'admin') {
-      setEmail('admin@haidilao.com');
-      setPassword('admin123');
-    } else if (role === 'operator') {
-      setEmail('operator@haidilao.com');
-      setPassword('operator123');
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-slate-900 to-gray-800 flex items-center justify-center p-4">
       <motion.div
@@ -163,30 +150,6 @@ export function LoginPage() {
               )}
             </button>
           </form>
-
-          <div className="mt-8 pt-6 border-t border-white/10">
-            <p className="text-sm text-gray-400 mb-3">快速登录（演示）</p>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                onClick={() => quickLogin('super_admin')}
-                className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-300 transition-colors"
-              >
-                超级管理员
-              </button>
-              <button
-                onClick={() => quickLogin('admin')}
-                className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-300 transition-colors"
-              >
-                客户管理员
-              </button>
-              <button
-                onClick={() => quickLogin('operator')}
-                className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs text-gray-300 transition-colors"
-              >
-                运维人员
-              </button>
-            </div>
-          </div>
         </motion.div>
       </motion.div>
     </div>

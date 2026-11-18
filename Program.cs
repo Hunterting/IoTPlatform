@@ -206,6 +206,10 @@ builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengScheduleServi
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEnergyService,
     IoTPlatform.Services.AnShengEnergyService>();
 
+// 安圣水流量服务（T12）：严格镜像 T11 电量计，Scoped 同生命周期（持有 AppDbContext，与 Router 同域）。
+builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengWaterFlowService,
+    IoTPlatform.Services.AnShengWaterFlowService>();
+
 // 安圣同步探测服务
 // Singleton 是硬要求：它在构造函数里订阅静态上行总线 AnShengUplinkHub。
 // 若注册为 Scoped，每个请求都会新订阅一次却从不退订，事件链会无限增长直至内存耗尽。
@@ -491,6 +495,19 @@ app.UseCors("AllowAll");
 // 租户上下文初始化（在认证之前初始化，确保后续服务可以使用租户信息）
 app.UseTenantInitialization();
 
+// ===== SPA 静态文件服务 =====
+// 前端构建产物（index.html + assets/）放在发布根目录（ContentRoot），由后端直接托管。
+// 必须在认证/授权之前注册，使前端资源可匿名访问；API 控制器仍由自身 [Authorize] 保护。
+// 用 PrefixExcludingFileProvider 排除 uploads/ 段，禁止匿名直接下载上传文件（仅经鉴权下载接口访问）。
+var spaFileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(app.Environment.ContentRootPath);
+var spaStaticProvider = new IoTPlatform.Infrastructure.PrefixExcludingFileProvider(spaFileProvider, "uploads");
+
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = spaStaticProvider
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -498,6 +515,27 @@ app.MapControllers();
 
 // 配置SignalR
 app.MapHub<DeviceHub>("/hubs/device");
+
+// SPA 回退：未匹配到 API/Hub 的前端路由统一返回 index.html（支持前端路由刷新）。
+// 上传目录 /uploads/* 不兜底，避免被匿名暴露为 SPA 页面（上传内容本就不经静态托管）。
+app.MapFallback(async context =>
+{
+    if (context.Request.Path.StartsWithSegments("/uploads", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var indexFile = spaFileProvider.GetFileInfo("index.html");
+    if (!indexFile.Exists)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    context.Response.ContentType = "text/html; charset=utf-8";
+    await context.Response.SendFileAsync(indexFile);
+});
 
 // ★★★ T6 关键：强制解析 AnShengUplinkPipeline ★★★
 //

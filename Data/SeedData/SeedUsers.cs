@@ -85,7 +85,7 @@ namespace IoTPlatform.Data.SeedData
                         RoleId = 2, // 系统管理员角色
                         CustomerId = 1, // 绑定「智慧工厂有限公司」，与 AppCode 双保险
                         AppCode = "customer_001",
-                        AllowedAreaIds = "1,2,3",
+                        AllowedAreaIds = "1,2,3,15",
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { getDictionaryItems } from '@/app/services/api/dictionaryApi';
+import { useAuth } from './AuthContext';
 
 // 字典类型枚举
 export const DictionaryType = {
@@ -284,6 +285,7 @@ const initialDictionaries: DictionaryItem[] = [
 ];
 
 export function DictionaryProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [dictionaries, setDictionaries] = useState<DictionaryItem[]>(initialDictionaries);
   const [typeConfigs, setTypeConfigs] = useState<DictionaryTypeConfig[]>(DICTIONARY_TYPE_CONFIGS);
   const [isLoading, setIsLoading] = useState(false);
@@ -335,10 +337,12 @@ export function DictionaryProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // 初始化时尝试从后端加载
+  // 初始化时尝试从后端加载；仅登录后触发，避免未登录（登录页）发起无谓请求
   useEffect(() => {
-    loadFromBackend();
-  }, []);
+    if (user) {
+      loadFromBackend();
+    }
+  }, [user]);
 
   const getAllItems = () => {
     return dictionaries;
