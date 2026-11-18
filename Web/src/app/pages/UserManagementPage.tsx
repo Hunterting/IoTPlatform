@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, X, Plus, Shield, Check, Edit2, Trash2, Search, Loader2 } from 'lucide-react';
+import { Users, X, Plus, Shield, Check, Edit2, Trash2, Search, Loader2, Eye, EyeOff } from 'lucide-react';
 import { PageType } from '@/app/components/Sidebar';
 import { useAuth, User } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, DEFAULT_ROLES, RoleDefinition, Permission, PERMISSION_GROUPS } from '@/app/config/permissions';
@@ -64,6 +64,7 @@ function UserList() {
 
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [editingUser, setEditingUser] = useState<UserDto | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -143,6 +144,7 @@ function UserList() {
         if (response.data?.code === 200) {
           await loadUsers(currentPage, searchTerm);
           setShowEditUserModal(false);
+          setShowPassword(false);
         }
       } else {
         // 创建用户
@@ -151,6 +153,7 @@ function UserList() {
         if (response.data?.code === 200) {
           await loadUsers(1, searchTerm);
           setShowAddUserModal(false);
+          setShowPassword(false);
         }
       }
     } catch (error) {
@@ -381,7 +384,7 @@ function UserList() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60] p-4"
-            onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); }}
+            onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); setShowPassword(false); }}
           >
             <motion.div
               initial={{ scale: 0.9, y: 20 }}
@@ -392,7 +395,7 @@ function UserList() {
             >
               <div className="flex items-center justify-between p-6 border-b border-white/10 shrink-0">
                 <h3 className="text-2xl font-bold text-white">{showEditUserModal ? '编辑用户' : '添加新用户'}</h3>
-                <button onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); }} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                <button onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); setShowPassword(false); }} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
                   <X className="w-5 h-5 text-gray-400" />
                 </button>
               </div>
@@ -510,19 +513,29 @@ function UserList() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">密码</label>
-                  <input
-                    type="password"
-                    value={newUserForm.password}
-                    onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
-                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors"
-                    placeholder={showEditUserModal ? "如需修改密码请输入" : "设置初始密码"}
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={newUserForm.password}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors pr-12"
+                      placeholder={showEditUserModal ? "如需修改密码请输入" : "设置初始密码"}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(v => !v)}
+                      aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                      className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-200 transition-colors focus:outline-none"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex gap-3 pt-4">
                   <button 
                     type="button" 
-                    onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); }} 
+                    onClick={() => { setShowAddUserModal(false); setShowEditUserModal(false); setShowPassword(false); }} 
                     disabled={submitting}
                     className="flex-1 px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors disabled:opacity-50"
                   >
