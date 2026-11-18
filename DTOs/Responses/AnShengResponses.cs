@@ -655,3 +655,56 @@ public class AnShengEmStatisticDto
     /// <summary>是否陈旧：<c>(UtcNow - SyncedAt) &gt; 24h</c>。设备权威 + 平台只累积，超时才标陈旧。</summary>
     public bool IsStale { get; set; }
 }
+
+// ─────────────────────────────────────────────────────────────
+// T12 水流量（实时 / 配置）响应
+// ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 水流量实时读数只读视图（T12 <c>GET /water/flow/info</c>）。
+///
+/// 取自该设备最新 <c>DeviceDataRecord</c> 的 WaterFlow / WaterTotal / WaterPulses。
+/// </summary>
+public class AnShengWaterFlowInfoDto
+{
+    /// <summary>瞬时流量 iFlow（L/min）。</summary>
+    public double IFlow { get; set; }
+
+    /// <summary>累计流量 tFlow（m³ 或 L，取决于设备单位）。</summary>
+    public double TFlow { get; set; }
+
+    /// <summary>累计脉冲数 tPulses。</summary>
+    public long? TPulses { get; set; }
+
+    /// <summary>设备 IMEI（镜像读数未单独存储，暂为 null）。</summary>
+    public string? Imei { get; set; }
+
+    /// <summary>读数时间戳（秒级 UNIX；源自数据记录的 UTC 时刻）。</summary>
+    public long? Timestamp { get; set; }
+}
+
+/// <summary>
+/// 水流量配置只读视图（T12 <c>GET /water/flow/config</c>）。
+///
+/// 取自平台 <c>ansheng_wf_config</c> 镜像表（设备权威、平台只读镜像）。
+/// </summary>
+public class AnShengWaterFlowConfigDto
+{
+    /// <summary>流量系数 k（协议默认 11）。</summary>
+    public double K { get; set; }
+
+    /// <summary>流量偏移量 offset（协议默认 0）。</summary>
+    public double Offset { get; set; }
+
+    /// <summary>有效流量范围下限 minFlow（L/min，协议默认 1）。</summary>
+    public double MinFlow { get; set; }
+
+    /// <summary>有效流量范围上限 maxFlow（L/min，协议默认 25）。</summary>
+    public double MaxFlow { get; set; }
+
+    /// <summary>设备 IMEI（镜像未单独存储，暂为 null）。</summary>
+    public string? Imei { get; set; }
+
+    /// <summary>镜像最后与设备同步的时刻（秒级 UNIX）。</summary>
+    public long? Timestamp { get; set; }
+}

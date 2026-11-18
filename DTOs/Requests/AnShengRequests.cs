@@ -354,3 +354,30 @@ public class AnShengAutoCalRequest
     /// <summary>已知负载功率（W）。设备据此反推校准系数，必须是真实接在插槽上的负载功率。</summary>
     public double Power { get; set; }
 }
+
+// ─────────────────────────────────────────────────────────────
+// T12 水流量（实时 / 配置）请求
+// ─────────────────────────────────────────────────────────────
+
+/// <summary>
+/// 设置水流量配置请求（T12 POST <c>{deviceId}/water/flow/config</c>）。
+/// 经 <c>SendCommandAsync("setFlowConfig", { k, offset, minFlow, maxFlow })</c> 下发；
+/// 应答由 Router 钩子 UPSERT 进 <c>ansheng_wf_config</c> 镜像表。
+///
+/// 【四个参数均可选】仅非 null 的才进报文体；未给的字段设备沿用默认值
+/// （k=11 / offset=0 / minFlow=1 / maxFlow=25，见 <c>AnShengCommandCatalog</c> 的 setFlowConfig 登记）。
+/// </summary>
+public class AnShengWaterFlowConfigRequest
+{
+    /// <summary>流量系数 k（协议默认 11）。</summary>
+    public double? K { get; set; }
+
+    /// <summary>流量偏移量 offset（协议默认 0）。</summary>
+    public double? Offset { get; set; }
+
+    /// <summary>有效流量范围下限 minFlow（L/min，协议默认 1）。</summary>
+    public double? MinFlow { get; set; }
+
+    /// <summary>有效流量范围上限 maxFlow（L/min，协议默认 25）。</summary>
+    public double? MaxFlow { get; set; }
+}

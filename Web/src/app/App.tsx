@@ -29,6 +29,7 @@ import { AnShengManagementPage } from '@/app/pages/AnShengManagementPage';
 import { SwitchControlPage } from '@/app/pages/SwitchControlPage';
 import { ScheduleEditorPage } from '@/app/pages/ScheduleEditorPage';
 import { EnergyStatisticsPage } from '@/app/pages/EnergyStatisticsPage';
+import { WaterFlowPage } from '@/app/pages/WaterFlowPage';
 import { DatabaseConfigPage } from '@/app/pages/DataCollectionApiSubPages';
 
 function AppContent() {
@@ -93,6 +94,8 @@ function AppContent() {
         return <ScheduleEditorPage />;
       case 'energy-statistics':
         return <EnergyStatisticsPage />;
+      case 'water-flow':
+        return <WaterFlowPage />;
       case 'alert-center':
         return <AlertCenterPage />;
       case 'data-collection':

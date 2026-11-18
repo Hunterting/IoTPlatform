@@ -28,6 +28,9 @@ import type {
   AnShengEnergyStatisticsQueryParams,
   AnShengEnergyResultDto,
   AnShengEmStatisticDto,
+  AnShengWaterFlowInfoDto,
+  AnShengWaterFlowConfigDto,
+  AnShengWaterFlowConfigRequest,
 } from './types/ansheng.types';
 
 /**
@@ -385,6 +388,92 @@ export const anshengApi = {
     return httpClient.post<ApiResponse<AnShengEnergyResultDto>>(
       `/ansheng/${deviceId}/energy/cal-params/auto`,
       request
+    );
+  },
+
+  // ── T12：水流量（后端 AnShengWaterFlowController）───────────────────
+  //
+  // 六个方法一一对应六个真实端点。**全部结果走 HTTP 200**：
+  // 成功 code=200，被拒 code=400 + data.rejectReason（复用 T11 的 AnShengEnergyResultDto）。
+  // GET /water/flow/info 与 GET /water/flow/config 是只读镜像，返回 DTO 或 null。
+  //
+  // 【权限】GET 两个读端点走类级 VIEW_DEVICES；POST 三个写端点（flow/info 下发、
+  //   flow/reset、flow/config、flow/config/reset）均需 SEND_DEVICE_COMMANDS，
+  //   按钮在页面层 disabled 而非隐藏。
+
+  /**
+   * 下发 getFlowInfo，拉取水流量实时读数。
+   * POST /api/v1/ansheng/{deviceId}/water/flow/info
+   *
+   * 应答只回下发受理情况，真值需另行 GET /water/flow/info 补查（异步镜像）。
+   */
+  requestWaterFlowInfo: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengEnergyResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengEnergyResultDto>>(
+      `/ansheng/${deviceId}/water/flow/info`
+    );
+  },
+
+  /**
+   * 读取平台水流量实时读数镜像（设备权威镜像，异步回写）。
+   * GET /api/v1/ansheng/{deviceId}/water/flow/info
+   */
+  getWaterFlowInfo: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengWaterFlowInfoDto | null>>> => {
+    return httpClient.get<ApiResponse<AnShengWaterFlowInfoDto | null>>(
+      `/ansheng/${deviceId}/water/flow/info`
+    );
+  },
+
+  /**
+   * 下发 resetTotalFlow，清零设备累计流量（平台镜像一行不删）。
+   * POST /api/v1/ansheng/{deviceId}/water/flow/reset
+   */
+  resetWaterTotalFlow: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengEnergyResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengEnergyResultDto>>(
+      `/ansheng/${deviceId}/water/flow/reset`
+    );
+  },
+
+  /**
+   * 读取平台水流量配置镜像（k / offset / minFlow / maxFlow）。
+   * GET /api/v1/ansheng/{deviceId}/water/flow/config
+   */
+  getWaterFlowConfig: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengWaterFlowConfigDto | null>>> => {
+    return httpClient.get<ApiResponse<AnShengWaterFlowConfigDto | null>>(
+      `/ansheng/${deviceId}/water/flow/config`
+    );
+  },
+
+  /**
+   * 下发 setWaterFlowConfig，设置流量配置（仅传非空字段）。
+   * POST /api/v1/ansheng/{deviceId}/water/flow/config
+   */
+  setWaterFlowConfig: async (
+    deviceId: number,
+    request: AnShengWaterFlowConfigRequest
+  ): Promise<AxiosResponse<ApiResponse<AnShengEnergyResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengEnergyResultDto>>(
+      `/ansheng/${deviceId}/water/flow/config`,
+      request
+    );
+  },
+
+  /**
+   * 下发 resetFlowConfig，重置流量配置为出厂默认值。
+   * POST /api/v1/ansheng/{deviceId}/water/flow/config/reset
+   */
+  resetWaterFlowConfig: async (
+    deviceId: number
+  ): Promise<AxiosResponse<ApiResponse<AnShengEnergyResultDto>>> => {
+    return httpClient.post<ApiResponse<AnShengEnergyResultDto>>(
+      `/ansheng/${deviceId}/water/flow/config/reset`
     );
   },
 };

@@ -657,3 +657,74 @@ export interface AnShengEmStatisticDto {
   /** 是否陈旧：(UtcNow - syncedAt) > 24h。 */
   isStale: boolean;
 }
+
+// ════════════════════════════════════════════════════════════════
+// T12：安圣水流量（对应后端 AnShengWaterFlowController）
+//
+// 【字段名权威来源】
+//   Controllers/AnShengWaterFlowController.cs
+//   DTOs/Responses/AnShengResponses.cs （AnShengWaterFlowInfoDto / AnShengWaterFlowConfigDto）
+//   DTOs/Requests/AnShengRequests.cs   （AnShengWaterFlowConfigRequest）
+//
+// 【响应信封】与 T11 同构：HTTP 恒 200，成功 code=200，被拒 code=400 + data.rejectReason。
+//   写端点（flow/info 下发、flow/reset、flow/config、flow/config/reset）共用
+//   AnShengEnergyResultDto 作为 data；读端点（GET flow/info、GET flow/config）直接返回镜像 DTO（可 null）。
+//
+// 【camelCase 换算】C# 的 iFlow / tFlow / tPulses / k / offset / minFlow / maxFlow 均为常规小驼峰，
+//   出网形状与字段名一致（iFlow、tFlow、tPulses、k、offset、minFlow、maxFlow）；
+//   imei / timestamp 亦原样出网。
+// ════════════════════════════════════════════════════════════════
+
+/**
+ * 水流量实时读数只读视图（GET /ansheng/{deviceId}/water/flow/info 的 data）。
+ * 对应后端 AnShengWaterFlowInfoDto。设备应答经 Router 钩子异步 UPSERT，故下发后需延时补查。
+ */
+export interface AnShengWaterFlowInfoDto {
+  /** 瞬时流量（L/min）。C# 属性 iFlow。 */
+  iFlow: number;
+  /** 累计流量（L）。C# 属性 tFlow。 */
+  tFlow: number;
+  /** 总脉冲数；设备未回传时为 null。C# 属性 tPulses。 */
+  tPulses: number | null;
+  /** 设备 IMEI。 */
+  imei?: string | null;
+  /** 镜像最后与设备同步的时刻（UNIX 毫秒时间戳）。 */
+  timestamp?: number | null;
+}
+
+/**
+ * 水流量配置只读视图（GET /ansheng/{deviceId}/water/flow/config 的 data）。
+ * 对应后端 AnShengWaterFlowConfigDto。
+ */
+export interface AnShengWaterFlowConfigDto {
+  /** 流量系数 K。C# 属性 k。 */
+  k: number;
+  /** 流量偏移 offset。C# 属性 offset。 */
+  offset: number;
+  /** 最小流量阈值（L/min）。C# 属性 minFlow。 */
+  minFlow: number;
+  /** 最大流量阈值（L/min）。C# 属性 maxFlow。 */
+  maxFlow: number;
+  /** 设备 IMEI。 */
+  imei?: string | null;
+  /** 镜像最后与设备同步的时刻（UNIX 毫秒时间戳）。 */
+  timestamp?: number | null;
+}
+
+/**
+ * 设置水流量配置请求。
+ * 对应 POST /ansheng/{deviceId}/water/flow/config，后端 DTO：AnShengWaterFlowConfigRequest。
+ *
+ * 【仅传非空字段】四个字段均为可空；前端只把用户填了值的字段放进请求体，
+ *   未填写（空串）的字段不传，由后端保留原值。四个全空会被后端拒绝，页面会前置拦截。
+ */
+export interface AnShengWaterFlowConfigRequest {
+  /** 流量系数 K。 */
+  k?: number | null;
+  /** 流量偏移 offset。 */
+  offset?: number | null;
+  /** 最小流量阈值（L/min）。 */
+  minFlow?: number | null;
+  /** 最大流量阈值（L/min）。 */
+  maxFlow?: number | null;
+}

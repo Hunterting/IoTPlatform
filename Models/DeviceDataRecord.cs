@@ -34,6 +34,8 @@ public class DeviceDataRecord : IHasAppCode
     public double? WaterFlow { get; set; }
     /// <summary>累计用水量 (m³)</summary>
     public double? WaterTotal { get; set; }
+    /// <summary>累计脉冲数（水流量表计数值；tPulses 为 int 量级，用 long? 留余量，T12 新增）</summary>
+    public long? WaterPulses { get; set; }
     /// <summary>电功率 (kW)</summary>
     public double? ElectricPower { get; set; }
     /// <summary>累计用电量 (kWh)</summary>

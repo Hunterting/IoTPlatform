@@ -273,6 +273,27 @@ public static class AnShengCommandCatalog
                 "自动校准参数（autoCal）",
                 P("power", AnShengParamType.Double, true, "自动校准的负载功率")),
 
+            // ───────── G3 扩展：水流量（仅开关类，与电量计同组）─────────
+
+            Spec("getFlowInfo", "获取流量信息", AnShengDeviceCapability.GroupSwitchAction,
+                "获取流量信息（getFlowInfo）"),
+
+            Spec("resetTotalFlow", "重置总流量", AnShengDeviceCapability.GroupSwitchAction,
+                "重置总流量（resetTotalFlow）"),
+
+            Spec("getFlowConfig", "获取流量配置", AnShengDeviceCapability.GroupSwitchAction,
+                "获取流量配置（getFlowConfig）"),
+
+            Spec("setFlowConfig", "设置流量配置", AnShengDeviceCapability.GroupSwitchAction,
+                "设置流量配置（setFlowConfig）",
+                P("k", AnShengParamType.Double, false, "系数，默认11"),
+                P("offset", AnShengParamType.Double, false, "偏移量，默认0"),
+                P("minFlow", AnShengParamType.Double, false, "有效范围最小值L/min，默认1"),
+                P("maxFlow", AnShengParamType.Double, false, "有效范围最大值L/min，默认25")),
+
+            Spec("resetFlowConfig", "重置流量配置", AnShengDeviceCapability.GroupSwitchAction,
+                "重置流量配置（resetFlowConfig）"),
+
             // ───────── G4 定时任务 / 电量统计 / 日志 / RS485（仅 4G 开关）─────────
 
             Spec("getTimeTasks", "获取所有定时任务", AnShengDeviceCapability.GroupTimeTask,

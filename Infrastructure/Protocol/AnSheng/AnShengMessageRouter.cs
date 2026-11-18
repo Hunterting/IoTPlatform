@@ -72,6 +72,12 @@ public sealed class AnShengMessageRouter
     /// <summary>安圣协议方法名：查询电量计实时读数（T11 写后回读）。</summary>
     private const string MethodGetEMRealtime = "getEMRealtime";
 
+    /// <summary>安圣协议方法名：查询流量信息（T12 写后回读）。</summary>
+    private const string MethodGetFlowInfo = "getFlowInfo";
+
+    /// <summary>安圣协议方法名：查询流量配置（T12 写后回读）。</summary>
+    private const string MethodGetFlowConfig = "getFlowConfig";
+
     /// <summary>
     /// 设备应答缺少 <c>result</c> 字段时写入的错误码（T7-4）。
     ///
@@ -119,6 +125,7 @@ public sealed class AnShengMessageRouter
     private readonly AnShengEventDispatcher? _dispatcher;
     private readonly IAnShengScheduleService _schedule;
     private readonly IAnShengEnergyService _energy;
+    private readonly IAnShengWaterFlowService? _waterFlow;
 
     /// <summary>
     /// 构造路由器。
@@ -139,6 +146,12 @@ public sealed class AnShengMessageRouter
     ///   · getEMRealtime   ⇒ <see cref="IAnShengEnergyService.ApplyRealtimeReadbackAsync"/>（归一化入 DeviceDataRecord）。
     /// 已注册为 Scoped，与路由器同生命周期，由 DI 注入（非可选）。
     /// </param>
+    /// <param name="waterFlow">
+    /// 水流量服务（T12）。命令应答（getFlowInfo / getFlowConfig）携带的实时读数 / 配置由它写回：
+    ///   · getFlowInfo   ⇒ <see cref="IAnShengWaterFlowService.ApplyFlowInfoReadbackAsync"/>（归一化入 DeviceDataRecord）；
+    ///   · getFlowConfig ⇒ <see cref="IAnShengWaterFlowService.ApplyFlowConfigReadbackAsync"/>（UPSERT 进 ansheng_wf_config）。
+    /// 已注册为 Scoped，与路由器同生命周期，由 DI 注入（可选：未注册时水流量回读分支跳过）。
+    /// </param>
     /// <param name="dispatcher">
     /// 事件分发器；<b>可选</b>。
     /// T6-1 阶段 <c>AnShengEventDispatcher</c> 尚未实现/注册，此时为 <c>null</c>，
@@ -153,6 +166,7 @@ public sealed class AnShengMessageRouter
         ILogger<AnShengMessageRouter> logger,
         IAnShengScheduleService schedule,
         IAnShengEnergyService energy,
+        IAnShengWaterFlowService? waterFlow = null,
         AnShengEventDispatcher? dispatcher = null)
     {
         _pendingStore = pendingStore ?? throw new ArgumentNullException(nameof(pendingStore));
@@ -162,6 +176,7 @@ public sealed class AnShengMessageRouter
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
         _energy = energy ?? throw new ArgumentNullException(nameof(energy));
+        _waterFlow = waterFlow;
         _dispatcher = dispatcher;
     }
 
@@ -586,26 +601,30 @@ public sealed class AnShengMessageRouter
             return;
         }
 
-        // 只有这八类应答携带可写回的快照 / 镜像数据：
+        // 只有这些应答携带可写回的快照 / 镜像数据：
         //   · getDelayTasks 携带 tasks[]（非 slots[]）；
         //   · getTimeTasks / getSlotTimeTasks 携带 timeTasks[] / loopTimeTasks[]（T10）；
         //   · action / actions / getDevStatus 携带 slots[]；
         //   · getEMStatistics 携带 data[]（电量计多粒度统计，T11）；
-        //   · getEMRealtime 携带 data[]（电量计逐插槽实时 v/c/p/e，T11）。
+        //   · getEMRealtime 携带 data[]（电量计逐插槽实时 v/c/p/e，T11）；
+        //   · getFlowInfo 携带 iFlow/tFlow/tPulses（水流量实时，T12）；
+        //   · getFlowConfig 携带 k/offset/minFlow/maxFlow（水流量配置，T12）。
         // 各载体互不重叠，避免把一类数组误当另一类写回。
         bool isGetTimeTasks = string.Equals(method, MethodGetTimeTasks, StringComparison.Ordinal);
         bool isGetSlotTimeTasks = string.Equals(method, MethodGetSlotTimeTasks, StringComparison.Ordinal);
         bool isDelayTasks = string.Equals(method, MethodGetDelayTasks, StringComparison.Ordinal);
         bool isGetEMStatistics = string.Equals(method, MethodGetEMStatistics, StringComparison.Ordinal);
         bool isGetEMRealtime = string.Equals(method, MethodGetEMRealtime, StringComparison.Ordinal);
+        bool isGetFlowInfo = string.Equals(method, MethodGetFlowInfo, StringComparison.Ordinal);
+        bool isGetFlowConfig = string.Equals(method, MethodGetFlowConfig, StringComparison.Ordinal);
         bool isSlotsCarrier = !isGetTimeTasks && !isGetSlotTimeTasks && !isDelayTasks &&
-            !isGetEMStatistics && !isGetEMRealtime &&
+            !isGetEMStatistics && !isGetEMRealtime && !isGetFlowInfo && !isGetFlowConfig &&
             (string.Equals(method, "action", StringComparison.Ordinal) ||
              string.Equals(method, "actions", StringComparison.Ordinal) ||
              string.Equals(method, MethodGetDevStatus, StringComparison.Ordinal));
 
         if (!isGetTimeTasks && !isGetSlotTimeTasks && !isDelayTasks && !isGetEMStatistics &&
-            !isGetEMRealtime && !isSlotsCarrier)
+            !isGetEMRealtime && !isGetFlowInfo && !isGetFlowConfig && !isSlotsCarrier)
         {
             return;
         }
@@ -698,6 +717,27 @@ public sealed class AnShengMessageRouter
                     await _energy.ApplyRealtimeReadbackAsync(
                         deviceId.Value, slots, message?.TimestampUtc, cancellationToken)
                         .ConfigureAwait(false);
+                }
+            }
+            else if (isGetFlowInfo)
+            {
+                // T12 水流量实时写回：iFlow/tFlow/tPulses 归一化成 waterflow/watertotal/wpulses，
+                // 经既有 IDataCollectionService 落 DeviceDataRecord，零改动复用告警引擎与曲线。
+                var snapshot = AnShengWaterFlowParsing.ParseFlowInfo(root);
+                if (snapshot != null && _waterFlow != null)
+                {
+                    await _waterFlow.ApplyFlowInfoReadbackAsync(
+                        deviceId.Value, snapshot, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else if (isGetFlowConfig)
+            {
+                // T12 水流量配置写回：k/offset/minFlow/maxFlow 按唯一键 UPSERT 进 ansheng_wf_config 镜像表。
+                var snapshot = AnShengWaterFlowParsing.ParseFlowConfig(root);
+                if (snapshot != null && _waterFlow != null)
+                {
+                    await _waterFlow.ApplyFlowConfigReadbackAsync(
+                        deviceId.Value, snapshot, cancellationToken).ConfigureAwait(false);
                 }
             }
         }

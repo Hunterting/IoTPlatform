@@ -59,6 +59,8 @@ public class DataCollectionService : IDataCollectionService
         { "water_flow",        (r, v) => r.WaterFlow         = v },
         { "watertotal",        (r, v) => r.WaterTotal        = v },
         { "water_total",       (r, v) => r.WaterTotal        = v },
+        { "wpulses",           (r, v) => r.WaterPulses       = (long)Math.Round(v) },
+        { "waterpulses",       (r, v) => r.WaterPulses       = (long)Math.Round(v) },
         { "electricpower",     (r, v) => r.ElectricPower     = v },
         { "electric_power",    (r, v) => r.ElectricPower     = v },
         { "power",             (r, v) => r.ElectricPower     = v },

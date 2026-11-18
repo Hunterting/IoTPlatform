@@ -35,6 +35,7 @@ import {
   Radio,
   RadioTower,
   Power,
+  Droplets,
 } from 'lucide-react';
 import { useAuth } from '@/app/contexts/AuthContext';
 import { PERMISSIONS, Permission } from '@/app/config/permissions';
@@ -80,7 +81,8 @@ export type PageType =
   | 'ansheng-management'
   | 'switch-control'
   | 'schedule-editor'
-  | 'energy-statistics';
+  | 'energy-statistics'
+  | 'water-flow';
 
 interface SidebarProps {
   currentPage: PageType;
@@ -172,6 +174,13 @@ const menuItems: MenuItem[] = [
         label: '电量统计',
         icon: <Zap className="w-4 h-4" />,
         // 与同级「开关控制」同构：菜单按 view 权限可见，页面自身对写类动作做 send 权限门控。
+        requiredPermission: PERMISSIONS.VIEW_DEVICES,
+      },
+      {
+        id: 'water-flow',
+        label: '水流量',
+        icon: <Droplets className="w-4 h-4" />,
+        // 与同级「电量统计」同构：菜单按 view 权限可见，页面自身对写类动作做 send 权限门控。
         requiredPermission: PERMISSIONS.VIEW_DEVICES,
       },
     ],
