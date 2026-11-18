@@ -587,7 +587,7 @@ export function AreaManagementPage() {
         {error && (
           <div className="mx-4 mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
             {error}
-            <button onClick={refreshAreas} className="ml-2 underline">重试</button>
+            <button onClick={() => { Promise.all([refreshAreas(), refreshAreaTree()]).catch(() => {}); }} className="ml-2 underline">重试</button>
           </div>
         )}
 
