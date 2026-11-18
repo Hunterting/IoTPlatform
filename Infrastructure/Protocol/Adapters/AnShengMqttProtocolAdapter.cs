@@ -59,8 +59,10 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
     private bool _isCollecting;
     private bool _disposed;
 
-    // 重连控制
-    private bool _reconnecting;
+    // 重连控制：_reconnectingFlag = 0 空闲，1 重连进行中。
+    // 必须用 Interlocked 原子门闩：OnDisconnectedAsync 与 healthcheck timer 是两条独立的重连触发路径，
+    // 非原子的 bool 检查+赋值会让两个 Task 同时通过，进而交替赋值 _mqttClient。
+    private int _reconnectingFlag;
     private int _reconnectAttempt;
     private const int MaxReconnectAttempts = 10;
     private static readonly TimeSpan ReconnectBaseDelay = TimeSpan.FromSeconds(2);
@@ -203,7 +205,8 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
         {
             if (_mqttClient?.IsConnected == true)
             {
-                _reconnecting = false;
+                // 连接已就绪时只重置退避计数；重连门闩由 ReconnectLoopAsync 独占释放，
+                // 在这里清标志会让第二条触发路径趁重连未结束时再次闯入。
                 _reconnectAttempt = 0;
                 return true;
             }
@@ -284,6 +287,10 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
             throw new InvalidOperationException("安圣 MQTT 客户端未连接");
         }
 
+        // 这里不加 IsConnected 附加判断：上方已保证客户端处于连接态，
+        // 附加条件恒为 true，是永远走不到的死分支。
+        // 「标志残留 true 时仍要重订阅」由 OnDisconnectedAsync / ReconnectLoopAsync
+        // 两处无条件清 _isCollecting 来保证（见各自行内注释）。
         if (_isCollecting)
         {
             _logger?.LogDebug("安圣 MQTT 数据采集已在运行中，跳过");
@@ -338,7 +345,8 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
             {
                 try
                 {
-                    if (_mqttClient != null && !_mqttClient.IsConnected && !_disposed && !_reconnecting)
+                    if (_mqttClient != null && !_mqttClient.IsConnected && !_disposed
+                        && Volatile.Read(ref _reconnectingFlag) == 0)
                     {
                         _logger?.LogWarning("健康检查检测到 MQTT 连接已断开，触发重连");
                         _ = Task.Run(() => ReconnectLoopAsync());
@@ -371,7 +379,36 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
             .WithTopic(topic)
             .WithQualityOfServiceLevel(qos)
             .Build();
-        await _mqttClient!.SubscribeAsync(filter, cancellationToken);
+        var result = await _mqttClient!.SubscribeAsync(filter, cancellationToken);
+
+        // 【断线重连订阅丢失修复·可观测性】必须逐项检查 SUBACK：
+        // MQTTnet 4.3.7 中成功码为 GrantedQoS0/1/2（本版本枚举无 Success 成员），
+        // NotAuthorized / TopicFilterInvalid 等 >=128 的码代表 Broker 拒绝订阅（常见于 ACL 未放行）。
+        // 旧实现丢弃返回值却打「已订阅成功」INFO，掩盖了订阅被拒的假象。
+        if (result?.Items == null || result.Items.Count == 0)
+        {
+            _logger?.LogError("安圣 MQTT 订阅未收到有效 SUBACK: Topic={Topic}", topic);
+            return;
+        }
+
+        foreach (var item in result.Items)
+        {
+            var grantedTopic = item.TopicFilter?.Topic ?? topic;
+            if (item.ResultCode is MqttClientSubscribeResultCode.GrantedQoS0
+                or MqttClientSubscribeResultCode.GrantedQoS1
+                or MqttClientSubscribeResultCode.GrantedQoS2)
+            {
+                _logger?.LogInformation(
+                    "安圣 MQTT 订阅成功: Topic={Topic}, GrantedQoS={ResultCode}",
+                    grantedTopic, item.ResultCode);
+            }
+            else
+            {
+                _logger?.LogError(
+                    "安圣 MQTT 订阅被拒绝: Topic={Topic}, ReasonCode={ResultCode}, ReasonString={ReasonString}",
+                    grantedTopic, item.ResultCode, result.ReasonString);
+            }
+        }
     }
 
     /// <summary>
@@ -751,18 +788,28 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
         _logger?.LogWarning("安圣 MQTT 连接断开: {Reason}, ClientWasConnected={ClientWasConnected}",
             e.Reason, e.ClientWasConnected);
 
+        // 【断线重连订阅丢失修复 A-1】清标志必须在所有 guard 之前：
+        // healthcheck timer 是第二条独立的重连触发路径，broker 抖动时第二个断线事件
+        // 很容易在 _reconnectingFlag==1 窗口内到达；若放在 guard 之后，该事件被吞掉、
+        // 标志残留 true，下一次新客户端连接成功后 StartDataCollectionAsync 直接 return，
+        // 订阅永久丢失（生产症状：一条报文都收不到）。
+        // 这里只清状态标志，不 cancel _dataCollectionCts —— 由重连流程中
+        // StartDataCollectionAsync 自行负责 CTS 的取消与重建。
+        _isCollecting = false;
+
         ConnectionStateChanged?.Invoke(this, false);
 
-        // 如果已主动 Dispose 或正在进行另一轮重连，跳过
-        if (_disposed || _reconnecting) return;
+        // 如果已主动 Dispose 或正在进行另一轮重连，跳过重连（_disposed 判断仍在 Task.Run 之前）
+        if (_disposed || Volatile.Read(ref _reconnectingFlag) != 0) return;
 
         _ = Task.Run(() => ReconnectLoopAsync());
     }
 
     private async Task ReconnectLoopAsync()
     {
-        if (_reconnecting) return;
-        _reconnecting = true;
+        // 【C】原子抢占门闩：CompareExchange 保证双触发路径下只有一个重连任务存活，
+        // 避免两个 Task 并发重建 / 交替赋值 _mqttClient。
+        if (Interlocked.CompareExchange(ref _reconnectingFlag, 1, 0) != 0) return;
         _reconnectAttempt = 0;
 
         try
@@ -790,6 +837,11 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
                     if (connected)
                     {
                         _logger?.LogInformation("安圣 MQTT 重连成功（第 {Attempt} 次尝试）", _reconnectAttempt);
+
+                        // 【断线重连订阅丢失修复 A-2】ConnectAsync 每次 new MqttClient()，
+                        // 新客户端的订阅表为空。无论断线事件是否被 guard 吞掉，这里无条件清标志，
+                        // 保证紧随其后的 StartDataCollectionAsync 一定执行重新订阅。
+                        _isCollecting = false;
 
                         // 重连后重新订阅
                         if (_options != null)
@@ -823,7 +875,8 @@ public class AnShengMqttProtocolAdapter : IProtocolAdapter, IoTPlatform.Services
         }
         finally
         {
-            _reconnecting = false;
+            // 只有持锁的重连任务才能释放门闩
+            Interlocked.Exchange(ref _reconnectingFlag, 0);
         }
     }
 
