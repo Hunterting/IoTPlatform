@@ -353,10 +353,13 @@ public class EzvizService : IEzvizService
             ["expireTime"] = Opt.LiveExpireSeconds.ToString(CultureInfo.InvariantCulture),
             ["type"] = request.Type.ToString(CultureInfo.InvariantCulture),
         };
-        // 设备加密：优先用请求里的 ewcode，否则用绑定存储的 EncryptionCode（修复 60019）
+        // 设备加密：优先用请求里的验证码，否则用绑定存储的 EncryptionCode（修复 60019）
+        // 注意：萤石 v2/live/address/get 接口的视频加密密码参数名是 code（见
+        // docs/萤石开放平台_API_云接入_OPEN_API.docx「9. 获取播放地址」参数表 L10589），不是 ewcode。
+        // 之前误用 ewcode 导致验证码被萤石忽略、加密设备始终 60019。
         var ewCode = !string.IsNullOrWhiteSpace(request.EwCode) ? request.EwCode
             : (cam != null ? cam.EncryptionCode : null);
-        if (!string.IsNullOrWhiteSpace(ewCode)) form["ewcode"] = ewCode!;
+        if (!string.IsNullOrWhiteSpace(ewCode)) form["code"] = ewCode!;
         if (!string.IsNullOrWhiteSpace(request.StartTime)) form["startTime"] = request.StartTime!;
         if (!string.IsNullOrWhiteSpace(request.StopTime)) form["stopTime"] = request.StopTime!;
 
@@ -529,7 +532,9 @@ public class EzvizService : IEzvizService
             existing.UpdatedAt = DateTime.UtcNow;
         }
         existing.AreaId = request.AreaId;
-        existing.EncryptionCode = request.EwCode;
+        // 仅在本次显式填写验证码时覆盖，避免重新绑定（如只改区域、验证码留空）把已有验证码清空，
+        // 导致加密设备再次 60019。
+        if (!string.IsNullOrWhiteSpace(request.EwCode)) existing.EncryptionCode = request.EwCode;
         await _dbContext.SaveChangesAsync(ct);
         return new EzvizDeviceDto
         {
