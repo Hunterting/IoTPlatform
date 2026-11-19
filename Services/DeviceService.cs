@@ -680,11 +680,25 @@ public class DeviceService : IDeviceService
         var areaId = device.AreaId;
 
         // 检查是否有关联数据
-        var hasDataRecords = await _dbContext.DeviceDataRecords.AnyAsync(r => r.DeviceId == id);
-        var hasSensors = await _deviceRepository.GetQueryable().AnyAsync(s => s.Sensors != null && s.Sensors.Any());
-        var hasAreaDevices = _deviceRepository.GetQueryable().Any(d => d.AreaId == id);
 
-        if (hasDataRecords || hasSensors || hasAreaDevices)
+        // 1) 数据记录：按目标设备 DeviceId 过滤（保留原逻辑）。
+        // AppDbContext.ConfigureDeviceDataRecords 已对 DeviceDataRecord.DeviceId 配置 DeleteBehavior.Cascade，
+        // 数据库层删除设备时会自动级联删除其数据记录。此处保留校验是出于业务数据保护（避免误删含历史数据的设备）；
+        // 若希望交给级联自动清理可直接移除本条，但切勿放宽为全表查询，否则会重演“任意设备有数据 → 全部删不掉”。
+        var hasDataRecords = await _dbContext.DeviceDataRecords.AnyAsync(r => r.DeviceId == id);
+
+        // 2) 传感器：必须按目标设备 id 过滤。
+        // Device.Sensors 为 ICollection<DeviceSensor>，外键是 DeviceSensor.DeviceId
+        // （见 Models/DeviceSensor.cs 与 AppDbContext.ConfigureDeviceSensors）。
+        // 原写法缺少 s.Id == id，导致库中任意一台设备挂了传感器就阻止所有设备删除，这是本次 BUG 的根因。
+        var hasSensors = await _deviceRepository.GetQueryable()
+            .AnyAsync(s => s.Id == id && s.Sensors != null && s.Sensors.Any());
+
+        // 3) 原 hasAreaDevices 用设备主键 id 与 AreaId 比对，语义错误，已移除。
+        // AreaDevice 通过 DeviceId 关联 Device（见 Models/AreaDevice.cs），迁移快照中该关系为
+        // DeleteBehavior.Cascade（AppDbContextModelSnapshot.cs），删除设备时 area_devices 关联行由数据库级联清理，
+        // 无需前置校验；若改按 DeviceId 校验，凡挂在区域布点中的设备都将无法删除，与本次修复目标相悖。
+        if (hasDataRecords || hasSensors)
         {
             throw new InvalidOperationException("设备有关联数据，无法删除");
         }

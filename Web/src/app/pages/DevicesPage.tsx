@@ -61,6 +61,19 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<DeviceItem | null>(null);
+  // 保存/删除失败时留在弹窗，并把后端返回的原因展示给用户（不再静默关闭）
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // httpClient 响应拦截器 reject 的是普通对象 { code, message }，并非 Error 实例；
+  // 这里同时兼容 Error 与带 message 字段的普通对象，确保后端校验原因能显示出来。
+  const getErrorMessage = (err: unknown, fallback: string): string => {
+    if (err instanceof Error && err.message) return err.message;
+    if (err && typeof err === 'object' && 'message' in err) {
+      const message = (err as { message?: unknown }).message;
+      if (typeof message === 'string' && message) return message;
+    }
+    return fallback;
+  };
 
   // Tree data for filter - includes "All Areas" option
   const filterAreasTree = useMemo(() => {
@@ -131,7 +144,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
     }
   };
 
-  const handleAddDevice = (device: Partial<DeviceItem>) => {
+  const handleAddDevice = async (device: Partial<DeviceItem>) => {
     // 自动注入当前选中客户的 appCode；T5 收敛：超级管理员直接新增时，
     // 同时显式给出目标租户码（targetAppCode），由服务端据此确定设备归属，
     // 不再信任请求体里的 appCode（防多租户越权，风险 R3）。
@@ -140,20 +153,38 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
       appCode: currentCustomer?.appCode || device.appCode,
       targetAppCode: currentCustomer?.appCode || device.appCode,
     };
-    addDevice(deviceWithAppCode as Omit<DeviceItem, 'id' | 'createdAt' | 'updatedAt'>);
-    setShowAddModal(false);
+    try {
+      await addDevice(deviceWithAppCode as Omit<DeviceItem, 'id' | 'createdAt' | 'updatedAt'>);
+      setActionError(null);
+      setShowAddModal(false);
+    } catch (err) {
+      // 失败时保持弹窗打开，展示失败原因
+      setActionError(getErrorMessage(err, '添加设备失败，请稍后重试'));
+    }
   };
 
-  const handleEditDevice = (device: DeviceItem) => {
-    updateDevice(device.id, device);
-    setShowEditModal(false);
-    setSelectedDevice(null);
+  const handleEditDevice = async (device: DeviceItem) => {
+    try {
+      await updateDevice(device.id, device);
+      setActionError(null);
+      setShowEditModal(false);
+      setSelectedDevice(null);
+    } catch (err) {
+      // 失败时保持编辑弹窗打开，把后端校验/服务端错误展示给用户
+      setActionError(getErrorMessage(err, '保存设备失败，请稍后重试'));
+    }
   };
 
-  const handleDeleteDevice = (id: string) => {
-    deleteDevice(id);
-    setShowDeleteModal(false);
-    setSelectedDevice(null);
+  const handleDeleteDevice = async (id: string) => {
+    try {
+      await deleteDevice(id);
+      setActionError(null);
+      setShowDeleteModal(false);
+      setSelectedDevice(null);
+    } catch (err) {
+      // 失败时保持确认弹窗打开，展示失败原因
+      setActionError(getErrorMessage(err, '删除设备失败，请稍后重试'));
+    }
   };
 
   const handleBatchImport = () => {
@@ -193,7 +224,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
           </button>
           {hasPermission(PERMISSIONS.CREATE_DEVICES) && isSuperAdmin && (
             <button
-                onClick={() => setShowAddModal(true)}
+                onClick={() => { setActionError(null); setShowAddModal(true); }}
                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-lg transition-all"
             >
                 <Plus className="w-5 h-5" />
@@ -353,6 +384,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
                         {hasPermission(PERMISSIONS.UPDATE_DEVICES) && (
                             <button
                                 onClick={() => {
+                                    setActionError(null);
                                     setSelectedDevice(device);
                                     setShowEditModal(true);
                                 }}
@@ -364,6 +396,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
                         {hasPermission(PERMISSIONS.DELETE_DEVICES) && (
                             <button
                                 onClick={() => {
+                                    setActionError(null);
                                     setSelectedDevice(device);
                                     setShowDeleteModal(true);
                                 }}
@@ -391,9 +424,10 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
       {/* Add Device Modal */}
       <DeviceFormModal
         show={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => { setShowAddModal(false); setActionError(null); }}
         onSave={handleAddDevice}
         title="添加设备"
+        error={actionError}
       />
 
       {/* Edit Device Modal */}
@@ -403,10 +437,12 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
           onClose={() => {
             setShowEditModal(false);
             setSelectedDevice(null);
+            setActionError(null);
           }}
           onSave={handleEditDevice}
           title="编辑设备"
           initialData={selectedDevice}
+          error={actionError}
         />
       )}
 
@@ -421,6 +457,7 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
             onClick={() => {
               setShowDeleteModal(false);
               setSelectedDevice(null);
+              setActionError(null);
             }}
           >
             <motion.div
@@ -444,11 +481,19 @@ export function DevicesPage({ highlightDeviceId, onClearHighlight, initialAreaFi
                 确定要删除设备 <span className="text-white font-medium">{selectedDevice.name}</span> 吗？
               </p>
 
+              {actionError && (
+                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{actionError}</span>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   onClick={() => {
                     setShowDeleteModal(false);
                     setSelectedDevice(null);
+                    setActionError(null);
                   }}
                   className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors"
                 >
@@ -476,12 +521,14 @@ function DeviceFormModal({
   onSave,
   title,
   initialData,
+  error,
 }: {
   show: boolean;
   onClose: () => void;
-  onSave: (device: any) => void;
+  onSave: (device: any) => void | Promise<void>;
   title: string;
   initialData?: DeviceItem;
+  error?: string | null;
 }) {
   const { getItemsByType } = useDictionary();
   const { currentCustomer } = useAuth();
@@ -589,6 +636,12 @@ function DeviceFormModal({
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="p-6 overflow-y-auto flex-1">
+            {error && (
+              <div className="mb-6 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-6">
               {/* Basic Info */}
               <div className="col-span-2">
@@ -686,8 +739,14 @@ function DeviceFormModal({
                 </label>
                 <AreaTreeSelect
                     areas={areaTree}
-                    value={formData.location}
-                    onChange={(name, id) => setFormData({ ...formData, location: name, areaId: id })}
+                    value={formData.areaName || ''}
+                    onChange={(name, id) => setFormData({
+                        ...formData,
+                        location: name,
+                        areaName: name,
+                        area: name,
+                        areaId: id,
+                    })}
                     placeholder="请选择区域"
                 />
               </div>
