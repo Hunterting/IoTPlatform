@@ -19,6 +19,8 @@
 - **DateTime 出网** `yyyy-MM-dd HH:mm:ss`（本地 UTC+8）；客户端反序列化须注册 `LocalDateTimeJsonConverter`
 - **多租户隔离**：JWT `AppCode` 必须优先 `user.AppCode`；超管不签 AppCode claim；区域过滤 `AreaId.HasValue && allowedAreaIds.Contains`；写接口 AppCode 从 JWT 取勿前端传
 - **前端依赖**：`react/react-dom` 须 `dependencies`（曾误放 peer 致 504）；装包后 `npm ls react` 确认未 prune
+- **萤石视频监控协议能力**：加密设备**只能用 ezopen 协议取流**（`code` 参数是"ezopen协议地址的设备的视频加密密码"，仅 protocol=1 生效）；HLS(protocol=2)/RTMP/FLV **不支持加密传输**，传 code 无效的仍报 60019。平台默认 LiveProtocol=2 + 前端 hls.js 只能播非加密设备。加密设备要么改 ezopen+EZUIKit，要么经授权关闭设备加密。60019=加密已开启（全局码）；20010=设备验证码错误。第三方 API 参数必须逐字核对参数名**及其限定语**，别只看名字。
+- **React 事件处理器**：禁止直接挂带参函数（`onClick={fnWithParams}`），事件对象会成第一实参（曾致区域管理 400 page=[object Object]）；用 `onClick={() => fn()}` 包装。
 
 ## 协作
 - 改动不 commit 待决策；子代理禁 git 写
