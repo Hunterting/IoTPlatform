@@ -6,6 +6,7 @@ using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Globalization;
+using System.Net.Http;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;
@@ -529,6 +530,71 @@ public class EzvizService : IEzvizService
         EnsureSuccess(root);
     }
 
+    // ── 视频编码切换（v3：header 鉴权 + form 参数 + meta.code 信封） ─────────────
+
+    /// <summary>
+    /// 远程把设备视频编码改为 H264/H265。
+    /// 【设备侧配置变更，需调用方显式确认】H265 摄像头在浏览器 HLS 下无法软解，
+    /// 改为 H264 可一劳永逸解决「编码非H264」错误图。
+    /// v3 接口与既有 v2/lapp 接口不同：accessToken/deviceSerial/localIndex 走 header，
+    /// encodeType/streamType 走 form，返回信封是 meta.code（不是顶层 code）。
+    /// </summary>
+    public async Task SetVideoEncodeAsync(string deviceSerial, string encodeType, int channelNo = 1, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceSerial))
+            throw new EzvizException("deviceSerial 不能为空", "10001");
+        if (encodeType != "H264" && encodeType != "H265")
+            throw new EzvizException("encodeType 仅支持 H264 或 H265", "10032");
+        // 所有权校验：与 CloseEncryptionAsync / GetLiveAddressAsync 保持同一租户策略（超管可操作任意设备）
+        if (await ResolveTenantCameraAsync(deviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
+
+        var token = await GetAccessTokenAsync(ct);
+        var ch = Math.Max(1, channelNo);
+        var headers = new Dictionary<string, string>
+        {
+            ["accessToken"] = token,
+            // 官方文档要求 deviceSerial 字母大写
+            ["deviceSerial"] = deviceSerial.Trim().ToUpperInvariant(),
+            ["localIndex"] = ch.ToString(CultureInfo.InvariantCulture),
+        };
+        var form = new Dictionary<string, string>
+        {
+            ["encodeType"] = encodeType,
+            ["streamType"] = "1", // 1=主码流
+        };
+        _logger.LogInformation("EZVIZ 切换视频编码 device={Device} ch={Ch} encode={Encode}", deviceSerial, ch, encodeType);
+        using var doc = await SendWithHeadersRawAsync(HttpMethod.Put, "/api/v3/device/video/encodeType", headers, form, null, ct);
+        // 关键：v3 返回 {"meta":{"code":200,...}}，必须读 meta.code，顶层 code 字段不存在
+        EnsureV3Success(doc.RootElement);
+    }
+
+    /// <summary>
+    /// 查询设备当前视频编码（v3 das/device/video/encode）。
+    /// 返回 videoCode：1=标准H264，5=标准H265；查不到返回 null。可用于切换前确认/切换后验证。
+    /// </summary>
+    public async Task<int?> GetVideoEncodeAsync(string deviceSerial, int channelNo = 1, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceSerial))
+            throw new EzvizException("deviceSerial 不能为空", "10001");
+        if (await ResolveTenantCameraAsync(deviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
+
+        var token = await GetAccessTokenAsync(ct);
+        var ch = Math.Max(1, channelNo);
+        var headers = new Dictionary<string, string>
+        {
+            ["accessToken"] = token,
+            ["deviceSerial"] = deviceSerial.Trim().ToUpperInvariant(),
+            ["channelNo"] = ch.ToString(CultureInfo.InvariantCulture),
+        };
+        var query = new Dictionary<string, string> { ["streamType"] = "1" };
+        using var doc = await SendWithHeadersRawAsync(HttpMethod.Get, "/api/v3/das/device/video/encode", headers, null, query, ct);
+        var root = doc.RootElement;
+        EnsureV3Success(root);
+        return GetInt(GetData(root), "videoCode");
+    }
+
     // ── 设备状态 ──────────────────────────────────────────────────────────────
 
     public async Task<EzvizDeviceStatusDto> GetDeviceStatusAsync(string deviceSerial, CancellationToken ct = default)
@@ -623,12 +689,80 @@ public class EzvizService : IEzvizService
     }
 
     /// <summary>
+    /// v3 接口底层：accessToken/deviceSerial 等走 header，参数走 form 或 query。
+    /// 与 PostFormRawAsync 共用 HttpClient("Ezviz")、超时、JSON 与 HTTP 错误处理风格，
+    /// 不改动任何既有方法。
+    /// </summary>
+    private async Task<JsonDocument> SendWithHeadersRawAsync(
+        HttpMethod method,
+        string path,
+        Dictionary<string, string> headers,
+        Dictionary<string, string>? form,
+        Dictionary<string, string>? query,
+        CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient("Ezviz");
+        client.BaseAddress = new Uri(Opt.BaseUrl);
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, Opt.TimeoutSeconds));
+        using var request = new HttpRequestMessage(method, BuildUri(path, query));
+        foreach (var kv in headers)
+            request.Headers.TryAddWithoutValidation(kv.Key, kv.Value);
+        // FormUrlEncodedContent 自动设置 Content-Type: application/x-www-form-urlencoded
+        if (form != null) request.Content = new FormUrlEncodedContent(form);
+
+        using var resp = await client.SendAsync(request, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("萤石 HTTP {Status} {Method} {Path}: {Body}", (int)resp.StatusCode, method, path, Truncate(body));
+            // 非 2xx 也可能带 v3 业务信封，优先给出准确错误码而非笼统 HTTP 状态
+            var meta = ReadMeta(body);
+            var detail = meta.Message ?? $"HTTP {(int)resp.StatusCode}";
+            throw new EzvizException(
+                meta.Code != null ? $"萤石接口错误 [{meta.Code}]：{detail}" : $"萤石网关返回 HTTP {(int)resp.StatusCode}",
+                meta.Code ?? "HTTP_" + (int)resp.StatusCode);
+        }
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            _logger.LogWarning("萤石响应非 JSON {Method} {Path}: {Body}", method, path, Truncate(body));
+            throw new EzvizException("萤石网关响应格式异常", "INVALID_JSON");
+        }
+    }
+
+    private static string BuildUri(string path, IReadOnlyDictionary<string, string>? query)
+    {
+        if (query == null || query.Count == 0) return path;
+        var parts = new List<string>(query.Count);
+        foreach (var kv in query)
+            parts.Add(Uri.EscapeDataString(kv.Key) + "=" + Uri.EscapeDataString(kv.Value));
+        return path + "?" + string.Join("&", parts);
+    }
+
+    /// <summary>从响应体尝试解析 v3 的 meta.code / meta.message（非 2xx 时也适用）。</summary>
+    private static (string? Code, string? Message) ReadMeta(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return (GetMetaCode(doc.RootElement), GetMetaMessage(doc.RootElement));
+        }
+        catch (JsonException) { return (null, null); }
+    }
+
+    /// <summary>
     /// 常见萤石错误码的中文解释（文档「错误码」章节 + 真机实测）。
     /// 目的：账号权限/套餐类问题在界面上一眼可懂，而不是抛原始英文或一串数字。
     /// </summary>
     private static readonly Dictionary<string, string> ErrorHints = new(StringComparer.Ordinal)
     {
         ["20018"] = "当前账号不拥有该设备（多为被分享设备，直播/抓拍/状态接口被拒）",
+        ["20011"] = "设备不支持视频编码切换或设备异常",
+        ["20008"] = "设备响应超时，请稍后重试",
+        ["10032"] = "参数错误或无该设备操作权限",
         ["10031"] = "子账号或萤石用户没有该操作权限",
         ["10026"] = "设备数量超出个人版限制，需在萤石开放平台升级企业版",
         ["20007"] = "设备不在线",
@@ -653,6 +787,34 @@ public class EzvizService : IEzvizService
     }
 
     private static string? GetCode(JsonElement root) => GetString(root, "code");
+
+    /// <summary>
+    /// v3 接口成功判定：优先读 meta.code，legacy 顶层 code 仅作兜底兼容。
+    /// 萤石 v3 信封是 {"meta":{"code":200,"message":"操作成功","moreInfo":{}}}，
+    /// 顶层没有 code 字段——误用 GetCode 会把成功判成失败（code 为 null）。
+    /// </summary>
+    private static void EnsureV3Success(JsonElement root)
+    {
+        var code = GetMetaCode(root) ?? GetCode(root);
+        if (code == "200") return;
+        var msg = GetMetaMessage(root) ?? GetString(root, "message") ?? GetString(root, "msg") ?? "萤石接口调用失败";
+        var hint = code != null && ErrorHints.TryGetValue(code, out var h) ? "（" + h + "）" : string.Empty;
+        throw new EzvizException($"萤石接口错误 [{code ?? "?"}]：{msg}{hint}", code);
+    }
+
+    private static string? GetMetaCode(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
+            return GetString(meta, "code"); // GetString 兼容 code 为数字 200 的情况
+        return null;
+    }
+
+    private static string? GetMetaMessage(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("meta", out var meta) && meta.ValueKind == JsonValueKind.Object)
+            return GetString(meta, "message");
+        return null;
+    }
 
     private static JsonElement GetData(JsonElement root)
     {
