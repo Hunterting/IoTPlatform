@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 
-interface HlsPlayerProps {
-  /** 萤石 live/address/get 返回的 HLS(m3u8) 地址 */
+export interface HlsPlayerProps {
+  /** 萤石 v2/live/address/get 返回的 HLS(m3u8) 地址 */
   url: string;
   playing?: boolean;
   muted?: boolean;
   className?: string;
   onError?: (message: string) => void;
+  /**
+   * 兼容旧接口的可选回调。hls.js 硬解内核不解析 codec 元信息，故不再触发；
+   * 保留字段声明仅为类型兼容，现有调用方（MonitoringPage 两处）无需改动。
+   */
+  onVideoInfo?: (info: { codec?: string; width?: number; height?: number }) => void;
 }
 
 /**
- * HLS 实时流播放器（hls.js）。
+ * HLS 实时流播放器（hls.js 浏览器硬解）。
  * - 浏览器原生支持 HLS 时（Safari）直接用 <video>；
- * - 其余浏览器用 hls.js 挂载 MediaSource；
+ * - 其余浏览器用 hls.js 挂载 MediaSource（Chrome 走 MSE 硬解，萤石默认推 H264）；
  * - 组件卸载/换源时销毁 hls 实例、解绑 video，避免泄漏与无限重连。
  */
 export function HlsPlayer({ url, playing = true, muted = true, className = '', onError }: HlsPlayerProps) {

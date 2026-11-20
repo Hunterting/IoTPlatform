@@ -63,6 +63,7 @@ public class EzvizService : IEzvizService
             Configured = configured,
             BaseUrl = Opt.BaseUrl,
             LiveProtocol = Opt.LiveProtocol,
+            SupportH265 = Opt.SupportH265,
             Message = configured
                 ? "萤石凭证已配置"
                 : "未配置萤石 appKey / appSecret：请在 appsettings.json 的 Ezviz 节或环境变量 Ezviz__AppKey / Ezviz__AppSecret 中填写后重启服务。当前不显示任何模拟画面。"
@@ -353,6 +354,23 @@ public class EzvizService : IEzvizService
             ["expireTime"] = Opt.LiveExpireSeconds.ToString(CultureInfo.InvariantCulture),
             ["type"] = request.Type.ToString(CultureInfo.InvariantCulture),
         };
+        // ── H265 支持开关（全局配置 + 请求级覆盖）─────────────────────────────
+        var supportH265 = (request.SupportH265 ?? Opt.SupportH265) != 0 ? 1 : 0;
+        if (supportH265 == 1)
+        {
+            form["supportH265"] = "1";
+            // HLS + supportH265=1 时萤石只接受 fMP4(1)；TS 无法承载 H265。硬联动，不另开配置项。
+            if (Opt.LiveProtocol == 2) form["containerFormat"] = "1";
+        }
+        if (request.Quality is int q && (q == 1 || q == 2))
+            form["quality"] = q.ToString(CultureInfo.InvariantCulture);
+
+        _logger.LogInformation(
+            "EZVIZ 取流 device={Device} ch={Ch} protocol={Proto} supportH265={H265} containerFormat={Cf} quality={Q}",
+            request.DeviceSerial, Math.Max(1, request.ChannelNo), Opt.LiveProtocol, supportH265,
+            form.TryGetValue("containerFormat", out var cf) ? cf : "0",
+            request.Quality?.ToString() ?? "default");
+
         // 设备加密：优先用请求里的验证码，否则用绑定存储的 EncryptionCode（修复 60019）
         // 注意：萤石 v2/live/address/get 接口的视频加密密码参数名是 code（见
         // docs/萤石开放平台_API_云接入_OPEN_API.docx「9. 获取播放地址」参数表 L10589），不是 ewcode。
@@ -475,6 +493,40 @@ public class EzvizService : IEzvizService
         };
         using var doc = await PostFormRawAsync(path, form, ct);
         EnsureSuccess(doc.RootElement);
+    }
+
+    // ── 关闭设备视频加密 ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 关闭设备视频加密（device/encrypt/off）。
+    /// 【设备侧配置变更，需调用方显式确认】执行后会改变摄像头安全配置，仅用于加密设备改用 HLS 取流
+    /// （萤石 HLS 不支持加密传输，否则取流必报 60019）。无验证码参数，使用主账号 token。
+    /// 萤石返回 60016「加密未开启，无需关闭」时按幂等成功处理；其余失败由 EnsureSuccess 抛 EzvizException。
+    /// </summary>
+    public async Task CloseEncryptionAsync(string deviceSerial, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(deviceSerial))
+            throw new EzvizException("deviceSerial 不能为空", "10001");
+        // 所有权校验：复用与 GetLiveAddressAsync / PtzAsync 一致的租户策略（超管可操作任意设备）
+        if (await ResolveTenantCameraAsync(deviceSerial, ct) == null && !IsSuperAdmin())
+            throw new EzvizException("无权访问该摄像头（不属于当前租户）", "40301");
+
+        var token = await GetAccessTokenAsync(ct);
+        var form = new Dictionary<string, string>
+        {
+            ["accessToken"] = token,
+            // 官方文档要求 deviceSerial 字母大写
+            ["deviceSerial"] = deviceSerial.Trim().ToUpperInvariant(),
+        };
+        using var doc = await PostFormRawAsync("/api/lapp/device/encrypt/off", form, ct);
+        var root = doc.RootElement;
+        // 60016 = 加密未开启，无需关闭 → 幂等成功，跳过 EnsureSuccess 的抛异常逻辑
+        if (GetCode(root) == "60016")
+        {
+            _logger.LogInformation("萤石设备 {DeviceSerial} 加密未开启，关闭操作按幂等成功处理", deviceSerial);
+            return;
+        }
+        EnsureSuccess(root);
     }
 
     // ── 设备状态 ──────────────────────────────────────────────────────────────

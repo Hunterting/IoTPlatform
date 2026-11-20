@@ -11,6 +11,8 @@ public class EzvizConfigStatusDto
     public bool Configured { get; set; }
     public string BaseUrl { get; set; } = string.Empty;
     public int LiveProtocol { get; set; }
+    /// <summary>当前 H265 取流开关（供前端联调确认后端已生效）</summary>
+    public int SupportH265 { get; set; }
     public string Message { get; set; } = string.Empty;
 }
 
@@ -146,6 +148,10 @@ public class EzvizLiveAddressRequest
     public int ChannelNo { get; set; } = 1;
     /// <summary>1-预览，2-回放（回放需 startTime/stopTime）</summary>
     public int Type { get; set; } = 1;
+    /// <summary>按请求覆盖 H265 开关；null=沿用 EzvizOptions.SupportH265 全局配置。任意非0视为1。</summary>
+    public int? SupportH265 { get; set; }
+    /// <summary>码流质量：1=主码流、2=子码流；null=萤石默认。宫格高路数软解负载过高时可传 2。</summary>
+    public int? Quality { get; set; }
     public string? StartTime { get; set; }
     public string? StopTime { get; set; }
     /// <summary>设备验证码（设备开启视频加密时必填，对应萤石 ewcode）</summary>
