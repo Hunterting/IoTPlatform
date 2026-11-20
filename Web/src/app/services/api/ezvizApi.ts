@@ -14,6 +14,7 @@ export interface EzvizConfigStatus {
   configured: boolean;
   baseUrl: string;
   liveProtocol: number;
+  supportH265?: number;
   message: string;
 }
 
@@ -38,6 +39,8 @@ export interface EzvizDevice {
   source?: string;
   /** 是否具备直播/抓拍等操作权限（分享设备常为 false） */
   operable?: boolean;
+  /** 设备视频是否加密（加密时 HLS 取流失败 60019） */
+  isEncrypt?: boolean;
 }
 
 export interface EzvizPagedResult<T> {
@@ -222,6 +225,14 @@ export async function bindCamera(
   return r.data;
 }
 
+/** 关闭设备视频加密（HLS 取流需要；属设备侧安全配置变更） */
+export async function closeEncryption(deviceSerial: string): Promise<ApiResponse<object>> {
+  const r = await apiClient.post<ApiResponse<object>>(
+    `${BASE_URL}/devices/${encodeURIComponent(deviceSerial)}/encrypt/off`
+  );
+  return r.data;
+}
+
 export const ezvizApi = {
   getConfigStatus,
   getDevices,
@@ -233,6 +244,7 @@ export const ezvizApi = {
   ptzStop,
   getDeviceStatus,
   bindCamera,
+  closeEncryption,
 };
 
 export default ezvizApi;

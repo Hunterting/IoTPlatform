@@ -40,4 +40,10 @@ public interface IEzvizService
 
     /// <summary>绑定萤石设备到本地区域（写入 cameras 表）</summary>
     Task<EzvizDeviceDto> BindCameraAsync(EzvizBindCameraRequest request, string? appCode, CancellationToken ct = default);
+
+    /// <summary>
+    /// 关闭设备视频加密（device/encrypt/off）。
+    /// 设备侧配置变更，需调用方显式确认后再调用；已关闭（60016）按幂等成功处理。
+    /// </summary>
+    Task CloseEncryptionAsync(string deviceSerial, CancellationToken ct = default);
 }

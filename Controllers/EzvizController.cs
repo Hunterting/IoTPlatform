@@ -185,4 +185,22 @@ public class EzvizController : ControllerBase
             return ApiResponse<EzvizDeviceDto>.Error(ex.Message);
         }
     }
+
+    /// <summary>
+    /// 关闭设备视频加密（device/encrypt/off）。
+    /// 设备侧配置变更，须在用户显式确认后调用；加密设备改用 HLS(protocol=2) 取流前使用，
+    /// 避免萤石 HLS 不支持加密传输导致的 60019。已关闭（60016）视为幂等成功。
+    /// </summary>
+    [HttpPost("devices/{deviceSerial}/encrypt/off")]
+    [PermissionAuthorize(Permissions.UPDATE_DEVICES)]
+    public async Task<ActionResult<ApiResponse<object>>> CloseEncryption(string deviceSerial, CancellationToken ct = default)
+    {
+        try
+        {
+            await _ezviz.CloseEncryptionAsync(deviceSerial, ct);
+            return ApiResponse<object>.Success(new { ok = true }, "设备视频加密已关闭");
+        }
+        catch (EzvizException ex) { return Fail<object>(ex); }
+        catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
+    }
 }
