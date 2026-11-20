@@ -90,6 +90,9 @@ export function MonitoringPage() {
   // 关闭设备视频加密（二次确认）
   const [showCloseEncryptModal, setShowCloseEncryptModal] = useState(false);
   const [encryptTarget, setEncryptTarget] = useState<EzvizDevice | null>(null);
+  // 切换设备视频编码为 H264（二次确认）
+  const [showSetEncodeModal, setShowSetEncodeModal] = useState(false);
+  const [encodeTarget, setEncodeTarget] = useState<EzvizDevice | null>(null);
   // 点击宫格放大查看（独立 HlsPlayer 实例，关闭即卸载）
   const [selectedCamera, setSelectedCamera] = useState<EzvizDevice | null>(null);
 
@@ -192,12 +195,20 @@ export function MonitoringPage() {
     const isOnline = dev.status === 1;
     const notOperable = dev.operable === false;
     const isEncryptErr = !!err && (err.includes('加密') || err.includes('60019'));
+    // 「编码非H264」错误不含「加密/60019」，必须单独判定
+    const isCodecErr = !!err && (err.includes('编码') || err.includes('H264'));
     return notOperable
       ? '分享设备：账号无直播/抓拍权限（萤石侧限制）'
-      : !isOnline ? '设备离线' : isEncryptErr ? '设备视频加密，HLS 无法取流（60019），可关闭加密' : err || '获取直播地址中…';
+      : !isOnline ? '设备离线'
+      : isEncryptErr ? '设备视频加密，HLS 无法取流（60019），可关闭加密'
+      : isCodecErr ? '设备视频编码非 H264，浏览器无法播放，可远程切换为 H264'
+      : err || '获取直播地址中…';
   };
   /** 放大视图取流地址（单独取出便于 TS 收窄类型） */
   const selectedCameraUrl = selectedCamera ? liveUrls[selectedCamera.deviceSerial]?.url : undefined;
+  /** 放大视图的错误文本（含「编码非H264」时也显示切换按钮） */
+  const selectedCameraErr = selectedCamera ? panelError[`live:${selectedCamera.deviceSerial}`] : undefined;
+  const selectedIsCodecErr = !!selectedCameraErr && (selectedCameraErr.includes('编码') || selectedCameraErr.includes('H264'));
   const onlineCount = devices.filter(d => d.status === 1).length;
   const offlineCount = devices.filter(d => d.status !== 1).length;
   const deviceStats = [
@@ -291,7 +302,7 @@ export function MonitoringPage() {
       else {
         await new Promise(res => setTimeout(res, 500));
         await ezvizApi.ptzStop(req);
-        setActionMsg('云台指令已下发');
+        // 云台指令成功后不再弹提示（失败时上面仍 setActionMsg 显示错误）
       }
     } catch { setActionMsg('云台控制请求失败'); }
     setActionBusy(false);
@@ -338,6 +349,30 @@ export function MonitoringPage() {
       }
     } catch {
       setActionMsg('关闭加密请求失败');
+    }
+    setActionBusy(false);
+  };
+
+  // 切换设备视频编码为 H264：成功后同样清错误/liveUrls 缓存并刷新设备列表重新取流
+  const handleSetVideoEncode = async () => {
+    const serial = encodeTarget?.deviceSerial;
+    if (!serial) return;
+    setActionBusy(true);
+    setActionMsg(null);
+    try {
+      const r = await ezvizApi.setVideoEncode(serial, 'H264', 1);
+      if (r.code === 200) {
+        setPanelError(prev => { const n = { ...prev }; delete n[`live:${serial}`]; return n; });
+        setLiveUrls(prev => { const n = { ...prev }; delete n[serial]; return n; });
+        setEncodeTarget(null);
+        setShowSetEncodeModal(false);
+        setActionMsg(r.message || '已远程切换为 H264 编码，正在重新取流');
+        await loadDevices(); // devices 引用更新 → 取流 useEffect 重新执行
+      } else {
+        setActionMsg(r.message || '切换编码失败');
+      }
+    } catch {
+      setActionMsg('切换编码请求失败');
     }
     setActionBusy(false);
   };
@@ -464,13 +499,16 @@ export function MonitoringPage() {
                     const isOnline = dev.status === 1;
                     const notOperable = dev.operable === false;
                     const isEncryptErr = !!err && (err.includes('加密') || err.includes('60019'));
+                    // 编码非H264 错误不含「加密/60019」，需独立判断才能出现切换按钮
+                    const isCodecErr = !!err && (err.includes('编码') || err.includes('H264'));
                     const hint = getCameraHint(dev);
                     return (
                       <div key={dev.deviceSerial}
                         onClick={() => setSelectedCamera(dev)}
                         className="relative bg-black rounded overflow-hidden border border-white/10 group cursor-pointer">
                         {live?.url ? (
-                          <HlsPlayer url={live.url} playing={isPlaying} muted={isMuted} />
+                          <HlsPlayer url={live.url} playing={isPlaying} muted={isMuted}
+                            onOverlayClick={() => setSelectedCamera(dev)} />
                         ) : dev.picUrl ? (
                           <div className="w-full h-full relative">
                             <img src={dev.picUrl} alt={dev.deviceName} className="w-full h-full object-cover opacity-70" />
@@ -487,6 +525,14 @@ export function MonitoringPage() {
                           </div>
                         )}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
+                        {isCodecErr && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEncodeTarget(dev); setShowSetEncodeModal(true); }}
+                            title="远程把设备编码切换为 H264（浏览器可播放）"
+                            className="absolute left-1/2 -translate-x-1/2 bottom-12 z-10 max-w-[95%] truncate px-2 py-1 rounded text-[10px] font-medium text-white bg-orange-600/90 hover:bg-orange-500 border border-orange-400/60 shadow-lg">
+                            切换为H264编码
+                          </button>
+                        )}
                         {isEncryptErr && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setEncryptTarget(dev); setShowCloseEncryptModal(true); }}
@@ -816,6 +862,25 @@ export function MonitoringPage() {
         </div>
       </Modal>
 
+      {/* 7.5 切换视频编码为 H264（设备侧配置变更，二次确认） */}
+      <Modal show={showSetEncodeModal} title="切换为 H264 编码" onClose={() => { if (!actionBusy) setShowSetEncodeModal(false); }}>
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg" style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.4)' }}>
+            <p className="text-sm text-white font-medium mb-2">将远程把该摄像头编码改为 H264，影响画质/码率，属设备侧配置变更，需客户确认。</p>
+            <p className="text-xs text-gray-400">设备：{encodeTarget?.deviceName || '—'}（{encodeTarget?.deviceSerial || '—'}）</p>
+          </div>
+          <p className="text-[11px] text-gray-500">H265 编码在浏览器中无法通过 HLS 软解，切换后平台会重新取流；请确认已获客户授权。</p>
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setShowSetEncodeModal(false)} disabled={actionBusy}
+              className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm disabled:opacity-50">取消</button>
+            <button onClick={handleSetVideoEncode} disabled={actionBusy}
+              className="flex-1 px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg font-semibold text-white text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+              <ShieldAlert className="w-4 h-4" />{actionBusy ? '处理中…' : '确认切换为 H264'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* 8. 点击宫格放大查看（新 HlsPlayer 实例，关闭即卸载由 HlsPlayer cleanup 销毁） */}
       <Modal
         show={!!selectedCamera}
@@ -864,6 +929,15 @@ export function MonitoringPage() {
                 </span>
               </div>
             </div>
+            {/* 放大视图是排障入口：萤石把「编码非H264」作为视频流里的图片推送（取流API是200），
+                panelError 为空，无法靠错误文字判断。故对在线设备始终提供切换按钮，由用户按需使用。 */}
+            {(selectedCamera.status === 1 || selectedIsCodecErr) && (
+              <button
+                onClick={() => { setEncodeTarget(selectedCamera); setSelectedCamera(null); setShowSetEncodeModal(true); }}
+                className="w-full px-4 py-2 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 rounded-lg font-semibold text-white text-sm flex items-center justify-center gap-2">
+                <ShieldAlert className="w-4 h-4" />切换为H264编码（远程设备配置变更）
+              </button>
+            )}
             <button
               onClick={() => setSelectedCamera(null)}
               className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm">
