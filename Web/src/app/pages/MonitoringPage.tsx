@@ -87,6 +87,11 @@ export function MonitoringPage() {
   const [captureResults, setCaptureResults] = useState<{ name: string; picUrl: string }[] | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  // 关闭设备视频加密（二次确认）
+  const [showCloseEncryptModal, setShowCloseEncryptModal] = useState(false);
+  const [encryptTarget, setEncryptTarget] = useState<EzvizDevice | null>(null);
+  // 点击宫格放大查看（独立 HlsPlayer 实例，关闭即卸载）
+  const [selectedCamera, setSelectedCamera] = useState<EzvizDevice | null>(null);
 
   // 添加摄像头（真实：把萤石设备绑定到本地区域）
   const [bindForm, setBindForm] = useState({ deviceSerial: '', name: '', areaId: '', ewcode: '' });
@@ -180,6 +185,19 @@ export function MonitoringPage() {
     [devices, selectedArea, areas, flattenAreas]
   );
   const displayCameras = filtered.slice(0, GRID_COUNT[gridMode]);
+
+  /** 宫格与放大视图共用的提示文案；放大视图完整展示，不再被宫格尺寸截断 */
+  const getCameraHint = (dev: EzvizDevice): string => {
+    const err = panelError[`live:${dev.deviceSerial}`];
+    const isOnline = dev.status === 1;
+    const notOperable = dev.operable === false;
+    const isEncryptErr = !!err && (err.includes('加密') || err.includes('60019'));
+    return notOperable
+      ? '分享设备：账号无直播/抓拍权限（萤石侧限制）'
+      : !isOnline ? '设备离线' : isEncryptErr ? '设备视频加密，HLS 无法取流（60019），可关闭加密' : err || '获取直播地址中…';
+  };
+  /** 放大视图取流地址（单独取出便于 TS 收窄类型） */
+  const selectedCameraUrl = selectedCamera ? liveUrls[selectedCamera.deviceSerial]?.url : undefined;
   const onlineCount = devices.filter(d => d.status === 1).length;
   const offlineCount = devices.filter(d => d.status !== 1).length;
   const deviceStats = [
@@ -297,6 +315,30 @@ export function MonitoringPage() {
         await loadDevices();
       } else setActionMsg(r.message || '绑定失败');
     } catch { setActionMsg('绑定请求失败'); }
+    setActionBusy(false);
+  };
+
+  // 关闭设备视频加密：成功后清错误/liveUrls 缓存并刷新设备列表以重新取流
+  const handleCloseEncryption = async () => {
+    const serial = encryptTarget?.deviceSerial;
+    if (!serial) return;
+    setActionBusy(true);
+    setActionMsg(null);
+    try {
+      const r = await ezvizApi.closeEncryption(serial);
+      if (r.code === 200) {
+        setPanelError(prev => { const n = { ...prev }; delete n[`live:${serial}`]; return n; });
+        setLiveUrls(prev => { const n = { ...prev }; delete n[serial]; return n; });
+        setEncryptTarget(null);
+        setShowCloseEncryptModal(false);
+        setActionMsg(r.message || '已关闭设备视频加密，正在重新取流');
+        await loadDevices(); // devices 引用更新 → 取流 useEffect 重新执行
+      } else {
+        setActionMsg(r.message || '关闭加密失败');
+      }
+    } catch {
+      setActionMsg('关闭加密请求失败');
+    }
     setActionBusy(false);
   };
 
@@ -422,11 +464,11 @@ export function MonitoringPage() {
                     const isOnline = dev.status === 1;
                     const notOperable = dev.operable === false;
                     const isEncryptErr = !!err && (err.includes('加密') || err.includes('60019'));
-                    const hint = notOperable
-                      ? '分享设备：账号无直播/抓拍权限（萤石侧限制）'
-                      : !isOnline ? '设备离线' : isEncryptErr ? '该设备已加密，请到「添加/绑定摄像头」处录入设备验证码' : err || '获取直播地址中…';
+                    const hint = getCameraHint(dev);
                     return (
-                      <div key={dev.deviceSerial} className="relative bg-black rounded overflow-hidden border border-white/10 group">
+                      <div key={dev.deviceSerial}
+                        onClick={() => setSelectedCamera(dev)}
+                        className="relative bg-black rounded overflow-hidden border border-white/10 group cursor-pointer">
                         {live?.url ? (
                           <HlsPlayer url={live.url} playing={isPlaying} muted={isMuted} />
                         ) : dev.picUrl ? (
@@ -445,6 +487,14 @@ export function MonitoringPage() {
                           </div>
                         )}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/30 pointer-events-none" />
+                        {isEncryptErr && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEncryptTarget(dev); setShowCloseEncryptModal(true); }}
+                            title="关闭设备视频加密（HLS 才能播放）"
+                            className="absolute left-1/2 -translate-x-1/2 bottom-6 z-10 max-w-[95%] truncate px-2 py-1 rounded text-[10px] font-medium text-white bg-red-600/85 hover:bg-red-500 border border-red-400/60 shadow-lg">
+                            关闭设备视频加密（HLS 才能播放）
+                          </button>
+                        )}
                         <div className="absolute top-1 left-1 bg-black/60 px-1.5 py-0.5 rounded text-[10px] text-white truncate max-w-[70%]">
                           {dev.deviceName || dev.deviceSerial}
                         </div>
@@ -696,7 +746,7 @@ export function MonitoringPage() {
         <div className="space-y-3">
           <SettingRow label="接入状态" value={configured ? '已配置萤石凭证' : '未配置凭证'} />
           <SettingRow label="网关地址" value={configStatus?.baseUrl || '—'} />
-          <SettingRow label="直播协议" value={configStatus?.liveProtocol === 2 ? 'HLS (m3u8) / hls.js' : `protocol=${configStatus?.liveProtocol ?? '—'}`} />
+          <SettingRow label="直播协议" value={configStatus?.liveProtocol === 2 ? 'HLS (m3u8)' : `protocol=${configStatus?.liveProtocol ?? '—'}`} />
           <SettingRow label="设备数量" value={`${devices.length} 台（在线 ${onlineCount} / 离线 ${offlineCount}）`} />
           <SettingRow label="凭证管理" value="appsettings.json → Ezviz，或环境变量 Ezviz__AppKey / Ezviz__AppSecret" />
           <div className="p-3 rounded-lg text-[11px]" style={{ background: 'rgba(0,195,255,0.06)', color: '#8ecfff', border: '1px solid rgba(0,195,255,0.2)' }}>
@@ -745,6 +795,82 @@ export function MonitoringPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* 7. 关闭设备视频加密（设备侧安全配置变更，二次确认） */}
+      <Modal show={showCloseEncryptModal} title="关闭设备视频加密" onClose={() => { if (!actionBusy) setShowCloseEncryptModal(false); }}>
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg" style={{ background: 'rgba(255,170,0,0.08)', border: '1px solid rgba(255,170,0,0.35)' }}>
+            <p className="text-sm text-white font-medium mb-2">将关闭该摄像头的视频加密，影响萤石APP等其他观看方式，需客户确认。</p>
+            <p className="text-xs text-gray-400">设备：{encryptTarget?.deviceName || '—'}（{encryptTarget?.deviceSerial || '—'}）</p>
+          </div>
+          <p className="text-[11px] text-gray-500">关闭后当前平台将以 HLS 重新取流；该操作修改设备侧安全配置，请确认已获客户授权。</p>
+          <div className="flex gap-3 pt-2">
+            <button onClick={() => setShowCloseEncryptModal(false)} disabled={actionBusy}
+              className="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm disabled:opacity-50">取消</button>
+            <button onClick={handleCloseEncryption} disabled={actionBusy}
+              className="flex-1 px-4 py-2 bg-gradient-to-r from-red-500 to-orange-500 rounded-lg font-semibold text-white text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+              <ShieldAlert className="w-4 h-4" />{actionBusy ? '处理中…' : '确认关闭加密'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 8. 点击宫格放大查看（新 HlsPlayer 实例，关闭即卸载由 HlsPlayer cleanup 销毁） */}
+      <Modal
+        show={!!selectedCamera}
+        title={selectedCamera?.deviceName || '实时画面'}
+        onClose={() => setSelectedCamera(null)}
+        wide
+      >
+        {selectedCamera && (
+          <div className="space-y-4">
+            {selectedCameraUrl ? (
+              <HlsPlayer
+                url={selectedCameraUrl}
+                playing={isPlaying}
+                muted={isMuted}
+                className="h-[60vh] rounded-lg overflow-hidden"
+              />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center gap-4 rounded-lg bg-black border border-white/10 px-6">
+                <CameraIcon className="w-16 h-16" style={{ color: '#3a5a70' }} />
+                <p className="text-base text-center leading-relaxed break-words" style={{ color: '#ffaa00' }}>
+                  {getCameraHint(selectedCamera)}
+                </p>
+                {selectedCamera.picUrl && (
+                  <img src={selectedCamera.picUrl} alt={selectedCamera.deviceName}
+                    className="max-h-[36vh] max-w-full object-contain rounded border border-white/10" />
+                )}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 p-3 bg-white/5 rounded-lg text-xs">
+              <div>
+                <span className="text-gray-500">设备名称：</span>
+                <span className="text-white break-all">{selectedCamera.deviceName || '—'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">设备序列号：</span>
+                <span className="text-white font-mono break-all">{selectedCamera.deviceSerial || '—'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">所属区域：</span>
+                <span className="text-white break-all">{selectedCamera.areaName || '—'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">在线状态：</span>
+                <span className={selectedCamera.status === 1 ? 'text-green-400' : 'text-red-400'}>
+                  {selectedCamera.status === 1 ? '在线' : '离线'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedCamera(null)}
+              className="w-full px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm">
+              关闭
+            </button>
+          </div>
+        )}
       </Modal>
 
       <style>{`
