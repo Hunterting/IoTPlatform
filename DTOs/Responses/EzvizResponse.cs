@@ -195,3 +195,13 @@ public class EzvizBindCameraRequest
     /// <summary>设备验证码（设备开启视频加密时必填，对应萤石 ewcode）</summary>
     public string? EwCode { get; set; }
 }
+
+/// <summary>
+/// 远程切换设备视频编码（v3 /api/v3/device/video/encodeType）。
+/// EncodeType 仅接受 "H264"/"H265"；ChannelNo 对应萤石 localIndex，默认 1。
+/// </summary>
+public class SetEncodeTypeRequest
+{
+    public string EncodeType { get; set; } = "H264";
+    public int ChannelNo { get; set; } = 1;
+}

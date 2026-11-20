@@ -233,6 +233,27 @@ export async function closeEncryption(deviceSerial: string): Promise<ApiResponse
   return r.data;
 }
 
+/** 查询设备当前视频编码：1=标准H264，5=标准H265；查不到为 null */
+export async function getVideoEncode(
+  deviceSerial: string, channelNo = 1
+): Promise<ApiResponse<number | null>> {
+  const r = await apiClient.get<ApiResponse<number | null>>(
+    `${BASE_URL}/devices/${encodeURIComponent(deviceSerial)}/encode-type?channelNo=${channelNo}`
+  );
+  return r.data;
+}
+
+/** 远程把设备视频编码切换为 H264/H265（设备侧配置变更，需二次确认） */
+export async function setVideoEncode(
+  deviceSerial: string, encodeType: 'H264' | 'H265', channelNo = 1
+): Promise<ApiResponse<object>> {
+  const r = await apiClient.post<ApiResponse<object>>(
+    `${BASE_URL}/devices/${encodeURIComponent(deviceSerial)}/encode-type`,
+    { encodeType, channelNo }
+  );
+  return r.data;
+}
+
 export const ezvizApi = {
   getConfigStatus,
   getDevices,
@@ -245,6 +266,8 @@ export const ezvizApi = {
   getDeviceStatus,
   bindCamera,
   closeEncryption,
+  getVideoEncode,
+  setVideoEncode,
 };
 
 export default ezvizApi;

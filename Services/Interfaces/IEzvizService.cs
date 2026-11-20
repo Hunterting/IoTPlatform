@@ -46,4 +46,16 @@ public interface IEzvizService
     /// 设备侧配置变更，需调用方显式确认后再调用；已关闭（60016）按幂等成功处理。
     /// </summary>
     Task CloseEncryptionAsync(string deviceSerial, CancellationToken ct = default);
+
+    /// <summary>
+    /// 远程把设备视频编码改为 H264/H265（v3 /api/v3/device/video/encodeType）。
+    /// encodeType 仅接受 "H264"/"H265"；属设备侧配置变更，需调用方显式确认后再调用。
+    /// </summary>
+    Task SetVideoEncodeAsync(string deviceSerial, string encodeType, int channelNo = 1, CancellationToken ct = default);
+
+    /// <summary>
+    /// 查询设备当前视频编码（v3 /api/v3/das/device/video/encode）。
+    /// 返回 videoCode：1=标准H264，5=标准H265；查不到返回 null。
+    /// </summary>
+    Task<int?> GetVideoEncodeAsync(string deviceSerial, int channelNo = 1, CancellationToken ct = default);
 }

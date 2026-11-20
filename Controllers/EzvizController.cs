@@ -39,6 +39,11 @@ public class EzvizController : ControllerBase
         {
             "NOT_CONFIGURED" => 503,
             "40301" => 403,
+            // v3 device/video/encodeType 业务码按官方文档语义映射（HTTP 恒 200，业务成败看 code）
+            "20011" => 422, // 设备不支持/异常
+            "20008" => 408, // 设备响应超时
+            "20018" => 403, // 不拥有设备
+            "20007" => 412, // 设备不在线
             _ => 502,
         };
         return ApiResponse<T>.Fail(status, ex.Message);
@@ -202,5 +207,37 @@ public class EzvizController : ControllerBase
         }
         catch (EzvizException ex) { return Fail<object>(ex); }
         catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
+    }
+
+    /// <summary>
+    /// 远程切换设备视频编码（v3 /api/v3/device/video/encodeType）。
+    /// 设备侧配置变更，须在用户显式确认后调用；编码非 H264 的摄像头切为 H264 后浏览器即可播放。
+    /// </summary>
+    [HttpPost("devices/{deviceSerial}/encode-type")]
+    [PermissionAuthorize(Permissions.UPDATE_DEVICES)]
+    public async Task<ActionResult<ApiResponse<object>>> SetEncodeType(
+        string deviceSerial, [FromBody] SetEncodeTypeRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            await _ezviz.SetVideoEncodeAsync(deviceSerial, request.EncodeType, request.ChannelNo, ct);
+            return ApiResponse<object>.Success(new { ok = true }, $"设备视频编码已切换为 {request.EncodeType}");
+        }
+        catch (EzvizException ex) { return Fail<object>(ex); }
+        catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
+    }
+
+    /// <summary>查询设备当前视频编码（v3 /api/v3/das/device/video/encode）：1=H264，5=H265</summary>
+    [HttpGet("devices/{deviceSerial}/encode-type")]
+    public async Task<ActionResult<ApiResponse<int?>>> GetEncodeType(
+        string deviceSerial, [FromQuery] int channelNo = 1, CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _ezviz.GetVideoEncodeAsync(deviceSerial, channelNo, ct);
+            return ApiResponse<int?>.Success(result);
+        }
+        catch (EzvizException ex) { return Fail<int?>(ex); }
+        catch (Exception ex) { return ApiResponse<int?>.Error(ex.Message); }
     }
 }
