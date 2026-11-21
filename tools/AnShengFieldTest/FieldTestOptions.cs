@@ -17,7 +17,7 @@ namespace IoTPlatform.Tools.AnShengFieldTest;
 /// </summary>
 public sealed class FieldTestOptions
 {
-    public string Host { get; set; } = "120.79.3.248";
+    public string Host { get; set; } = "81.71.7.191";
     public int Port { get; set; } = 18883;
     public string Username { get; set; } = "admin";
     public string Password { get; set; } = "public";
@@ -71,7 +71,7 @@ public sealed class FieldTestOptions
           dotnet run --project tools/AnShengFieldTest -- [options]
 
         CONNECTION (default = confirmed device broker):
-          --host <host>        MQTT broker host        (default 120.79.3.248)
+          --host <host>        MQTT broker host        (default 81.71.7.191)
           --port <port>        MQTT broker port        (default 18883)
           --user <user>        username                (default admin)
           --pass <pass>        password                (default public)
