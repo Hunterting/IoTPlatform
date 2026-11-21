@@ -210,6 +210,21 @@ builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengEnergyService
 builder.Services.AddScoped<IoTPlatform.Services.Interfaces.IAnShengWaterFlowService,
     IoTPlatform.Services.AnShengWaterFlowService>();
 
+// ───────────────────────────────────────────────────────────────────────────
+// 水流量自动采集轮询宿主（功能补齐）
+//
+// 安圣水开关设备不会主动推流量 —— 必须周期下发 getFlowInfo，应答经
+// Router → ApplyFlowInfoReadbackAsync 自动落 DeviceDataRecord（入库链路零改动）。
+//
+// Hosted（进程级单例），与 AnShengCommandSweepHostedService 同范式：
+//   每轮经 IServiceScopeFactory 现开作用域取 Scoped 服务（构造函数绝不注入 Scoped）；
+//   查询一律 IgnoreQueryFilters（后台线程无租户上下文，T6 §7.2 的坑）。
+// 配置节 AnSheng:WaterFlow（PollIntervalSeconds 默认 60，钳 10s 下限）。
+// ───────────────────────────────────────────────────────────────────────────
+builder.Services.Configure<IoTPlatform.Configuration.AnShengWaterFlowOptions>(
+    builder.Configuration.GetSection(IoTPlatform.Configuration.AnShengWaterFlowOptions.SectionName));
+builder.Services.AddHostedService<IoTPlatform.Services.AnShengWaterFlowPollingHostedService>();
+
 // 安圣同步探测服务
 // Singleton 是硬要求：它在构造函数里订阅静态上行总线 AnShengUplinkHub。
 // 若注册为 Scoped，每个请求都会新订阅一次却从不退订，事件链会无限增长直至内存耗尽。
