@@ -18,7 +18,7 @@
 - **需求精确定义**：
   - 租户管理员（admin）拥有一批**授权客户**（多个；不同 admin 管不同批次，互不可见）。
   - 超管（super_admin）可把客户分配给某个 admin；超管仍看全部客户。
-  - admin 只能在**自己授权的客户范围内**给某个客户创建下级账户（operator/chef/staff/user）并分配权限。
+  - admin 只能在**自己授权的客户范围内**给某个客户创建下级账户（operator/user）并分配权限。
   - 下级用户仍绑定**单个客户**，只看/操作自己关联客户的信息（这一层语义不变，与当前模型一致）。
   - 本轮**只做模型改造与取数链路**，工作台 UI 改造随后单独做。
 
@@ -32,7 +32,7 @@
 |---|---|---|
 | G1 | **授权隔离**：admin 只能看到自己被授权的客户 | 两个 admin 分别授权不同客户批次，A 查询客户列表/建户下拉只得到 A 的批次、看不到 B 的；越权查询被拒或返回空，覆盖率 100% |
 | G2 | **建户边界**：admin 只能在授权客户内建下级户 | admin 对授权外客户调用创建用户接口一律被拒（`Code=403`），无用户入库；对授权内客户建户成功，且下级自动绑定该单客户 |
-| G3 | **向下兼容**：下级单客户语义与现有取数不变 | 现有 operator/chef/staff/user 登录后仍只看到自己关联客户的数据；现有单 CustomerId/AppCode 的下级用户无需迁移即可正常登录、鉴权、取数 |
+| G3 | **向下兼容**：下级单客户语义与现有取数不变 | 现有 operator/user 登录后仍只看到自己关联客户的数据；现有单 CustomerId/AppCode 的下级用户无需迁移即可正常登录、鉴权、取数 |
 
 ### 用户故事
 
@@ -50,11 +50,11 @@
   - 验收标准：**收口当前越权缺陷**——现状 `CustomersController.cs:55-63` 对 admin-like 不加 `Where(AppCode==...)`，导致 admin 拿到系统全部客户；改造后必须按授权集合过滤。
   - 验收标准：admin 未被授权的客户，即便直接构造请求指定其 AppCode/CustomerId，也取不到数据。
 - **US-3**：作为 admin，我希望在授权客户范围内给某个客户建下级账户并分配权限，下级只看该客户信息。
-  - 验收标准：admin 从自己的授权客户中选中一个，创建 operator/chef/staff/user，用户自动绑定该客户的单 CustomerId/AppCode（与当前 `UserService.cs:148-169` 从单 CustomerId 派生 AppCode 的语义一致）。
+  - 验收标准：admin 从自己的授权客户中选中一个，创建 operator/user，用户自动绑定该客户的单 CustomerId/AppCode（与当前 `UserService.cs:148-169` 从单 CustomerId 派生 AppCode 的语义一致）。
   - 验收标准：admin 对**授权外**客户建户 → 被拒（`Code=403`），无用户入库；对授权内客户建户 → 成功。
   - 验收标准：admin 只能分配自己权限允许的角色范围，不能授予超出自身的权限（沿用现有权限体系）。
 
-**角色 C：下级用户（operator/chef/staff/user）**
+**角色 C：下级用户（operator/user）**
 
 - **US-4**：作为下级用户，我仍只绑定一个客户，只看自己关联客户的信息，不受本次改造影响。
   - 验收标准：现有单 CustomerId/AppCode 的下级账号登录后，客户、区域、设备、告警等取数仍限定在**本客户**范围内，行为与改造前一致。
@@ -102,7 +102,7 @@ sequenceDiagram
     API->>DB: 按授权集合 [A,B] 过滤
     DB-->>AD: 仅 A、B（看不到其他 admin 客户）
 
-    AD->>API: 给客户 A 建下级户 chef（M04）
+    AD->>API: 给客户 A 建下级户 operator（M04）
     API->>API: 校验 A ∈ 授权集合 [A,B]
     alt 授权内
         API->>DB: 建用户，绑定单 CustomerId=A/AppCode=A
@@ -111,7 +111,7 @@ sequenceDiagram
         API-->>AD: 403 拒绝
     end
 
-    SUB->>API: 下级 chef 登录
+    SUB->>API: 下级 operator 登录
     API-->>SUB: JWT 单 CustomerId=A/AppCode=A（M05，语义不变）
 
     SUB->>W: 取区域树/设备
@@ -122,7 +122,7 @@ sequenceDiagram
 
 ## 五、边界与约束（铁律）
 
-1. **下级用户仍单客户**：多客户授权只对 admin 生效；operator/chef/staff/user 仍绑定单个 CustomerId/AppCode，只看/操作关联客户信息，客户分配保持单选（当前 `CreateUserRequest.cs:28` 单 CustomerId、`SeedUsers.cs:74-92` 与 `UserManagementPage.tsx:468-477` 语义不变）。
+1. **下级用户仍单客户**：多客户授权只对 admin 生效；operator/user 仍绑定单个 CustomerId/AppCode，只看/操作关联客户信息，客户分配保持单选（当前 `CreateUserRequest.cs:28` 单 CustomerId、`SeedUsers.cs:74-92` 与 `UserManagementPage.tsx:468-477` 语义不变）。
 2. **admin 不能给授权外客户建户**：建户时服务端强校验目标客户 ∈ admin 授权集合，越权返回 403 且不入库；不能只靠前端下拉限制。
 3. **必须收口 admin 越权缺陷**：现状 `CustomersController.cs:31-35` 的 `IsAdminLike()` 含 admin，`:55-63`、`:111-126` 因此让 admin 拿到系统全部客户；本轮必须改为按授权客户集合过滤。前端 `DashboardPage.tsx:613-616` 现把 admin 砍回单 customerId 只是表象掩盖，模型改造后要能正确展示授权批次（UI 随后做）。
 4. **AppCode 与 Customer 1:1 不变**：`Customer.AppCode` 唯一索引（`AppDbContext.cs:232-240`、`Initial.cs:1307-1311`）保持；不因多客户授权而改变客户与 AppCode 的对应关系。

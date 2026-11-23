@@ -418,7 +418,7 @@ await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
 
 ## 八、验证方案（QA 在"功能开启"状态证明正确性）
 
-> 前置：以超管把某测试租户 `MaxDeviceCount` 设为可控小值（如 1 或 2）；准备三身份账号：`super_admin`、`admin`（租户管理员）、普通用户（chef/staff）。所有请求 HTTP 状态应为 200，看响应体 `Code`。
+> 前置：以超管把某测试租户 `MaxDeviceCount` 设为可控小值（如 1 或 2）；准备三身份账号：`super_admin`、`admin`（租户管理员）、普通用户（如 operator/user）。所有请求 HTTP 状态应为 200，看响应体 `Code`。
 
 ### 8.1 可执行验证清单
 

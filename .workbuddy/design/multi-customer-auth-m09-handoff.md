@@ -83,7 +83,7 @@ const visibleCustomers = isSuperAdmin
 1. admin 登录后工作台显示且仅显示授权客户；无授权时显示空态而非崩溃。
 2. 超管给某 admin 追加客户后，admin **不重新登录**刷新页面即可看到新客户（后端 DB 为准）。
 3. admin 在客户下拉里只能选授权客户；绕过前端直调 API 指定集合外客户仍得 `Code=403`。
-4. 下级（chef/staff/operator）三处逻辑与改造前逐字段一致：单客户、单 AppCode、无 `ManagedCustomerIds`。
+4. 下级（operator/user）三处逻辑与改造前逐字段一致：单客户、单 AppCode、无 `ManagedCustomerIds`。
 5. 超管仍可看全部、切换客户、建客户，行为零变化。
 
 ## 4. 边界与禁忌

@@ -33,7 +33,7 @@
 | 原则 | 含义 | 落地位置 |
 |---|---|---|
 | **P-A 多对多授权** | admin↔客户为 N:N，超管独占集合写权限 | `user_customers` + `AdminCustomerGrantsController` |
-| **P-B 下级零回归** | `operator/chef/staff/user`（及 `customer_admin`）的 claim、DTO、取数过滤逐字不变 | `JwtHelper` 加可选参数而非改签名；`AuthService` 按角色分叉 |
+| **P-B 下级零回归** | `operator/user`（及 `customer_admin`）的 claim、DTO、取数过滤逐字不变 | `JwtHelper` 加可选参数而非改签名；`AuthService` 按角色分叉 |
 | **P-C 越权收口** | 每个"按客户取数/建户"入口都必须过 `ICustomerScopeService`，单一事实来源 | `CustomersController` / `UsersController` / `AreasController` / `DevicesController` |
 | **P-D 显式过滤不依赖全局过滤器** | `AppDbContext` 全局过滤器在超管/空 AppCode/启动期冻结时均不生效，admin 留空 AppCode 后必然被跳过 | 业务层 `Where(c => managedIds.Contains(c.Id))` |
 | **P-E DB 为准、JWT 为快照** | admin 授权集合每次请求从 DB 读，`ManagedCustomerIds` claim 仅作信号与展示，不作授权依据 | §5.2 |
@@ -420,17 +420,17 @@ sequenceDiagram
     CC->>DB: SELECT * FROM customers WHERE id IN (1,2) + keyword
     DB-->>AD: 恰好客户 1、2（无客户 3）
 
-    AD->>UC: POST /api/v1/users {customerId:1, role:"chef", ...}
+    AD->>UC: POST /api/v1/users {customerId:1, role:"operator", ...}
     UC->>SS: CanAccessCustomerAsync(principal, 1)
     SS->>DB: EXISTS(user_id=adminId AND customer_id=1)
     DB-->>SS: true
     SS-->>UC: true
     UC->>UC: 沿用原逻辑 AppCode = customer.AppCode（1:1）
-    UC->>DB: INSERT user(CustomerId=1, AppCode=customer_001, Role=chef)
+    UC->>DB: INSERT user(CustomerId=1, AppCode=customer_001, Role=operator)
     DB-->>UC: 成功
     UC-->>AD: {code:200}
 
-    AD->>UC: POST /api/v1/users {customerId:3(授权外), role:"chef"}
+    AD->>UC: POST /api/v1/users {customerId:3(授权外), role:"operator"}
     UC->>SS: CanAccessCustomerAsync(principal, 3)
     SS->>DB: EXISTS(user_id=adminId AND customer_id=3)
     DB-->>SS: false
@@ -443,7 +443,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
-    participant SU as 下级 chef(绑 customer_001)
+    participant SU as 下级 operator(绑 customer_001)
     participant AS as AuthService
     participant JH as JwtHelper
     participant DB as MySQL
@@ -452,15 +452,15 @@ sequenceDiagram
     participant AR as AreaRepository / AreaService
     participant DV as DeviceService
 
-    SU->>AS: POST /api/v1/auth/login (chef)
+    SU->>AS: POST /api/v1/auth/login (operator)
     AS->>DB: 查 user → CustomerId=1, AppCode=customer_001
     AS->>AS: ComputeEffectiveAppCode() → "customer_001" (原逻辑)
-    AS->>JH: GenerateToken(id, email, "chef", 1, "customer_001", areas, null)
+    AS->>JH: GenerateToken(id, email, "operator", 1, "customer_001", areas, null)
     JH-->>AS: JWT{CustomerId=1, AppCode=customer_001, 无 ManagedCustomerIds}
     AS-->>SU: LoginResponse{CurrentCustomer=customer_001}
 
     SU->>PF: GET /api/v1/areas/tree (Bearer token)
-    PF->>PF: TenantFilter: role=chef → 原 AppCode 非空校验 → 放行
+    PF->>PF: TenantFilter: role=operator → 原 AppCode 非空校验 → 放行
     PF->>SS: ResolveAsync → ScopeMode=Single, AppCodes=["customer_001"]
     SS-->>PF: 单值 scope（不读 user_customers）
     PF->>AR: GetTreeAsync(customerId=1, appCode="customer_001")
@@ -554,7 +554,7 @@ private bool IsTenantAdmin() =>
 
 **`GetAccessibleCustomers` 对 admin 的语义**：返回**授权客户集合**（而不是"可切换的全部客户"）。下游工作台 UI（M09）据此渲染 admin 的客户列表；本轮 API 契约先行。
 
-**普通角色 403 的处理**：`CustomersController` 类级 `[PermissionAuthorize(Permissions.VIEW_CUSTOMERS)]` 保持。`operator/chef/staff/user` 的权限表（见 `RoleConfig.cs:72-180`）均**不含** `VIEW_CUSTOMERS`，因此 `PermissionAuthorizeAttribute.OnAuthorizationAsync`（`:52-58`）直接返回 `ApiResponse.Forbidden("权限不足")`（HTTP 200 + `Code=403`），**不会**进入控制器的客户过滤逻辑。这一行为零改动，也符合"下级只看关联信息"的约束。
+**普通角色 403 的处理**：`CustomersController` 类级 `[PermissionAuthorize(Permissions.VIEW_CUSTOMERS)]` 保持。`operator/user` 的权限表（见 `RoleConfig.cs:72-180`）均**不含** `VIEW_CUSTOMERS`，因此 `PermissionAuthorizeAttribute.OnAuthorizationAsync`（`:52-58`）直接返回 `ApiResponse.Forbidden("权限不足")`（HTTP 200 + `Code=403`），**不会**进入控制器的客户过滤逻辑。这一行为零改动，也符合"下级只看关联信息"的约束。
 
 > 边界说明：`RoleConfig.GetAdminPermissions()` 从 `Permissions.All` 移除 API 配置与 `CREATE_CUSTOMERS`，**仍含 `VIEW_CUSTOMERS`**，所以 admin 能进客户列表接口，必须靠集合过滤兜住——这正是本次要收口的核心缺陷。
 
@@ -730,7 +730,7 @@ graph TD
 
 ## 8. 验证方案（QA 可执行清单）
 
-> 前置：准备 3 个账号 — `super_admin`、`adminA`、`adminB`；4 个客户 — C1(id=1, `customer_001`)、C2(id=2)、C3(id=3)、C4(id=4)；1 个下级 — `chef1`（绑 C1）。
+> 前置：准备 3 个账号 — `super_admin`、`adminA`、`adminB`；4 个客户 — C1(id=1, `customer_001`)、C2(id=2)、C3(id=3)、C4(id=4)；1 个下级 — `operator1`（绑 C1）。
 > 鉴权头统一 `Authorization: Bearer <token>`；本项目业务失败仍是 HTTP 200 + `Code`。
 
 ### 清单 1 — 两个 admin 不同批次互不可见（G1）
@@ -757,11 +757,11 @@ curl -H "Authorization: Bearer $ADMIN_A" .../api/v1/customers/accessible    # �
 ```bash
 # 2a 授权内
 curl -X POST -H "Authorization: Bearer $ADMIN_A" -H "Content-Type: application/json" \
- -d '{"email":"newchef@x.com","password":"abc123","name":"新厨师","role":"chef","customerId":1,"isActive":true}' \
+ -d '{"email":"newoperator@x.com","password":"abc123","name":"新运维","role":"operator","customerId":1,"isActive":true}' \
  .../api/v1/users                                                            # 期望 code=200；DB 新增 user.AppCode=customer_001
 # 2b 授权外
 curl -X POST -H "Authorization: Bearer $ADMIN_A" -H "Content-Type: application/json" \
- -d '{"email":"bad@x.com","password":"abc123","name":"越权","role":"chef","customerId":3}' \
+ -d '{"email":"bad@x.com","password":"abc123","name":"越权","role":"operator","customerId":3}' \
  .../api/v1/users                                                            # 期望 code=403；DB 无该邮箱记录
 ```
 
@@ -769,16 +769,16 @@ curl -X POST -H "Authorization: Bearer $ADMIN_A" -H "Content-Type: application/j
 
 ```bash
 # 3a 下级登录：token 解码必须含 CustomerId=1, AppCode=customer_001，且不含 ManagedCustomerIds
-curl -X POST -d '{"email":"chef1@...","password":"..."}' .../api/v1/auth/login
+curl -X POST -d '{"email":"operator1@...","password":"..."}' .../api/v1/auth/login
 # 3b 客户列表仍只有 C1
-curl -H "Authorization: Bearer $CHEF" .../api/v1/customers                   # 期望 code=403（无 VIEW_CUSTOMERS 权限）或按现有行为仅 C1
+curl -H "Authorization: Bearer $OPERATOR" .../api/v1/customers                   # 期望 code=403（无 VIEW_CUSTOMERS 权限）或按现有行为仅 C1
 # 3c 区域树仍仅 C1
-curl -H "Authorization: Bearer $CHEF" .../api/v1/areas/tree                  # 期望与改造前响应逐字段一致
+curl -H "Authorization: Bearer $OPERATOR" .../api/v1/areas/tree                  # 期望与改造前响应逐字段一致
 # 3d 设备仍按单 AppCode 过滤
-curl -H "Authorization: Bearer $CHEF" .../api/v1/devices/area/{areaId}       # 期望与改造前一致，无 C2/C3 设备
-# 3e manager（存量 admin）登录后仅见 C1（回填正确）
+curl -H "Authorization: Bearer $OPERATOR" .../api/v1/devices/area/{areaId}       # 期望与改造前一致，无 C2/C3 设备
+# 3e manager（存量 admin）登录后见其授权的三家客户（回填正确）
 curl -X POST -d '{"email":"manager@haidilao.com","password":"admin123"}' .../api/v1/auth/login
-curl -H "Authorization: Bearer $MANAGER" .../api/v1/customers                # 期望 id == [1]
+curl -H "Authorization: Bearer $MANAGER" .../api/v1/customers                # 期望 id == [1,2,3]
 ```
 
 ### 清单 4 — 同一客户多 admin 可见（D6）
