@@ -134,10 +134,27 @@ public class UserService : IUserService
     }
 
     /// <summary>
-    /// 创建用户
+    /// 创建用户（原签名保留：内部调用与 T03 AuthService 兼容，零回归）。
     /// </summary>
-    public async Task<UserDto> CreateUserAsync(CreateUserRequest request)
+    public Task<UserDto> CreateUserAsync(CreateUserRequest request)
+        => CreateUserAsync(request, null, true);
+
+    /// <summary>
+    /// 【多客户授权 T04】承载发起人 ID 与目标客户授权校验结果的建户重载。
+    ///
+    /// <para>真正的越权判定由控制器通过 ICustomerScopeService 完成（DB 权威）；此处对
+    /// <paramref name="customerScopeVerified"/> 做二次防御，未校验通过一律拒绝入库。</para>
+    /// <para><b>零回归铁律</b>：AppCode 派生逻辑 <c>customer?.AppCode</c> 逐字保留，绝不顺带写 user_customers（D9）。</para>
+    /// </summary>
+    /// <param name="request">建户请求。</param>
+    /// <param name="actingUserId">发起人 ID（M10 审计预留）。</param>
+    /// <param name="customerScopeVerified">目标客户已通过范围服务校验。</param>
+    public async Task<UserDto> CreateUserAsync(CreateUserRequest request, long? actingUserId, bool customerScopeVerified)
     {
+        if (!customerScopeVerified)
+        {
+            throw new UnauthorizedAccessException("无权在该客户下创建用户");
+        }
         // 检查邮箱是否已存在
         var exists = await _userRepository.EmailExistsAsync(request.Email);
         if (exists)

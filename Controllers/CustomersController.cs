@@ -2,6 +2,7 @@
 using IoTPlatform.Data;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
+using IoTPlatform.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,21 +19,21 @@ namespace IoTPlatform.Controllers;
 public class CustomersController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
+    private readonly ICustomerScopeService _customerScope;
 
-    public CustomersController(AppDbContext dbContext)
+    public CustomersController(AppDbContext dbContext, ICustomerScopeService customerScope)
     {
         _dbContext = dbContext;
+        _customerScope = customerScope;
     }
 
-    /// <summary>
-    /// 判断当前用户是否为「等同超管」角色（super_admin / admin）。
-    /// 在客户管理域，租户 admin 与超管一致：可见全部客户、可对任意客户增删改。
-    /// </summary>
-    private bool IsAdminLike()
-    {
-        var role = User.FindFirst(ClaimTypes.Role)?.Value;
-        return role == Roles.SUPER_ADMIN || role == Roles.ADMIN;
-    }
+    /// <summary>统一超管判据（设计 §7.2-2）。</summary>
+    private bool IsSuperAdmin() =>
+        Roles.IsSuperAdmin(User.FindFirst(ClaimTypes.Role)?.Value);
+
+    /// <summary>租户管理员判据；customer_admin 不纳入集合分支。</summary>
+    private bool IsTenantAdmin() =>
+        User.FindFirst(ClaimTypes.Role)?.Value == Roles.ADMIN;
 
     /// <summary>
     /// 读取当前用户的租户 AppCode claim（可能为空）。
@@ -52,8 +53,19 @@ public class CustomersController : ControllerBase
         {
             var query = _dbContext.Customers.AsQueryable();
 
-            // 超级管理员与租户 admin 可以查看所有客户，普通角色只能查看所属客户
-            if (!IsAdminLike())
+            // 【多客户授权 T04 / §5.4】按 ScopeMode 三分支，绝不按集合空否分支：
+            // All 的空集合 = 不过滤（超管全量）；Multi 的空集合 = 授权为空（空列表）。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.All)
+            {
+                // 超管：不加 Where，全量不变。
+            }
+            else if (scope.Mode == CustomerScopeMode.Multi)
+            {
+                var managedIds = scope.CustomerIds.Distinct().ToList();
+                query = query.Where(c => managedIds.Contains(c.Id));
+            }
+            else
             {
                 var appCode = TenantAppCode();
                 if (!string.IsNullOrEmpty(appCode))
@@ -115,8 +127,18 @@ public class CustomersController : ControllerBase
         {
             var query = _dbContext.Customers.AsQueryable();
 
-            // 超级管理员与租户 admin 可以访问所有客户，普通角色只能访问自己的客户
-            if (!IsAdminLike())
+            // 【多客户授权 T04 / §5.4】与 GetCustomers 同语义：admin 返回授权客户集合。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.All)
+            {
+                // 超管：全量，不变。
+            }
+            else if (scope.Mode == CustomerScopeMode.Multi)
+            {
+                var managedIds = scope.CustomerIds.Distinct().ToList();
+                query = query.Where(c => managedIds.Contains(c.Id));
+            }
+            else
             {
                 var appCode = TenantAppCode();
                 if (!string.IsNullOrEmpty(appCode))
@@ -172,11 +194,18 @@ public class CustomersController : ControllerBase
             return Ok(response);
             }
 
-            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
-            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
+            // 【多客户授权 T04 / §5.4】三分支详情校验。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.Multi && !scope.CustomerIds.Contains(id))
             {
                 var response = ApiResponse.Forbidden("无权访问该客户");
-            return Ok(response);
+                return Ok(response);
+            }
+
+            if (scope.Mode == CustomerScopeMode.Single && customer.AppCode != TenantAppCode())
+            {
+                var response = ApiResponse.Forbidden("无权访问该客户");
+                return Ok(response);
             }
 
             var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
@@ -232,7 +261,7 @@ public class CustomersController : ControllerBase
             // 普通角色（纵深防御，类级 PermissionAuthorize 已挡住无 CREATE_CUSTOMERS 权限者）
             // 不采信前端传入的 AppCode，强制使用自身 claim，防止伪造跨租户归属。
             string? effectiveAppCode;
-            if (IsAdminLike())
+            if (IsSuperAdmin())
             {
                 effectiveAppCode = request.AppCode;
             }
@@ -324,11 +353,18 @@ public class CustomersController : ControllerBase
             return Ok(response);
             }
 
-            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
-            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
+            // 【多客户授权 T04 / §5.4】超管放行；admin 仅授权客户可改；下级原 AppCode 校验。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.Multi && !scope.CustomerIds.Contains(id))
+            {
+                var response = ApiResponse.Forbidden("无权访问该客户");
+                return Ok(response);
+            }
+
+            if (scope.Mode == CustomerScopeMode.Single && customer.AppCode != TenantAppCode())
             {
                 var response = ApiResponse.Forbidden("无权修改该客户");
-            return Ok(response);
+                return Ok(response);
             }
 
             customer.Name = request.Name;
@@ -388,11 +424,29 @@ public class CustomersController : ControllerBase
             return Ok(response);
             }
 
-            // 权限检查：admin 等同超管，普通角色严格按自身 AppCode 隔离
-            if (!IsAdminLike() && customer.AppCode != TenantAppCode())
+            // 【多客户授权 T04 / §5.4】超管放行；admin 仅授权客户可删；下级原 AppCode 校验。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.Multi && !scope.CustomerIds.Contains(id))
+            {
+                var forbiddenResponse = ApiResponse.Forbidden("无权访问该客户");
+                return Ok(forbiddenResponse);
+            }
+
+            if (scope.Mode == CustomerScopeMode.Single && customer.AppCode != TenantAppCode())
             {
                 var forbiddenResponse = ApiResponse.Forbidden("无权删除该客户");
                 return Ok(forbiddenResponse);
+            }
+
+            // 【T01 衔接】user_customers.CustomerId 的 FK 为 ON DELETE RESTRICT；
+            // 必须先拒绝带授权引用的删除，否则会撞外键 500，且避免留下悬空授权的语义漏洞。
+            var hasGrants = await _dbContext.UserCustomers
+                .IgnoreQueryFilters()
+                .AnyAsync(uc => uc.CustomerId == id);
+            if (hasGrants)
+            {
+                var response = ApiResponse.BadRequest("该客户已授权给租户管理员，请先撤销授权后再删除。");
+                return Ok(response);
             }
 
             // 检查是否有关联数据

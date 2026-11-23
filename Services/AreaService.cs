@@ -29,13 +29,17 @@ public class AreaService : IAreaService
         _unitOfWork = unitOfWork;
     }
 
+    /// <summary>获取区域列表（原签名保留，下级零回归）。</summary>
+    public Task<PagedResponse<AreaDto>> GetAreasAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+        => GetAreasAsync(page, pageSize, keyword, appCode, currentUserRole, allowedAreaIds, null);
+
     /// <summary>
-    /// 获取区域列表
+    /// 【多客户授权 T04】按授权客户集合取区域列表；customerIds 为 null 时逐字走原路径。
     /// </summary>
-    public async Task<PagedResponse<AreaDto>> GetAreasAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+    public async Task<PagedResponse<AreaDto>> GetAreasAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds)
     {
         var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
-        var query = _areaRepository.GetQueryable(queryAppCode, allowedAreaIds);
+        var query = ApplyCustomerIds(_areaRepository.GetQueryable(queryAppCode, allowedAreaIds), customerIds);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -91,14 +95,21 @@ public class AreaService : IAreaService
         return PagedResponse<AreaDto>.Create(areaDtos, totalCount, page, pageSize);
     }
 
-    /// <summary>
-    /// 获取区域详情
-    /// </summary>
-    public async Task<AreaDto?> GetAreaAsync(long id, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+    /// <summary>获取区域详情（原签名保留，下级零回归）。</summary>
+    public Task<AreaDto?> GetAreaAsync(long id, string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+        => GetAreaAsync(id, appCode, currentUserRole, allowedAreaIds, null);
+
+    /// <summary>【多客户授权 T04】区域详情必须在授权客户集合内，否则按不存在处理。</summary>
+    public async Task<AreaDto?> GetAreaAsync(long id, string? appCode, string? currentUserRole, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds)
     {
         var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
         var area = await _areaRepository.GetByIdAsync(id, appCode: queryAppCode, allowedAreaIds: allowedAreaIds);
         if (area == null) return null;
+
+        if (customerIds != null && (!area.CustomerId.HasValue || !customerIds.Contains(area.CustomerId.Value)))
+        {
+            return null;
+        }
 
         Area? parent = null;
         Customer? customer = null;
@@ -286,12 +297,44 @@ public class AreaService : IAreaService
         await _unitOfWork.SaveChangesAsync();
     }
 
+    /// <summary>获取区域树（原签名保留，下级零回归）。</summary>
+    public Task<List<AreaTreeNodeDto>> GetAreaTreeAsync(string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+        => GetAreaTreeAsync(appCode, currentUserRole, allowedAreaIds, null);
+
     /// <summary>
-    /// 获取区域树
+    /// 【多客户授权 T04】多客户区域树：一次 SQL 取回全部授权客户的区域节点再在内存构树，禁止 N+1。
     /// </summary>
-    public async Task<List<AreaTreeNodeDto>> GetAreaTreeAsync(string? appCode, string? currentUserRole, List<long>? allowedAreaIds)
+    public async Task<List<AreaTreeNodeDto>> GetAreaTreeAsync(string? appCode, string? currentUserRole, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds)
     {
         var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
+
+        if (customerIds != null)
+        {
+            var ids = customerIds.Where(id => id > 0).Distinct().ToList();
+            if (ids.Count == 0)
+            {
+                return new List<AreaTreeNodeDto>();
+            }
+
+            // 一次 SQL：Contains 翻译为 IN，取回含子节点的全部区域（原单客户重载语义不变）。
+            var areas = await _areaRepository.GetTreeAsync(ids, queryAppCode);
+            var multiAreas = areas
+                .OrderBy(a => a.SortOrder)
+                .Select(a => new AreaTreeNodeDto
+                {
+                    Id = a.Id,
+                    Name = a.Name,
+                    Type = a.Type,
+                    ParentId = a.ParentId,
+                    DeviceCount = a.DeviceCount,
+                    AppCode = a.AppCode,
+                    CustomerId = a.CustomerId
+                })
+                .ToList();
+
+            return BuildTree(multiAreas, null);
+        }
+
         var query = _areaRepository.GetQueryable(queryAppCode, allowedAreaIds);
 
         var allAreas = await query
@@ -311,6 +354,23 @@ public class AreaService : IAreaService
         // 构建树形结构
         var tree = BuildTree(allAreas, null);
         return tree;
+    }
+
+    /// <summary>
+    /// 将授权客户集合过滤附加到区域查询：物化为 List 供 EF Core 稳定翻译为 SQL IN；
+    /// 空集合返回空结果（Multi 空集合是"无权限"，不是"不过滤"）。
+    /// </summary>
+    private static IQueryable<Area> ApplyCustomerIds(IQueryable<Area> query, IReadOnlyCollection<long>? customerIds)
+    {
+        if (customerIds == null)
+        {
+            return query;
+        }
+
+        var ids = customerIds.Where(id => id > 0).Distinct().ToList();
+        return ids.Count == 0
+            ? query.Where(a => false)
+            : query.Where(a => a.CustomerId.HasValue && ids.Contains(a.CustomerId.Value));
     }
 
     /// <summary>
@@ -334,12 +394,22 @@ public class AreaService : IAreaService
             .ToList();
     }
 
-    /// <summary>
-    /// 获取子区域列表
-    /// </summary>
-    public async Task<List<AreaDto>> GetChildAreasAsync(long parentId, string? appCode, List<long>? allowedAreaIds)
+    /// <summary>获取子区域列表（原签名保留，下级零回归）。</summary>
+    public Task<List<AreaDto>> GetChildAreasAsync(long parentId, string? appCode, List<long>? allowedAreaIds)
+        => GetChildAreasAsync(parentId, appCode, allowedAreaIds, null);
+
+    /// <summary>【多客户授权 T04】按授权客户集合过滤子区域。</summary>
+    public async Task<List<AreaDto>> GetChildAreasAsync(long parentId, string? appCode, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds)
     {
         var areas = await _areaRepository.GetChildrenAsync(parentId, appCode);
+
+        if (customerIds != null)
+        {
+            var ids = customerIds.Where(id => id > 0).Distinct().ToList();
+            areas = ids.Count == 0
+                ? Enumerable.Empty<Area>()
+                : areas.Where(a => a.CustomerId.HasValue && ids.Contains(a.CustomerId.Value)).ToList();
+        }
 
         // 区域权限过滤
         var filteredAreas = areas.ToList();

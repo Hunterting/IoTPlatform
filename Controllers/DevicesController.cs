@@ -1,10 +1,12 @@
 ﻿using IoTPlatform.Configuration;
+using IoTPlatform.Data;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
 namespace IoTPlatform.Controllers;
@@ -18,10 +20,19 @@ namespace IoTPlatform.Controllers;
 public class DevicesController : ControllerBase
 {
     private readonly IDeviceService _deviceService;
+    private readonly AppDbContext? _db;
+    private readonly ICustomerScopeService? _customerScope;
 
-    public DevicesController(IDeviceService deviceService)
+    /// <summary>
+    /// 唯一构造函数：注入 DbContext（area 归属点查）与范围服务（越权判定）。
+    /// 必须保持唯一可自动装配的构造——ASP.NET Core activator 在多个可满足构造并存时会抛
+    /// InvalidOperationException，导致全部设备端点 500。单元测试亦须走本构造（可显式传 null）。
+    /// </summary>
+    public DevicesController(IDeviceService deviceService, AppDbContext? db, ICustomerScopeService? customerScope)
     {
         _deviceService = deviceService;
+        _db = db;
+        _customerScope = customerScope;
     }
 
     /// <summary>
@@ -113,7 +124,49 @@ public class DevicesController : ControllerBase
             var appCode = User.FindFirst("AppCode")?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 
-            var result = await _deviceService.GetDevicesByAreaAsync(areaId, appCode, allowedAreaIds);
+            // 【多客户授权 T04 / §5.5】device 前置归属校验：areaId → CustomerId 一次点查。
+            // IgnoreQueryFilters：admin 无 AppCode，不能依赖启动期冻结的全局过滤器（铁律 5）。
+            // _db/_customerScope 为 null 只出现在单测显式传 null 的场景中，保持原路径逐字不变。
+            var effectiveAppCode = appCode;
+            if (_db != null)
+            {
+                var areaInfo = await _db.Areas
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(a => a.Id == areaId)
+                    .Select(a => new { a.CustomerId, a.AppCode })
+                    .FirstOrDefaultAsync();
+
+                if (areaInfo != null && areaInfo.CustomerId.HasValue && _customerScope != null)
+                {
+                    var accessible = await _customerScope.CanAccessCustomerAsync(User, areaInfo.CustomerId.Value);
+                    if (!accessible)
+                    {
+                        // HTTP 200 + Code=403（设计 §7.2-6），不返回 HTTP 403 状态码。
+                        return Ok(ApiResponse<List<DeviceDto>>.Fail(403, "无权访问该区域的设备"));
+                    }
+                }
+
+                // 用该区域所属客户的 AppCode 调原 DeviceService——DeviceService 签名逐字不改；
+                // 下级拿到的仍是其自身客户 AppCode（1:1 不变），行为零回归。
+                effectiveAppCode = areaInfo?.AppCode;
+                if (areaInfo != null && areaInfo.CustomerId.HasValue && string.IsNullOrEmpty(effectiveAppCode))
+                {
+                    effectiveAppCode = await _db.Customers
+                        .AsNoTracking()
+                        .IgnoreQueryFilters()
+                        .Where(c => c.Id == areaInfo.CustomerId.Value)
+                        .Select(c => c.AppCode)
+                        .FirstOrDefaultAsync();
+                }
+            }
+
+            if (string.IsNullOrEmpty(effectiveAppCode))
+            {
+                effectiveAppCode = appCode;
+            }
+
+            var result = await _deviceService.GetDevicesByAreaAsync(areaId, effectiveAppCode, allowedAreaIds);
             return ApiResponse<List<DeviceDto>>.Success(result);
         }
         catch (Exception ex)

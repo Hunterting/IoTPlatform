@@ -19,10 +19,12 @@ namespace IoTPlatform.Controllers;
 public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
+    private readonly ICustomerScopeService _customerScope;
 
-    public UsersController(IUserService userService)
+    public UsersController(IUserService userService, ICustomerScopeService customerScope)
     {
         _userService = userService;
+        _customerScope = customerScope;
     }
 
     /// <summary>
@@ -84,12 +86,40 @@ public class UsersController : ControllerBase
     {
         try
         {
-            var result = await _userService.CreateUserAsync(request);
-            return ApiResponse<UserDto>.Success(result, "用户创建成功");
+            // 【多客户授权 T04 / M04】仅 admin 走授权集合校验；超管与其它角色走原路径。
+            // 越权判定一律经 ICustomerScopeService（DB 为准），不采信 JWT claim 快照。
+            var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            if (role == Roles.ADMIN)
+            {
+                if (!request.CustomerId.HasValue)
+                {
+                    return Ok(ApiResponse<UserDto>.BadRequest("租户管理员必须在授权客户下创建用户。"));
+                }
+
+                var allowed = await _customerScope.CanAccessCustomerAsync(User, request.CustomerId.Value);
+                if (!allowed)
+                {
+                    // 无入库：校验在 UserService 写库之前完成。
+                    return Ok(ApiResponse<UserDto>.Forbidden("无权在该客户下创建用户"));
+                }
+
+                var actingUserIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                var actingUserId = long.TryParse(actingUserIdClaim, out var parsedId) ? parsedId : (long?)null;
+                var result = await _userService.CreateUserAsync(request, actingUserId, true);
+                return ApiResponse<UserDto>.Success(result, "用户创建成功");
+            }
+
+            var defaultResult = await _userService.CreateUserAsync(request);
+            return ApiResponse<UserDto>.Success(defaultResult, "用户创建成功");
         }
         catch (InvalidOperationException ex)
         {
             var response = ApiResponse.BadRequest(ex.Message);
+            return Ok(response);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            var response = ApiResponse.Forbidden(ex.Message);
             return Ok(response);
         }
         catch (Exception ex)

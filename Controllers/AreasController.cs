@@ -18,10 +18,35 @@ namespace IoTPlatform.Controllers;
 public class AreasController : ControllerBase
 {
     private readonly IAreaService _areaService;
+    private readonly ICustomerScopeService _customerScope;
 
-    public AreasController(IAreaService areaService)
+    public AreasController(IAreaService areaService, ICustomerScopeService customerScope)
     {
         _areaService = areaService;
+        _customerScope = customerScope;
+    }
+
+    /// <summary>
+    /// 【多客户授权 T04 / §5.5】按 ScopeMode 解析区域取数入参：
+    /// 超管 All → appCode=null + customerIds=null（全量）；
+    /// admin Multi → appCode=null + 授权客户集合（DB 权威）；
+    /// 下级 Single → 原单 appCode + customerIds=null（逐字零回归）。
+    /// 注意 All 的空集合表示"不过滤"，绝不可按集合空否分支。
+    /// </summary>
+    private async Task<(string? AppCode, IReadOnlyList<long>? CustomerIds)> ResolveAreaScopeAsync()
+    {
+        var scope = await _customerScope.ResolveAsync(User);
+        if (scope.Mode == CustomerScopeMode.All)
+        {
+            return (null, null);
+        }
+
+        if (scope.Mode == CustomerScopeMode.Multi)
+        {
+            return (null, scope.CustomerIds);
+        }
+
+        return (User.FindFirst("AppCode")?.Value, null);
     }
 
     /// <summary>
@@ -35,11 +60,11 @@ public class AreasController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var (appCode, customerIds) = await ResolveAreaScopeAsync();
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 
-            var result = await _areaService.GetAreasAsync(page, pageSize, keyword, appCode, role, allowedAreaIds);
+            var result = await _areaService.GetAreasAsync(page, pageSize, keyword, appCode, role, allowedAreaIds, customerIds);
             return ApiResponse<PagedResponse<AreaDto>>.Success(result);
         }
         catch (Exception ex)
@@ -56,11 +81,11 @@ public class AreasController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var (appCode, customerIds) = await ResolveAreaScopeAsync();
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 
-            var result = await _areaService.GetAreaTreeAsync(appCode, role, allowedAreaIds);
+            var result = await _areaService.GetAreaTreeAsync(appCode, role, allowedAreaIds, customerIds);
             return ApiResponse<List<AreaTreeNodeDto>>.Success(result);
         }
         catch (Exception ex)
@@ -77,10 +102,10 @@ public class AreasController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var (appCode, customerIds) = await ResolveAreaScopeAsync();
             var allowedAreaIds = GetAllowedAreaIds();
 
-            var result = await _areaService.GetChildAreasAsync(parentId, appCode, allowedAreaIds);
+            var result = await _areaService.GetChildAreasAsync(parentId, appCode, allowedAreaIds, customerIds);
             return ApiResponse<List<AreaDto>>.Success(result);
         }
         catch (Exception ex)
@@ -97,11 +122,11 @@ public class AreasController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
+            var (appCode, customerIds) = await ResolveAreaScopeAsync();
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 
-            var result = await _areaService.GetAreaAsync(id, appCode, role, allowedAreaIds);
+            var result = await _areaService.GetAreaAsync(id, appCode, role, allowedAreaIds, customerIds);
             if (result == null)
             {
                 var response = ApiResponse.NotFound("区域不存在");

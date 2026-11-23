@@ -31,6 +31,26 @@ public class AreaRepository : Repository<Area>, IAreaRepository
         return areas.Where(a => a.ParentId == null);
     }
 
+    /// <inheritdoc />
+    public async Task<IEnumerable<Area>> GetTreeAsync(IEnumerable<long> customerIds, string? appCode = null)
+    {
+        var ids = customerIds?.Where(id => id > 0).Distinct().ToList() ?? new List<long>();
+        if (ids.Count == 0)
+        {
+            return Enumerable.Empty<Area>();
+        }
+
+        // 一次 SQL：ApplyFilters 保留原租户过滤语义，Contains 翻译为 SQL IN。
+        // 返回全部层级节点（不只是根），由 AreaService BuildTree 组装；避免逐客户查询的 N+1。
+        var query = ApplyFilters(_context.Areas.AsQueryable(), appCode, null)
+            .Where(a => a.CustomerId.HasValue && ids.Contains(a.CustomerId.Value));
+
+        return await query
+            .Include(a => a.Devices)
+            .Include(a => a.Archives)
+            .ToListAsync();
+    }
+
     public async Task<IEnumerable<Area>> GetChildrenAsync(long parentId, string? appCode = null)
     {
         var query = ApplyFilters(_context.Areas.AsQueryable(), appCode, null);

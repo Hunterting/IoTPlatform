@@ -14,6 +14,14 @@ public interface IAreaRepository : IRepository<Area>
     /// <param name="appCode">应用代码</param>
     /// <returns>区域树列表</returns>
     Task<IEnumerable<Area>> GetTreeAsync(long? customerId = null, string? appCode = null);
+
+    /// <summary>
+    /// 【多客户授权 T04】一次 SQL 取回多个授权客户的全部区域节点（含子节点），供调用方构建树，避免 N+1。
+    /// 原单客户签名保持不动，下级路径零回归。
+    /// </summary>
+    /// <param name="customerIds">授权客户 ID 集合；空集合返回空结果。</param>
+    /// <param name="appCode">单 AppCode 过滤；admin 传 null。</param>
+    Task<IEnumerable<Area>> GetTreeAsync(IEnumerable<long> customerIds, string? appCode = null);
     
     /// <summary>
     /// 获取子区域列表
