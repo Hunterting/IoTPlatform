@@ -279,7 +279,15 @@ export function AnShengManagementPage() {
         setClaimResult({ success: false, message: response.data.data?.errorMessage || response.data.message || '认领失败' });
       }
     } catch (err: any) {
-      setClaimResult({ success: false, message: err?.response?.data?.message || '认领请求失败' });
+      // R09：httpClient 响应拦截器 reject 的是普通对象 { code, message, timestamp }，
+      // 并没有 response 字段，旧写法 err.response.data.message 必然丢文案。
+      // 优先取 err.message（拦截器/Error），再兼容 axios 原生错误与业务响应体。
+      const message =
+        err?.message ||
+        err?.data?.message ||
+        err?.response?.data?.message ||
+        '认领请求失败';
+      setClaimResult({ success: false, message });
     } finally {
       setClaiming(false);
     }

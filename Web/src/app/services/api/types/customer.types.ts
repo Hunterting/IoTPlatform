@@ -12,6 +12,7 @@ export interface CustomerDto {
   status: string;
   createdAt: string;
   deviceCount: number;
+  maxDeviceCount?: number; // 设备数量上限（0=不限）；后端仅超管下发，非超管为 null/缺失
 }
 
 // 客户详情DTO（扩展自CustomerDto）
@@ -27,6 +28,7 @@ export interface CreateCustomerRequest {
   contact?: string | null;
   phone?: string | null;
   address?: string | null;
+  maxDeviceCount?: number; // 仅超管填写；默认 0=不限
 }
 
 // 更新客户请求DTO（来自后端）
@@ -36,6 +38,7 @@ export interface UpdateCustomerRequest {
   phone?: string | null;
   address?: string | null;
   status: string;
+  maxDeviceCount?: number; // 仅超管可改；非超管传值后端静默忽略
 }
 
 // 客户统计信息

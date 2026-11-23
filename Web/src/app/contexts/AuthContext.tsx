@@ -68,6 +68,8 @@ export interface Customer {
   createdAt: string;
   deviceCount: number;
   projectCount: number; // 项目数量（后端返回）
+  // 设备数量上限（0=不限）；后端仅超管下发，非超管为 undefined。
+  maxDeviceCount?: number;
   projects: Project[]; // 真实项目列表（详情弹窗用）
 }
 

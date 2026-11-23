@@ -287,6 +287,8 @@ export const adaptCustomerDtoToCustomer = (customerDto: CustomerDto): any => {
     createdAt: customerDto.createdAt,
     deviceCount: customerDto.deviceCount,
     projectCount: customerDto.projectCount ?? 0,
+    // 配额字段：后端仅超管下发真实值，非超管为 null/缺失，前端保持无值。
+    maxDeviceCount: customerDto.maxDeviceCount ?? undefined,
     projects: [] // 真实项目列表在详情弹窗中单独加载
   };
 };
@@ -303,7 +305,9 @@ export const adaptCreateCustomerRequest = (
     appCode: customer.appCode,
     contact: customer.contact,
     phone: customer.phone,
-    address: customer.address
+    address: customer.address,
+    // 配额字段：未填时显式给 0（不限），与后端 CreateCustomer 默认值一致。
+    maxDeviceCount: customer.maxDeviceCount ?? 0
   };
 };
 
@@ -320,6 +324,7 @@ export const adaptUpdateCustomerRequest = (
   if (updates.phone !== undefined) request.phone = updates.phone;
   if (updates.address !== undefined) request.address = updates.address;
   if (updates.status !== undefined) request.status = updates.status;
+  if (updates.maxDeviceCount !== undefined) request.maxDeviceCount = updates.maxDeviceCount;
   
   return request;
 };

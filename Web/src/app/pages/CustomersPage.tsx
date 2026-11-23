@@ -22,6 +22,8 @@ export function CustomersPage() {
   // 撤销 9-A 只读：租户 admin 与超管一致，增删改由 CREATE/UPDATE/DELETE_CUSTOMERS 权限门控；
   // 普通角色无这些权限，hasPermission 自然返回 false；「查看」按钮与详情弹窗内项目/合同操作不变
   const isAdminLike = user?.role === 'super_admin' || user?.role === 'admin';
+  // 配额需求 R07：真超管判据，不可复用含 admin 的 isAdminLike 控制配额字段显隐。
+  const isSuperAdmin = user?.role === 'super_admin';
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -367,7 +369,8 @@ export function CustomersPage() {
           <h1 className="text-3xl font-bold text-white mb-2">客户管理</h1>
           <p className="text-gray-400">管理所有租户客户信息与权限</p>
         </div>
-        {hasPermission(PERMISSIONS.CREATE_CUSTOMERS) && (
+        {/* 配额需求 R01：仅超管可见添加客户入口（前端权限表已对 admin/customer_admin 移除，此处双保险） */}
+        {isSuperAdmin && (
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 rounded-lg transition-all"
@@ -417,6 +420,9 @@ export function CustomersPage() {
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">编号</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">联系方式</th>
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">项目数</th>
+                {isSuperAdmin && (
+                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">设备上限</th>
+                )}
                 <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">状态</th>
                 <th className="px-6 py-4 text-center text-sm font-semibold text-gray-300">操作</th>
               </tr>
@@ -443,6 +449,13 @@ export function CustomersPage() {
                   <td className="px-6 py-4">
                     <div className="text-sm text-gray-300">{localProjectCounts[customer.id] ?? customer.projectCount ?? 0} 个项目</div>
                   </td>
+                  {isSuperAdmin && (
+                    <td className="px-6 py-4 text-gray-300">
+                      {customer.maxDeviceCount === 0 || customer.maxDeviceCount == null
+                        ? '不限'
+                        : customer.maxDeviceCount}
+                    </td>
+                  )}
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${customer.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
                       {customer.status === 'active' ? '活跃' : '未激活'}
@@ -526,6 +539,7 @@ export function CustomersPage() {
         }}
         title={showEditModal ? '编辑客户' : '添加客户'}
         initialData={selectedCustomer || undefined}
+        isSuperAdmin={isSuperAdmin}
       />
 
       {/* 删除确认弹窗 */}
@@ -839,8 +853,8 @@ function PreviewContractModal({ show, contract, onClose }: any) {
   );
 }
 
-function CustomerFormModal({ show, onClose, onSave, title, initialData }: any) {
-  const defaultForm = { name: '', code: '', contact: '', phone: '', address: '', appCode: '' };
+function CustomerFormModal({ show, onClose, onSave, title, initialData, isSuperAdmin }: any) {
+  const defaultForm = { name: '', code: '', contact: '', phone: '', address: '', appCode: '', maxDeviceCount: 0 };
   const [form, setForm] = useState(defaultForm);
 
   useEffect(() => {
@@ -853,6 +867,8 @@ function CustomerFormModal({ show, onClose, onSave, title, initialData }: any) {
         phone: initialData.phone ?? '',
         address: initialData.address ?? '',
         appCode: initialData.appCode ?? '',
+        // 配额字段回显：非超管后端不下发，回落默认 0（该控件不渲染，不生效）
+        maxDeviceCount: initialData.maxDeviceCount ?? 0,
       });
     } else {
       setForm(defaultForm);
@@ -889,6 +905,20 @@ function CustomerFormModal({ show, onClose, onSave, title, initialData }: any) {
             <label className="text-sm text-gray-400 block mb-1">AppCode</label>
             <input className="w-full p-2 bg-white/5 rounded border border-white/10 text-white" value={form.appCode} onChange={e => setForm({ ...form, appCode: e.target.value })} />
           </div>
+          {isSuperAdmin && (
+            <div className="col-span-2">
+              <label className="text-sm text-gray-400 block mb-1">
+                设备数量上限 <span className="text-gray-500">（0 = 不限）</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                className="w-full p-2 bg-white/5 rounded border border-white/10 text-white"
+                value={form.maxDeviceCount}
+                onChange={e => setForm({ ...form, maxDeviceCount: Math.max(0, Number(e.target.value) || 0) })}
+              />
+            </div>
+          )}
         </div>
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 bg-white/10 text-white py-3 rounded">取消</button>

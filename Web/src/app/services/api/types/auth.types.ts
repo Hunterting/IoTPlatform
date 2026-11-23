@@ -46,6 +46,7 @@ export interface CustomerDto {
   status: string;
   createdAt: string;
   deviceCount: number;
+  maxDeviceCount?: number | null; // 配额字段：后端仅超管下发，非超管为 null/缺失
 }
 
 // 登录响应

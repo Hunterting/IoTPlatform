@@ -71,6 +71,9 @@ public class CustomersController : ControllerBase
                     c.ContactPerson != null && c.ContactPerson.Contains(keyword));
             }
 
+            // 配额需求 R07：MaxDeviceCount 仅超管下发。投影在 IQueryable 上执行，
+            // 超管判据必须先算成捕获的本地 bool（EF Core 可参数化），不可在 Select 内调用自定义方法。
+            var quotaVisible = Roles.IsSuperAdmin(User.FindFirst(ClaimTypes.Role)?.Value);
             var totalCount = await query.CountAsync();
             var customers = await query
                 .OrderByDescending(c => c.CreatedAt)
@@ -88,7 +91,8 @@ public class CustomersController : ControllerBase
                     Status = c.Status,
                     CreatedAt = c.CreatedAt,
                     DeviceCount = _dbContext.Devices.Count(d => d.AppCode == c.AppCode),
-                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id)
+                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id),
+                    MaxDeviceCount = quotaVisible ? (int?)c.MaxDeviceCount : null
                 })
                 .ToListAsync();
 
@@ -121,6 +125,8 @@ public class CustomersController : ControllerBase
                 }
             }
 
+            // 配额需求 R07：仅超管下发 MaxDeviceCount（捕获本地 bool 供 EF 参数化）。
+            var quotaVisible = Roles.IsSuperAdmin(User.FindFirst(ClaimTypes.Role)?.Value);
             var customers = await query
                 .OrderBy(c => c.Name)
                 .Select(c => new CustomerDto
@@ -135,7 +141,8 @@ public class CustomersController : ControllerBase
                     Status = c.Status,
                     CreatedAt = c.CreatedAt,
                     DeviceCount = _dbContext.Devices.Count(d => d.AppCode == c.AppCode),
-                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id)
+                    ProjectCount = _dbContext.Projects.Count(p => p.CustomerId == c.Id),
+                    MaxDeviceCount = quotaVisible ? (int?)c.MaxDeviceCount : null
                 })
                 .ToListAsync();
 
@@ -175,6 +182,8 @@ public class CustomersController : ControllerBase
             var deviceCount = await _dbContext.Devices.CountAsync(d => d.AppCode == customer.AppCode);
             var projectCount = customer.Projects?.Count ?? 0;
 
+            // 配额需求 R07：详情投影仅超管赋真实值，非超管保持 int? 默认 null（防抓包）。
+            var quotaVisible = Roles.IsSuperAdmin(User.FindFirst(ClaimTypes.Role)?.Value);
             var dto = new CustomerDetailDto
             {
                 Id = customer.Id,
@@ -187,7 +196,8 @@ public class CustomersController : ControllerBase
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
                 DeviceCount = deviceCount,
-                ProjectCount = projectCount
+                ProjectCount = projectCount,
+                MaxDeviceCount = quotaVisible ? (int?)customer.MaxDeviceCount : null
             };
 
             return ApiResponse<CustomerDetailDto>.Success(dto);
@@ -206,6 +216,16 @@ public class CustomersController : ControllerBase
     [PermissionAuthorize(Permissions.CREATE_CUSTOMERS)]
     public async Task<ActionResult<ApiResponse<CustomerDto>>> CreateCustomer([FromBody] CreateCustomerRequest request)
     {
+        // ── 配额需求 R01：仅超级管理员可创建客户/租户 ──
+        // 服务端硬校验，防止绕过前端权限表直调 API；写法仿 DevicesController.CreateDevice:132-143。
+        // 全站 HTTP 200 约定：业务失败仍返回 Ok(ApiResponse)，只是业务码为 403。
+        var role = User.FindFirst(ClaimTypes.Role)?.Value;
+        if (!Roles.IsSuperAdmin(role))
+        {
+            var forbidden = ApiResponse<CustomerDto>.Fail(403, "仅超级管理员可创建客户/租户。");
+            return Ok(forbidden);
+        }
+
         try
         {
             // 归属解析：admin/超管可指定任意新 AppCode（每个客户独立 AppCode）；
@@ -251,7 +271,9 @@ public class CustomersController : ControllerBase
                 ContactPerson = request.Contact,
                 Phone = request.Phone,
                 Address = request.Address,
-                Status = "active"
+                Status = "active",
+                // 决策 5：新建默认 0（不限）；不改实体初始化器，显式赋值精确控制本入口。
+                MaxDeviceCount = request.MaxDeviceCount ?? 0
             };
 
             _dbContext.Customers.Add(customer);
@@ -269,7 +291,9 @@ public class CustomersController : ControllerBase
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
                 DeviceCount = 0,
-                ProjectCount = 0
+                ProjectCount = 0,
+                // 本端点顶部已做超管硬校验，创建响应始终可回显真实数值。
+                MaxDeviceCount = customer.MaxDeviceCount
             };
 
             return ApiResponse<CustomerDto>.Success(dto, "客户创建成功");
@@ -288,6 +312,9 @@ public class CustomersController : ControllerBase
     [PermissionAuthorize(Permissions.UPDATE_CUSTOMERS)]
     public async Task<ActionResult<ApiResponse<CustomerDto>>> UpdateCustomer(long id, [FromBody] UpdateCustomerRequest request)
     {
+        // 配额需求 R07 / 裁决 B：MaxDeviceCount 仅超管可写；非超管即使伪造该字段也静默忽略，
+        // 其它字段（名称/联系人/电话/地址/状态）照常保存，不返回 403。
+        var quotaEditable = Roles.IsSuperAdmin(User.FindFirst(ClaimTypes.Role)?.Value);
         try
         {
             var customer = await _dbContext.Customers.FindAsync(id);
@@ -309,6 +336,10 @@ public class CustomersController : ControllerBase
             customer.Phone = request.Phone;
             customer.Address = request.Address;
             customer.Status = request.Status;
+            if (quotaEditable && request.MaxDeviceCount.HasValue)
+            {
+                customer.MaxDeviceCount = request.MaxDeviceCount.Value;
+            }
             customer.UpdatedAt = DateTime.UtcNow;
 
             await _dbContext.SaveChangesAsync();
@@ -328,7 +359,8 @@ public class CustomersController : ControllerBase
                 Status = customer.Status,
                 CreatedAt = customer.CreatedAt,
                 DeviceCount = deviceCount,
-                ProjectCount = projectCount
+                ProjectCount = projectCount,
+                MaxDeviceCount = quotaEditable ? (int?)customer.MaxDeviceCount : null
             };
 
             return ApiResponse<CustomerDto>.Success(dto, "客户更新成功");
@@ -401,6 +433,8 @@ public class CustomerDto
     public DateTime CreatedAt { get; set; }
     public int DeviceCount { get; set; }
     public int ProjectCount { get; set; }
+    // 配额需求 R07：nullable 是裁剪关键——非超管投影不赋值即为 null，不下发真实数值。
+    public int? MaxDeviceCount { get; set; }
 }
 
 public class CustomerDetailDto : CustomerDto
@@ -416,6 +450,7 @@ public class CreateCustomerRequest
     public string? Contact { get; set; }
     public string? Phone { get; set; }
     public string? Address { get; set; }
+    public int? MaxDeviceCount { get; set; }
 }
 
 public class UpdateCustomerRequest
@@ -425,4 +460,5 @@ public class UpdateCustomerRequest
     public string? Phone { get; set; }
     public string? Address { get; set; }
     public string Status { get; set; } = string.Empty;
+    public int? MaxDeviceCount { get; set; }
 }
