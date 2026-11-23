@@ -13,7 +13,7 @@ namespace IoTPlatform.AnSheng.Tests;
 /// 多客户授权模型 T05.1 —— 种子与迁移回填一致性（设计 §5.6 / §6 T01.2、T01.3 / §8 清单 3e）。
 ///
 /// <para>【运行时验证】真实执行 <see cref="SeedUsers.InitializeAsync"/> 于 InMemory 库，断言
-/// manager（Id=2）单值列已清空、user_customers 含 (2,1)、重复执行不产生重复行。</para>
+/// manager（Id=2）单值列已清空、user_customers 含 (2,1)/(2,2)/(2,3)、重复执行不产生重复行。</para>
 ///
 /// <para>【结构验证】从 EF 模型元数据断言 uk_user_customer 组合唯一、customer_id 单列索引非唯一
 /// （D6：同一客户可授予多个 admin）。</para>
@@ -32,23 +32,44 @@ public sealed class SeedAndMigrationTests : IDisposable
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options);
 
-        // SeedUsers 只负责用户与授权，客户由前置 seed 建好（customer_001 的 Id 为 1）。
-        _db.Customers.Add(new Customer
-        {
-            Id = 1,
-            Name = "海底捞智慧工厂有限公司",
-            Code = "customer_001",
-            AppCode = "customer_001",
-            Status = "active",
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow
-        });
+        // SeedUsers 只负责用户与授权，客户由前置 seed 建好（customer_001/002/003 的 Id 为 1/2/3）。
+        _db.Customers.AddRange(
+            new Customer
+            {
+                Id = 1,
+                Name = "海底捞智慧工厂有限公司",
+                Code = "customer_001",
+                AppCode = "customer_001",
+                Status = "active",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            },
+            new Customer
+            {
+                Id = 2,
+                Name = "绿色能源有限公司",
+                Code = "customer_002",
+                AppCode = "customer_002",
+                Status = "active",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            },
+            new Customer
+            {
+                Id = 3,
+                Name = "智慧建筑有限公司",
+                Code = "customer_003",
+                AppCode = "customer_003",
+                Status = "active",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
         _db.SaveChanges();
     }
 
     public void Dispose() => _db.Dispose();
 
-    [Fact(DisplayName = "SEED-01 种子执行后 manager(2) 单值清空且 user_customers 含 (2,1)，source=seed")]
+    [Fact(DisplayName = "SEED-01 种子执行后 manager(2) 单值清空且 user_customers 含 (2,1)/(2,2)/(2,3)，source=seed")]
     public async Task SeedUsers_ManagerSingleValuesClearedAndGrantSeeded()
     {
         var seeder = new SeedUsers(NullLogger<SeedUsers>.Instance);
@@ -61,12 +82,17 @@ public sealed class SeedAndMigrationTests : IDisposable
         Assert.Null(manager.CustomerId);
         Assert.Null(manager.AppCode);
 
-        var grant = await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters()
-            .SingleAsync();
-        Assert.Equal(2L, grant.UserId);
-        Assert.Equal(1L, grant.CustomerId);
-        Assert.Equal(CustomerScopeConstants.SourceSeed, grant.Source);
-        Assert.Null(grant.RevokedAt);
+        var grants = await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters()
+            .OrderBy(uc => uc.CustomerId)
+            .ToListAsync();
+        Assert.Equal(3, grants.Count);
+        Assert.Equal(new long[] { 1, 2, 3 }, grants.Select(g => g.CustomerId).ToArray());
+        Assert.All(grants, grant =>
+        {
+            Assert.Equal(2L, grant.UserId);
+            Assert.Equal(CustomerScopeConstants.SourceSeed, grant.Source);
+            Assert.Null(grant.RevokedAt);
+        });
 
         // 下级与超管单值列逐字不动（零回归）；Id=3/4 的 Role 字符串显式落库，不再回落到默认角色。
         var superAdmin = await _db.Users.AsNoTracking().IgnoreQueryFilters().SingleAsync(u => u.Id == 1);
@@ -89,9 +115,12 @@ public sealed class SeedAndMigrationTests : IDisposable
         await seeder.InitializeAsync(_db);
 
         Assert.Equal(4, await _db.Users.AsNoTracking().IgnoreQueryFilters().CountAsync());
-        Assert.Equal(1, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters().CountAsync());
-        Assert.Equal(1, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters()
-            .CountAsync(uc => uc.UserId == 2 && uc.CustomerId == 1));
+        Assert.Equal(3, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters().CountAsync());
+        foreach (var customerId in new long[] { 1, 2, 3 })
+        {
+            Assert.Equal(1, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters()
+                .CountAsync(uc => uc.UserId == 2 && uc.CustomerId == customerId));
+        }
     }
 
     [Fact(DisplayName = "SEED-03 模型元数据：组合唯一索引存在，customer_id 单列索引非唯一（D6 多对多）")]
@@ -127,9 +156,9 @@ public sealed class SeedAndMigrationTests : IDisposable
         Assert.Contains("uk_user_customer", migrationSource, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ReferentialAction.Restrict", migrationSource, StringComparison.OrdinalIgnoreCase);
 
-        // 种子与迁移同源：manager 的原始绑定必须都是 (2 → 1)，否则刷新种子库与迁移库行为分裂。
+        // 种子侧：manager 的授权客户集合固定为 (2 → 1/2/3)，与回填函数的多客户快照一致。
         var seedSource = File.ReadAllText(Path.Combine(FindRepoRoot(), "Data", "SeedData", "SeedUsers.cs"));
-        Assert.Contains("[2] = 1", seedSource);
+        Assert.Contains("[2] = new long[] { 1, 2, 3 }", seedSource);
         Assert.Contains("SourceSeed", seedSource);
     }
 

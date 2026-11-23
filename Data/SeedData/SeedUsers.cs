@@ -50,11 +50,12 @@ namespace IoTPlatform.Data.SeedData
                     return;
                 }
 
-                // admin 单值列清空前的原始绑定快照：manager(Id=2) → customer_001(Id=1)。
-                // 供 user_customers 幂等回填使用，保证「种子库」与「迁移库」同源（设计 §5.6）。
-                var adminOriginalGrants = new Dictionary<long, long>
+                // manager(Id=2) 的授权客户集合：customer_001(Id=1)、customer_002(Id=2)、
+                // customer_003(Id=3)。供 user_customers 幂等回填使用，保证「种子库」与
+                // 「迁移库」同源（设计 §5.6）；不再只是单值列清空前的原始绑定快照。
+                var adminOriginalGrants = new Dictionary<long, long[]>
                 {
-                    [2] = 1
+                    [2] = new long[] { 1, 2, 3 }
                 };
 
                 var users = new List<User>
@@ -145,7 +146,7 @@ namespace IoTPlatform.Data.SeedData
                 await context.Users.AddRangeAsync(users);
                 await context.SaveChangesAsync();
 
-                // 与迁移同源：清空 manager 单值列后，把原绑定写入授权中间表（source='seed'）。
+                // 与迁移同源：清空 manager 单值列后，把其授权客户集合写入授权中间表（source='seed'）。
                 await SeedUserCustomerGrantsAsync(context, adminOriginalGrants);
 
                 _logger.LogInformation("成功初始化{Count}个用户", users.Count);
@@ -159,12 +160,13 @@ namespace IoTPlatform.Data.SeedData
 
         /// <summary>
         /// 幂等回填 admin 的客户授权到 user_customers（设计 §5.6 种子侧）。
-        /// <para>优先使用「清空单值列之前的原始绑定快照」；若处理存量库则回退按
-        /// Admin.CustomerId / AppCode 反查客户。先查 user_customers 不存在再插，source='seed'。</para>
+        /// <para>优先按 adminOriginalGrants 中的「授权客户集合」逐个回填（manager →
+        /// customer_001/002/003）；快照缺失或为空数组时回退按 Admin.CustomerId / AppCode
+        /// 反查客户，以兼容存量库。每条均先查 user_customers 不存在再插，source='seed'。</para>
         /// </summary>
         private async Task SeedUserCustomerGrantsAsync(
             AppDbContext context,
-            IReadOnlyDictionary<long, long> adminOriginalGrants)
+            IReadOnlyDictionary<long, long[]> adminOriginalGrants)
         {
             // 种子运行在启动期，租户上下文可能残留；users/customers 实现了 IHasAppCode，
             // 必须绕过全局过滤器才能拿到全部 admin 与客户。user_customers 本身无过滤器。
@@ -176,12 +178,24 @@ namespace IoTPlatform.Data.SeedData
             var added = 0;
             foreach (var admin in admins)
             {
-                long? customerId = null;
-                if (adminOriginalGrants.TryGetValue(admin.Id, out var seededCustomerId))
+                // 1) 种子快照优先：一个 admin 可对应多个授权客户，逐个幂等回填。
+                adminOriginalGrants.TryGetValue(admin.Id, out var seededCustomerIds);
+                if (seededCustomerIds != null && seededCustomerIds.Length > 0)
                 {
-                    customerId = seededCustomerId;
+                    foreach (var seededCustomerId in seededCustomerIds)
+                    {
+                        if (await GrantIfAbsentAsync(context, admin.Id, seededCustomerId))
+                        {
+                            added++;
+                        }
+                    }
+
+                    continue;
                 }
-                else if (admin.CustomerId.HasValue)
+
+                // 2) 快照缺失或为空数组：回退存量库兼容逻辑，按单值 CustomerId / AppCode 反查。
+                long? customerId = null;
+                if (admin.CustomerId.HasValue)
                 {
                     customerId = admin.CustomerId.Value;
                 }
@@ -195,29 +209,10 @@ namespace IoTPlatform.Data.SeedData
                         .FirstOrDefaultAsync();
                 }
 
-                if (!customerId.HasValue)
+                if (customerId.HasValue && await GrantIfAbsentAsync(context, admin.Id, customerId.Value))
                 {
-                    continue;
+                    added++;
                 }
-
-                var exists = await context.UserCustomers
-                    .AnyAsync(uc => uc.UserId == admin.Id && uc.CustomerId == customerId.Value);
-                if (exists)
-                {
-                    continue;
-                }
-
-                context.UserCustomers.Add(new UserCustomer
-                {
-                    UserId = admin.Id,
-                    CustomerId = customerId.Value,
-                    GrantedByUserId = null,
-                    Source = CustomerScopeConstants.SourceSeed,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow,
-                    RevokedAt = null
-                });
-                added++;
             }
 
             if (added > 0)
@@ -229,6 +224,31 @@ namespace IoTPlatform.Data.SeedData
             {
                 _logger.LogInformation("admin 客户授权种子数据已存在，跳过回填");
             }
+        }
+
+        /// <summary>
+        /// 幂等插入单条 user_customers 授权：已存在则跳过，返回是否实际新增。
+        /// </summary>
+        private async Task<bool> GrantIfAbsentAsync(AppDbContext context, long adminId, long customerId)
+        {
+            var exists = await context.UserCustomers
+                .AnyAsync(uc => uc.UserId == adminId && uc.CustomerId == customerId);
+            if (exists)
+            {
+                return false;
+            }
+
+            context.UserCustomers.Add(new UserCustomer
+            {
+                UserId = adminId,
+                CustomerId = customerId,
+                GrantedByUserId = null,
+                Source = CustomerScopeConstants.SourceSeed,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+                RevokedAt = null
+            });
+            return true;
         }
     }
 }
