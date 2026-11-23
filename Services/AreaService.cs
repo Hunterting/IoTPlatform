@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -142,10 +143,30 @@ public class AreaService : IAreaService
     }
 
     /// <summary>
-    /// 创建区域
+    /// 创建区域（旧签名保留：内部调用零回归）。
     /// </summary>
-    public async Task<AreaDto> CreateAreaAsync(CreateAreaRequest request)
+    public Task<AreaDto> CreateAreaAsync(CreateAreaRequest request)
+        => CreateAreaAsync(request, null, customerScopeVerified: true);
+
+    /// <summary>
+    /// M1 二次防御重载：Controller 已校验目标客户在授权集合内，appCode 由服务端派生。
+    /// </summary>
+    public async Task<AreaDto> CreateAreaAsync(
+        CreateAreaRequest request,
+        string? appCode,
+        bool customerScopeVerified)
     {
+        if (!customerScopeVerified)
+        {
+            throw new UnauthorizedAccessException("无权在该客户下创建区域");
+        }
+
+        // 服务端派生的 AppCode 与客户权威 AppCode 必须一致，杜绝 request.AppCode 越权落库。
+        if (request.CustomerId.HasValue && !string.IsNullOrEmpty(appCode))
+        {
+            request.AppCode = appCode;
+        }
+
         // 获取客户信息
         Models.Customer? customer = null;
         if (request.CustomerId.HasValue)
@@ -208,19 +229,46 @@ public class AreaService : IAreaService
     /// <summary>
     /// 更新区域
     /// </summary>
-    public async Task<AreaDto> UpdateAreaAsync(long id, UpdateAreaRequest request, string? appCode, string? currentUserRole)
+    public Task<AreaDto> UpdateAreaAsync(long id, UpdateAreaRequest request, string? appCode, string? currentUserRole)
+        => UpdateAreaCoreAsync(id, request, appCode, currentUserRole, null, false);
+
+    /// <summary>
+    /// B5/M8 三分支改删重载：范围由 Controller 显式解析后下推；未校验通过一律 403。
+    /// </summary>
+    public Task<AreaDto> UpdateAreaAsync(
+        long id, UpdateAreaRequest request, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException<AreaDto>(
+                new ForbiddenAccessException("区域更新未通过客户范围校验"));
+        }
+
+        return UpdateAreaCoreAsync(id, request, appCode, null, scope, true);
+    }
+
+    private async Task<AreaDto> UpdateAreaCoreAsync(
+        long id,
+        UpdateAreaRequest request,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("区域更新未通过客户范围校验");
+        }
+
         var area = await _areaRepository.GetByIdAsync(id);
         if (area == null)
         {
             throw new InvalidOperationException("区域不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && area.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权修改该区域");
-        }
+        // B5/M8：All 放行 / Multi 比 DB 授权集合 / Single 沿用 claim 单值；写库之前完成。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, area.CustomerId, area.AppCode, appCode, currentUserRole, "修改该区域");
 
         area.Name = request.Name;
         area.Image = request.Image;
@@ -265,19 +313,41 @@ public class AreaService : IAreaService
     /// <summary>
     /// 删除区域
     /// </summary>
-    public async Task DeleteAreaAsync(long id, string? appCode, string? currentUserRole)
+    public Task DeleteAreaAsync(long id, string? appCode, string? currentUserRole)
+        => DeleteAreaCoreAsync(id, appCode, currentUserRole, null, false);
+
+    /// <summary>B5/M8 三分支删除重载：范围由 Controller 显式解析后下推；未校验通过一律 403。</summary>
+    public Task DeleteAreaAsync(long id, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException(new ForbiddenAccessException("区域删除未通过客户范围校验"));
+        }
+
+        return DeleteAreaCoreAsync(id, appCode, null, scope, true);
+    }
+
+    private async Task DeleteAreaCoreAsync(
+        long id,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("区域删除未通过客户范围校验");
+        }
+
         var area = await _areaRepository.GetByIdAsync(id);
         if (area == null)
         {
             throw new InvalidOperationException("区域不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && area.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权删除该区域");
-        }
+        // B5/M8：写库/子区域检查之前完成三分支归属判定。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, area.CustomerId, area.AppCode, appCode, currentUserRole, "删除该区域");
 
         // 检查是否有子区域
         var hasChildren = await _areaRepository.ExistsAsync(a => a.ParentId == id);

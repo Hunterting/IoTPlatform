@@ -4,6 +4,7 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
@@ -151,8 +152,36 @@ public class AreasController : ControllerBase
     {
         try
         {
+            // 【M1 / B2 QA 遗留】admin 自身 AppCode=null，旧软校验恒真跳过 → 可在任意客户下建区域。
+            // 这里按 DB 权威授权集合校验目标客户，且在任何写库之前完成。
+            if (Roles.ADMIN == User.FindFirst(ClaimTypes.Role)?.Value)
+            {
+                if (!request.CustomerId.HasValue)
+                {
+                    return Ok(ApiResponse<AreaDto>.BadRequest("租户管理员必须在授权客户下创建区域。"));
+                }
+                if (!await _customerScope.CanAccessCustomerAsync(User, request.CustomerId.Value))
+                {
+                    return Ok(ApiResponse<AreaDto>.Forbidden("无权在该客户下创建区域"));
+                }
+
+                var resolvedAppCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(request.CustomerId.Value);
+                if (string.IsNullOrWhiteSpace(resolvedAppCode))
+                {
+                    return Ok(ApiResponse<AreaDto>.BadRequest("目标客户缺少 AppCode"));
+                }
+
+                var verifiedResult = await _areaService.CreateAreaAsync(
+                    request, resolvedAppCode, customerScopeVerified: true);
+                return ApiResponse<AreaDto>.Success(verifiedResult, "区域创建成功");
+            }
+
             var result = await _areaService.CreateAreaAsync(request);
             return ApiResponse<AreaDto>.Success(result, "区域创建成功");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Ok(ApiResponse<AreaDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -176,10 +205,15 @@ public class AreasController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            var result = await _areaService.UpdateAreaAsync(id, request, appCode, role);
+            // B5/M8：显式解析范围（DB 权威）后下推给 Service 做三分支判据，禁止 AsyncLocal。
+            var scope = await _customerScope.ResolveAsync(User);
+            var result = await _areaService.UpdateAreaAsync(id, request, appCode, scope, customerScopeVerified: true);
             return ApiResponse<AreaDto>.Success(result, "区域更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<AreaDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -208,10 +242,15 @@ public class AreasController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            await _areaService.DeleteAreaAsync(id, appCode, role);
+            // B5/M8：删除前先按权威范围判定归属；集合外客户仍拒绝。
+            var scope = await _customerScope.ResolveAsync(User);
+            await _areaService.DeleteAreaAsync(id, appCode, scope, customerScopeVerified: true);
             return ApiResponse.Success("区域删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
