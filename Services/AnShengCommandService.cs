@@ -14,6 +14,7 @@
 //   Succeeded / Failed(设备应答失败) 由 AnShengMessageRouter 写；Timeout 由 SweepHost 写（T7-4）。
 //   互斥点是在途表 TryRemove 的 CAS 语义：谁摘到条目谁才有权写终态。
 
+using System.Security.Claims;
 using System.Text.Json;
 using IoTPlatform.Configuration;
 using IoTPlatform.Data;
@@ -22,6 +23,7 @@ using IoTPlatform.Infrastructure.Protocol;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using IoTPlatform.Infrastructure.Protocol.AnSheng.Legacy;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,6 +55,7 @@ public class AnShengCommandService : IAnShengCommandService
     private readonly IAnShengPendingCommandStore _pending;
     private readonly AnShengCommandOptions _options;
     private readonly ILogger<AnShengCommandService> _logger;
+    private readonly IDeviceAccessGuard _deviceGuard;
 
     /// <summary>
     /// 构造命令服务。
@@ -65,6 +68,7 @@ public class AnShengCommandService : IAnShengCommandService
     /// <param name="pending">在途命令表（Singleton）。</param>
     /// <param name="options">命令服务参数（TTL / 严格模式开关等）。</param>
     /// <param name="logger">日志。</param>
+    /// <param name="deviceGuard">设备归属守卫（B1/M4 单点收口；只判归属，不做 MQTT 协议校验）。</param>
     public AnShengCommandService(
         AppDbContext db,
         IProtocolAdapterFactory adapterFactory,
@@ -73,7 +77,8 @@ public class AnShengCommandService : IAnShengCommandService
         AnShengCommandGuard guard,
         IAnShengPendingCommandStore pending,
         IOptions<AnShengCommandOptions> options,
-        ILogger<AnShengCommandService> logger)
+        ILogger<AnShengCommandService> logger,
+        IDeviceAccessGuard deviceGuard)
     {
         _db = db;
         _adapterFactory = adapterFactory;
@@ -83,14 +88,54 @@ public class AnShengCommandService : IAnShengCommandService
         _pending = pending;
         _options = options?.Value ?? new AnShengCommandOptions();
         _logger = logger;
+        _deviceGuard = deviceGuard ?? throw new ArgumentNullException(nameof(deviceGuard));
+    }
+
+    /// <inheritdoc />
+    public Task<AnShengCommandResponse> SendCommandAsync(
+        long deviceId, string method,
+        Dictionary<string, object?>? parameters = null,
+        CancellationToken ct = default,
+        string? commandId = null)
+    {
+        // 旧签名是内部系统通道（HostedService / 调度器 / 应答回读 / DeviceCommandService）的既有入口。
+        // 无 principal 即明确走内部路径，不经过归属守卫，行为与 B1 之前逐字一致（原则 E）。
+        return SendCommandCoreAsync(deviceId, method, parameters, ct, commandId);
     }
 
     /// <inheritdoc />
     public async Task<AnShengCommandResponse> SendCommandAsync(
         long deviceId, string method,
-        Dictionary<string, object?>? parameters = null,
+        Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal,
         CancellationToken ct = default,
         string? commandId = null)
+    {
+        // 【B1/M4 单点收口】外部 Controller 必须显式传 User；缺 principal 即拒绝，绝不降级为内部通道。
+        if (principal == null)
+        {
+            throw new UnauthorizedAccessException("系统内部命令通道，禁止外部调用");
+        }
+
+        // ── 【原则 G】归属判定永远早于一切副作用 ───────────────────────────────
+        // 位置刻意放在 try 之外：ForbiddenAccessException / NotFoundException 必须原样抛给
+        // Controller 映射 403，绝不能被 SendCommandCoreAsync 的 catch (Exception) 吞成 Failure。
+        // 此处早于：设备点查、AnShengCommandGuard、Pending 记录落库、在途登记、MQTT publish。
+        await _deviceGuard.EnsureCanOperateAsync(principal, deviceId, ct).ConfigureAwait(false);
+
+        return await SendCommandCoreAsync(deviceId, method, parameters, ct, commandId)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 内部下发核心（原 SendCommandAsync 方法体，逐字保留 T7/T14 全部语义）。
+    /// 只由旧签名（内部通道）或已完成归属判定的新重载调用，自身不做归属判定。
+    /// </summary>
+    private async Task<AnShengCommandResponse> SendCommandCoreAsync(
+        long deviceId, string method,
+        Dictionary<string, object?>? parameters,
+        CancellationToken ct,
+        string? commandId)
     {
         // CommandId 必须在最早期就确定：拒绝态也要能被 GET /commands/{id} 查到。
         var effectiveCommandId = string.IsNullOrWhiteSpace(commandId)
@@ -494,10 +539,26 @@ public class AnShengCommandService : IAnShengCommandService
         };
 
     /// <inheritdoc />
-    public async Task<AnShengCommandResponse> ConfigureAutoReportAsync(
+    public Task<AnShengCommandResponse> ConfigureAutoReportAsync(
         long deviceId,
         AnShengAutoReportSettings settings,
         CancellationToken ct = default)
+        => ConfigureAutoReportCoreAsync(deviceId, settings, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengCommandResponse> ConfigureAutoReportAsync(
+        long deviceId,
+        AnShengAutoReportSettings settings,
+        ClaimsPrincipal? principal,
+        CancellationToken ct = default)
+        => ConfigureAutoReportCoreAsync(deviceId, settings, principal, ct);
+
+    /// <summary>自动上报配置下发核心：旧通道传 null，外部端点传 User。</summary>
+    private async Task<AnShengCommandResponse> ConfigureAutoReportCoreAsync(
+        long deviceId,
+        AnShengAutoReportSettings settings,
+        ClaimsPrincipal? principal,
+        CancellationToken ct)
     {
         var parameters = new Dictionary<string, object?>
         {
@@ -513,8 +574,18 @@ public class AnShengCommandService : IAnShengCommandService
             parameters["getDevStatusQ"] = settings.GetDevStatusQ;
         }
 
-        return await SendCommandAsync(deviceId, "setAutoReport", parameters, ct);
+        return await DispatchAsync(deviceId, "setAutoReport", parameters, principal, ct);
     }
+
+    /// <summary>
+    /// B1 统一分派：principal 为 null 走内部旧签名；非 null 走带守卫的新重载。
+    /// </summary>
+    private Task<AnShengCommandResponse> DispatchAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct, string? commandId = null)
+        => principal == null
+            ? SendCommandAsync(deviceId, method, parameters, ct, commandId)
+            : SendCommandAsync(deviceId, method, parameters, principal, ct, commandId);
 
     /// <inheritdoc />
     public async Task TriggerDiscoveryAsync(CancellationToken ct = default)
@@ -589,9 +660,14 @@ public class AnShengCommandService : IAnShengCommandService
     //     开关通断请改用 SendCommandAsync(deviceId, "action", { slotNum, action })。
 
     /// <inheritdoc />
-    public async Task<AnShengCommandResponse> RebootDeviceAsync(
+    public Task<AnShengCommandResponse> RebootDeviceAsync(
         long deviceId, CancellationToken ct = default)
-        => await SendCommandAsync(deviceId, "reboot", null, ct);
+        => DispatchAsync(deviceId, "reboot", null, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengCommandResponse> RebootDeviceAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchAsync(deviceId, "reboot", null, principal, ct);
 
     /// <inheritdoc />
     public async Task<AnShengCommandRecord?> GetRecordAsync(string commandId, CancellationToken ct = default)
@@ -617,3 +693,4 @@ public class AnShengCommandService : IAnShengCommandService
     // 以及在途表 IAnShengPendingCommandStore（key = imei:frameId，带 TTL 与 RecordId）。
     // 前者持久、后者带生命周期，两者都不会无界增长。
 }
+

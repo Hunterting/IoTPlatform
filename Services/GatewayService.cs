@@ -7,6 +7,8 @@ using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 
+using IoTPlatform.Services.Guards;
+
 namespace IoTPlatform.Services;
 
 /// <summary>
@@ -23,10 +25,15 @@ public class GatewayService : IGatewayService
         _mapper = mapper;
     }
 
-    public async Task<PagedResponse<GatewayDto>> GetGatewaysAsync(int page, int pageSize, string? keyword, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<GatewayDto>> GetGatewaysAsync(int page, int pageSize, string? keyword, string? appCode) => GetGatewaysAsync(page, pageSize, keyword, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<GatewayDto>> GetGatewaysAsync(int page, int pageSize, string? keyword, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var repo = _unitOfWork.GetRepository<Gateway>();
         var query = repo.GetQueryable(appCode);
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (!string.IsNullOrEmpty(keyword))
         {

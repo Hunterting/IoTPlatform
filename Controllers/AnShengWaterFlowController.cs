@@ -21,6 +21,8 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
+using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -71,14 +73,23 @@ public class AnShengWaterFlowController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> RequestFlowInfo(long deviceId)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _waterFlowService.RequestFlowInfoAsync(deviceId, ct);
+            var result = await _waterFlowService.RequestFlowInfoAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "水流量实时读数请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "实时读数请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -96,6 +107,12 @@ public class AnShengWaterFlowController : ControllerBase
     [HttpGet("{deviceId:long}/water/flow/info")]
     public async Task<ActionResult<ApiResponse<AnShengWaterFlowInfoDto?>>> GetLatestFlowInfo(long deviceId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<AnShengWaterFlowInfoDto?>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -118,14 +135,23 @@ public class AnShengWaterFlowController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> ResetTotalFlow(long deviceId)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _waterFlowService.ResetTotalFlowAsync(deviceId, ct);
+            var result = await _waterFlowService.ResetTotalFlowAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "重置累计流量请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "重置累计流量请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -146,6 +172,12 @@ public class AnShengWaterFlowController : ControllerBase
     [HttpGet("{deviceId:long}/water/flow/config")]
     public async Task<ActionResult<ApiResponse<AnShengWaterFlowConfigDto?>>> GetFlowConfigMirror(long deviceId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<AnShengWaterFlowConfigDto?>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -171,6 +203,7 @@ public class AnShengWaterFlowController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> SetFlowConfig(
         long deviceId, [FromBody] AnShengWaterFlowConfigRequest? request)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -179,11 +212,19 @@ public class AnShengWaterFlowController : ControllerBase
                 return ApiResponse<AnShengEnergyResultDto>.BadRequest("请求体不能为空");
             }
 
-            var result = await _waterFlowService.SetFlowConfigAsync(deviceId, request, ct);
+            var result = await _waterFlowService.SetFlowConfigAsync(deviceId, request, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "设置流量配置请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "设置流量配置请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -201,14 +242,23 @@ public class AnShengWaterFlowController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> ResetFlowConfig(long deviceId)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _waterFlowService.ResetFlowConfigAsync(deviceId, ct);
+            var result = await _waterFlowService.ResetFlowConfigAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "重置流量配置请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "重置流量配置请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {

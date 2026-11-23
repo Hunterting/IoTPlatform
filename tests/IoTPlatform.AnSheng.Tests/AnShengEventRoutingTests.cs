@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.Data;
@@ -83,9 +84,19 @@ public sealed class AnShengEventRoutingTests : IDisposable
             CancellationToken ct = default) =>
             Task.FromResult(new AnShengDelayTaskResultDto());
 
+        // 【B1】新增重载委托到同语义的旧实现，测试语义不变。
+        public Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
+            long deviceId, int slotNum, bool enable, string sAction, string eAction, int secs,
+            ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            StartDelayTaskAsync(deviceId, slotNum, enable, sAction, eAction, secs, ct);
+
         public Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
             long deviceId, int slotNum, CancellationToken ct = default) =>
             Task.FromResult(new AnShengDelayTaskResultDto());
+
+        public Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
+            long deviceId, int slotNum, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            StopDelayTaskAsync(deviceId, slotNum, ct);
 
         public Task<List<AnShengDelayTaskDto>> GetDelayTasksAsync(
             long deviceId, CancellationToken ct = default) =>
@@ -113,6 +124,11 @@ public sealed class AnShengEventRoutingTests : IDisposable
             long? rowVersion = null, CancellationToken ct = default) =>
             Task.FromResult(new AnShengTimeTaskResultDto());
 
+        public Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+            long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+            ClaimsPrincipal? principal, long? rowVersion = null, CancellationToken ct = default) =>
+            SetTimeTasksAsync(deviceId, slots, confirm, rowVersion, ct);
+
         public Task<AnShengSlotTimeTaskSetDto?> GetSlotTimeTasksAsync(
             long deviceId, int slotNum, CancellationToken ct = default) =>
             Task.FromResult<AnShengSlotTimeTaskSetDto?>(null);
@@ -123,6 +139,14 @@ public sealed class AnShengEventRoutingTests : IDisposable
             IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
             bool confirm, long? rowVersion = null, CancellationToken ct = default) =>
             Task.FromResult(new AnShengTimeTaskResultDto());
+
+        public Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+            long deviceId, int slotNum,
+            IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+            IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+            bool confirm, ClaimsPrincipal? principal,
+            long? rowVersion = null, CancellationToken ct = default) =>
+            SetSlotTimeTasksAsync(deviceId, slotNum, timeTasks, loopTimeTasks, confirm, rowVersion, ct);
 
         public Task ApplyTimeTasksReadbackAsync(
             long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, CancellationToken ct = default) =>
@@ -144,29 +168,60 @@ public sealed class AnShengEventRoutingTests : IDisposable
             long deviceId, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
 
+        // 【B1】新增重载委托到同语义的旧实现，测试语义不变。
+        public Task<AnShengEnergyResultDto> RequestRealtimeAsync(
+            long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            RequestRealtimeAsync(deviceId, ct);
+
         public Task<AnShengEnergyResultDto> RequestStatisticsAsync(
             long deviceId, string? q = null, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> RequestStatisticsAsync(
+            long deviceId, string? q, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            RequestStatisticsAsync(deviceId, q, ct);
 
         public Task<AnShengEnergyResultDto> ClearStatisticsAsync(
             long deviceId, int? slotNum, bool confirm, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
 
+        public Task<AnShengEnergyResultDto> ClearStatisticsAsync(
+            long deviceId, int? slotNum, bool confirm,
+            ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            ClearStatisticsAsync(deviceId, slotNum, confirm, ct);
+
         public Task<AnShengEnergyResultDto> GetCalParamsAsync(
             long deviceId, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> GetCalParamsAsync(
+            long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            GetCalParamsAsync(deviceId, ct);
 
         public Task<AnShengEnergyResultDto> SetCalParamsAsync(
             long deviceId, IReadOnlyDictionary<string, double> calParams, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
 
+        public Task<AnShengEnergyResultDto> SetCalParamsAsync(
+            long deviceId, IReadOnlyDictionary<string, double> calParams,
+            ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            SetCalParamsAsync(deviceId, calParams, ct);
+
         public Task<AnShengEnergyResultDto> ResetCalParamsAsync(
             long deviceId, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
 
+        public Task<AnShengEnergyResultDto> ResetCalParamsAsync(
+            long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            ResetCalParamsAsync(deviceId, ct);
+
         public Task<AnShengEnergyResultDto> AutoCalAsync(
             long deviceId, double power, CancellationToken ct = default) =>
             Task.FromResult(new AnShengEnergyResultDto());
+
+        public Task<AnShengEnergyResultDto> AutoCalAsync(
+            long deviceId, double power, ClaimsPrincipal? principal, CancellationToken ct = default) =>
+            AutoCalAsync(deviceId, power, ct);
 
         public Task<List<AnShengEmStatisticDto>> QueryStatisticsAsync(
             long deviceId, int? slotNum = null, AnShengEmGranularity? granularity = null,

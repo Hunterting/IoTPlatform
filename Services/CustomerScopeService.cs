@@ -20,11 +20,33 @@ public sealed class CustomerScopeService : ICustomerScopeService
 {
     private readonly IUserCustomerRepository _grants;
     private readonly ICustomerRepository _customers;
+    private readonly IDeviceRepository? _devices;
+    private readonly IProjectRepository? _projects;
 
+    /// <summary>
+    /// 兼容构造：仅供存量单测/内部仅需三分支解析的调用方使用。
+    /// 新增的 5 个反查方法中，设备/项目反查依赖可选仓储；若经此构造创建且调用这两个方法会抛
+    /// InvalidOperationException。生产 DI 走下方的四参数构造（[ActivatorUtilitiesConstructor]）。
+    /// </summary>
     public CustomerScopeService(IUserCustomerRepository grants, ICustomerRepository customers)
+        : this(grants, customers, null, null)
+    {
+    }
+
+    /// <summary>
+    /// 生产构造：新增 5 个归属反查方法所需的全部仓储。
+    /// </summary>
+    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
+    public CustomerScopeService(
+        IUserCustomerRepository grants,
+        ICustomerRepository customers,
+        IDeviceRepository? devices,
+        IProjectRepository? projects)
     {
         _grants = grants ?? throw new ArgumentNullException(nameof(grants));
         _customers = customers ?? throw new ArgumentNullException(nameof(customers));
+        _devices = devices;
+        _projects = projects;
     }
 
     /// <inheritdoc />
@@ -121,6 +143,91 @@ public sealed class CustomerScopeService : ICustomerScopeService
         // ResolveAsync 对 Multi 每次读 DB 并反查 AppCode，对 Single 只读 claim。
         var scope = await ResolveAsync(principal, ct).ConfigureAwait(false);
         return scope.AppCodes;
+    }
+
+    // ── 授权缺口统一修复新增：5 个服务端归属反查方法（设计 §3.2 A）──────────────────
+
+    /// <inheritdoc />
+    public async Task<long?> ResolveCustomerIdByAppCodeAsync(string appCode, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(appCode))
+        {
+            return null;
+        }
+
+        return await _customers.GetQueryable()
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(c => c.AppCode == appCode)
+            .Select(c => (long?)c.Id)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> ResolveAppCodeByCustomerIdAsync(long customerId, CancellationToken ct = default)
+    {
+        return await _customers.GetQueryable()
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(c => c.Id == customerId)
+            .Select(c => c.AppCode)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<long?> ResolveCustomerIdByDeviceIdAsync(long deviceId, CancellationToken ct = default)
+    {
+        if (_devices == null)
+        {
+            throw new InvalidOperationException(
+                "CustomerScopeService 由兼容构造创建，未注入设备仓储，无法按设备反查归属；请使用四参数构造。");
+        }
+
+        // 设备无 CustomerId 列：先 IgnoreQueryFilters 点查设备 AppCode。
+        var deviceAppCode = await _devices.GetQueryable()
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(d => d.Id == deviceId)
+            .Select(d => d.AppCode)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(deviceAppCode))
+        {
+            return null;
+        }
+
+        // AppCode↔Customer 1:1 不变（设计 §7.2-7）：按 AppCode 反查客户 ID。
+        return await ResolveCustomerIdByAppCodeAsync(deviceAppCode, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<long?> ResolveCustomerIdByProjectIdAsync(long projectId, CancellationToken ct = default)
+    {
+        if (_projects == null)
+        {
+            throw new InvalidOperationException(
+                "CustomerScopeService 由兼容构造创建，未注入项目仓储，无法按项目反查归属；请使用四参数构造。");
+        }
+
+        // 项目自带权威 CustomerId 列，IgnoreQueryFilters 后原值返回。
+        return await _projects.GetQueryable()
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(p => p.Id == projectId)
+            .Select(p => (long?)p.CustomerId)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public bool IsSharedSystemRow(string? appCode, bool? isSystem)
+    {
+        // 设计 §3.5：共享行 = "无租户归属" 或 "显式系统行"。
+        // 注意本判定只对字典/配置类实体调用；附件/角色/受控设备的 AppCode=null 是缺陷，不得调用本方法放行。
+        return isSystem == true || string.IsNullOrWhiteSpace(appCode);
     }
 
     /// <summary>

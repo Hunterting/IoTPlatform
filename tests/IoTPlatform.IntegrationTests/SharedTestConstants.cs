@@ -55,6 +55,13 @@ public static class SharedTestConstants
     /// <summary>默认测试用户 Id（落成 <c>ClaimTypes.NameIdentifier</c>）。</summary>
     public const string DefaultUserId = "1001";
 
+    /// <summary>
+    /// 【B1 AnSheng 单点收口】<see cref="Seed.SeedData"/> 实际播种的 admin 用户主键。
+    /// 命令守卫对 admin 以 user_customers 判定归属，旧 <c>AsAdmin()</c> 若继续用 1001
+    /// 会与授权行不匹配而误判 403。集成用例串行执行（同一 Collection），故静态值安全。
+    /// </summary>
+    public static long SeededAdminUserId { get; set; }
+
     /// <summary>默认测试租户主键（落成 <c>CustomerId</c> claim）。</summary>
     public const string DefaultCustomerId = "1";
 

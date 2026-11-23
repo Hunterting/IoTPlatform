@@ -101,6 +101,17 @@ builder.Services.AddScoped<SeedDictionaries>();
 // 注册服务
 // 多客户授权：越权判定唯一入口（All/Multi/Single 三分支）
 builder.Services.AddScoped<IoTPlatform.Services.ICustomerScopeService, IoTPlatform.Services.CustomerScopeService>();
+
+// ───────────────────────────────────────────────────────────────────────────
+// 授权缺口统一修复 · 公共基础 Guards（设计 §6.1）
+// 生命周期一律 Scoped：Guard 内部持有 AppDbContext / ICustomerScopeService，
+// 与唯一消费方（Controller / Service）同域；判据全部委托 ICustomerScopeService，不产生第二套。
+// ───────────────────────────────────────────────────────────────────────────
+builder.Services.AddScoped<IoTPlatform.Services.Guards.IDeviceAccessGuard, IoTPlatform.Services.Guards.DeviceAccessGuard>();
+builder.Services.AddScoped<IoTPlatform.Services.Guards.IEzvizScopeGuard, IoTPlatform.Services.Guards.EzvizScopeGuard>();
+builder.Services.AddScoped<IoTPlatform.Services.Guards.ICustomerScopeGuard, IoTPlatform.Services.Guards.CustomerScopeGuard>();
+// B4 查询端点：列表范围解析（无状态静态类）与详情归属点查守卫（持有 DbContext，Scoped）。
+builder.Services.AddScoped<IoTPlatform.Services.Guards.IDetailScopeGuard, IoTPlatform.Services.Guards.DetailScopeGuard>();
 builder.Services.AddScoped<IoTPlatform.Services.IAuthService, IoTPlatform.Services.AuthService>();
 builder.Services.AddScoped<IoTPlatform.Services.IUserService, IoTPlatform.Services.UserService>();
 builder.Services.AddScoped<IoTPlatform.Services.IRoleService, IoTPlatform.Services.RoleService>();
@@ -117,8 +128,12 @@ builder.Services.AddScoped<IoTPlatform.Services.ILogService, IoTPlatform.Service
 builder.Services.AddScoped<IoTPlatform.Services.IDictionaryService, IoTPlatform.Services.DictionaryService>();
 builder.Services.AddScoped<IoTPlatform.Services.ISettingsService, IoTPlatform.Services.SettingsService>();
 
-// 文件存储服务
-builder.Services.AddScoped<IoTPlatform.Services.FileStorageService, IoTPlatform.Services.FileStorageService>();
+// 文件存储服务（M9 头伪造修复）
+// 保留具体类型注册以兼容存量内部调用；接口映射到同一 Scoped 实例，
+// 让 Controller 仅依赖抽象，scope 重载在这里统一收口（禁止再从请求头取 AppCode）。
+builder.Services.AddScoped<IoTPlatform.Services.FileStorageService>();
+builder.Services.AddScoped<IoTPlatform.Services.IFileStorageService>(sp =>
+    sp.GetRequiredService<IoTPlatform.Services.FileStorageService>());
 
 // 高级功能模块服务
 builder.Services.AddScoped<IoTPlatform.Services.IProtocolConfigService, IoTPlatform.Services.ProtocolConfigService>();

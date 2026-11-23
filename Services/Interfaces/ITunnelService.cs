@@ -12,7 +12,11 @@ public interface ITunnelService
     /// <summary>
     /// 获取隧道列表
     /// </summary>
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
     Task<PagedResponse<TunnelDto>> GetTunnelsAsync(int page, int pageSize, string? keyword, string? appCode);
+
+    /// <summary>B4/M5：Multi 授权客户集合范围下推。</summary>
+    Task<PagedResponse<TunnelDto>> GetTunnelsAsync(int page, int pageSize, string? keyword, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null) => GetTunnelsAsync(page, pageSize, keyword, appCode);
 
     /// <summary>
     /// 获取隧道详情

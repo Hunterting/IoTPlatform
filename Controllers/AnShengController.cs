@@ -7,6 +7,7 @@ using IoTPlatform.Helpers;
 using IoTPlatform.Infrastructure.Protocol.AnSheng;
 using IoTPlatform.Models;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -343,6 +344,7 @@ public class AnShengController : ControllerBase
         long deviceId,
         [FromBody] AnShengAutoReportRequest request)
     {
+        // 【B1/M4】自动上报配置最终会下发 setAutoReport：显式传 User 给命令服务单点收口。
         try
         {
             var settings = new AnShengAutoReportSettings
@@ -352,6 +354,10 @@ public class AnShengController : ControllerBase
                 OrderUpSec = request.OrderUpSec ?? 300,
                 Rs485Sec = request.Rs485Sec ?? 0
             };
+
+            // 【原则 G】先经命令服务完成归属判定（越权在此抛 403，下面一行 EF 写都不执行），
+            // 再持久化配置。原顺序是先写库后下发，会让越权调用留下配置变更。
+            var result = await _commandService.ConfigureAutoReportAsync(deviceId, settings, User);
 
             // 持久化到 AnShengDeviceConfig
             var config = await _db.Set<AnShengDeviceConfig>()
@@ -389,14 +395,20 @@ public class AnShengController : ControllerBase
 
             await _db.SaveChangesAsync();
 
-            // 下发 setAutoReport 到设备
-            var result = await _commandService.ConfigureAutoReportAsync(deviceId, settings);
-
             _logger.LogInformation(
                 "安圣自动上报已配置: DeviceId={DeviceId}, Secs=({GetDevStatus},{OrderUp},{Rs485})",
                 deviceId, settings.GetDevStatusSec, settings.OrderUpSec, settings.Rs485Sec);
 
             return ApiResponse<AnShengCommandResponse>.Success(result, "自动上报配置已下发");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 越权：设备命令未下发，且本方法尚未写任何 AnShengDeviceConfig。
+            return ApiResponse<AnShengCommandResponse>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengCommandResponse>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -420,8 +432,9 @@ public class AnShengController : ControllerBase
     {
         try
         {
+            // 【B1/M4】原生命令显式传 User；归属校验在任何 MQTT publish 之前完成。
             var result = await _commandService.SendCommandAsync(
-                deviceId, request.Method, request.Parameters);
+                deviceId, request.Method, request.Parameters, User);
 
             if (!result.Success)
             {
@@ -429,6 +442,14 @@ public class AnShengController : ControllerBase
             }
 
             return ApiResponse<AnShengCommandResponse>.Success(result, $"命令 {request.Method} 已下发");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengCommandResponse>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengCommandResponse>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -455,12 +476,21 @@ public class AnShengController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengCommandResponse>>> RebootDevice(long deviceId)
     {
+        // 【B1/M4】重启命令显式传 User，由命令服务单点校验归属。
         try
         {
-            var result = await _commandService.RebootDeviceAsync(deviceId);
+            var result = await _commandService.RebootDeviceAsync(deviceId, User);
             return result.Success
                 ? ApiResponse<AnShengCommandResponse>.Success(result, "重启命令已下发")
                 : ApiResponse<AnShengCommandResponse>.BadRequest(result.ErrorMessage ?? "重启失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengCommandResponse>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengCommandResponse>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -494,6 +524,12 @@ public class AnShengController : ControllerBase
     public async Task<ActionResult<ApiResponse<IReadOnlyList<AnShengCommandSpecDto>>>> GetCatalog(
         [FromQuery] long? deviceId = null)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (deviceId is > 0 && !await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId.Value))
+            {
+                return Ok(ApiResponse<IReadOnlyList<AnShengCommandSpecDto>>.Fail(403, "无权访问该设备"));
+            }
+
         try
         {
             IReadOnlyList<AnShengCommandSpecDto> items;
@@ -534,6 +570,12 @@ public class AnShengController : ControllerBase
     [HttpGet("{deviceId:long}/profile")]
     public async Task<ActionResult<ApiResponse<AnShengDeviceProfileDto>>> GetProfile(long deviceId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<AnShengDeviceProfileDto>.Fail(403, "无权访问该设备"));
+            }
+
         try
         {
             var profile = await _profileService.GetByDeviceIdAsync(deviceId, HttpContext.RequestAborted);
@@ -562,6 +604,15 @@ public class AnShengController : ControllerBase
     [HttpGet("commands/{commandId}")]
     public async Task<ActionResult<ApiResponse<AnShengCommandRecordDto>>> GetCommandRecord(string commandId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            // 真实记录落在 anshengcommandrecords（device_commands 表当前 0 行）；按 CommandId 点查该实体归属。
+            // CanAccessOwnedEntityAsync 的 Multi 分支在 CustomerId 为空时会按 AppCode 反查权威 CustomerId，
+            // 因此 admin 自有授权客户可放行、越集 403，下级按 claim AppCode 比对。
+            if (!await this.CanReadDetailByKeyAsync<IoTPlatform.Models.AnShengCommandRecord>(commandId, "CommandId"))
+            {
+                return Ok(ApiResponse<AnShengCommandRecordDto>.Fail(403, "无权访问该设备"));
+            }
+
         try
         {
             if (string.IsNullOrWhiteSpace(commandId))

@@ -1,9 +1,13 @@
+using System.Security.Claims;
 using IoTPlatform.Configuration;
+using IoTPlatform.Data;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Controllers;
 
@@ -16,6 +20,8 @@ namespace IoTPlatform.Controllers;
 ///    前端据此显示「未配置萤石凭证」的诚实提示，绝不返回任何模拟数据。
 ///  - 萤石告警走消息推送/回调，无「拉取告警列表」接口，本控制器不伪造告警；
 ///    实时报警由前端复用本平台 /alerts 接口。
+///  - 【B1/M7】所有以摄像头为目标的端点先过 IEzvizScopeGuard 归属校验（原则 G），
+///    越权返回业务码 403 且零萤石 API 副作用；绑定目标区域另过 IDeviceAccessGuard。
 /// </summary>
 [ApiController]
 [Route("api/v1/ezviz")]
@@ -24,11 +30,25 @@ public class EzvizController : ControllerBase
 {
     private readonly IEzvizService _ezviz;
     private readonly ILogger<EzvizController> _logger;
+    private readonly IEzvizScopeGuard _ezvizGuard;
+    private readonly IDeviceAccessGuard _deviceGuard;
+    private readonly ICustomerScopeService _scope;
+    private readonly AppDbContext _db;
 
-    public EzvizController(IEzvizService ezviz, ILogger<EzvizController> logger)
+    public EzvizController(
+        IEzvizService ezviz,
+        ILogger<EzvizController> logger,
+        IEzvizScopeGuard ezvizGuard,
+        IDeviceAccessGuard deviceGuard,
+        ICustomerScopeService scope,
+        AppDbContext db)
     {
         _ezviz = ezviz;
         _logger = logger;
+        _ezvizGuard = ezvizGuard;
+        _deviceGuard = deviceGuard;
+        _scope = scope;
+        _db = db;
     }
 
     private string? AppCode => User.FindFirst("AppCode")?.Value;
@@ -54,6 +74,14 @@ public class EzvizController : ControllerBase
     public ActionResult<ApiResponse<EzvizConfigStatusDto>> GetConfigStatus()
         => ApiResponse<EzvizConfigStatusDto>.Success(_ezviz.GetConfigStatus());
 
+    /// <summary>
+    /// 【B1/M7】摄像头归属前置校验：越权在萤石 HTTP 调用之前拒绝（原则 G）。
+    /// </summary>
+    private async Task EnsureCameraAsync(string deviceSerial, CancellationToken ct)
+        => await _ezvizGuard.EnsureCameraAccessAsync(User, deviceSerial, ct);
+
+    // ── 列表 ────────────────────────────────────────────────────────────────
+
     /// <summary>设备列表（device/list）</summary>
     [HttpGet("devices")]
     public async Task<ActionResult<ApiResponse<EzvizPagedResult<EzvizDeviceDto>>>> GetDevices(
@@ -64,8 +92,19 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetDevicesAsync(pageStart, pageSize, AppCode, includeUnbound, ct);
+            // 【B1/M7】列表在 Service 层用 IEzvizScopeGuard.GetAllowedAppCodesAsync 显式下推
+            // （超管空集合=不过滤），不再依赖冻结的全局过滤器。
+            var result = await _ezviz.GetDevicesAsync(
+                pageStart, pageSize, AppCode, includeUnbound, User, ct);
             return ApiResponse<EzvizPagedResult<EzvizDeviceDto>>.Success(result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<EzvizPagedResult<EzvizDeviceDto>>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<EzvizPagedResult<EzvizDeviceDto>>.Unauthorized(ex.Message);
         }
         catch (EzvizException ex) { return Fail<EzvizPagedResult<EzvizDeviceDto>>(ex); }
         catch (Exception ex)
@@ -82,9 +121,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetCamerasAsync(deviceSerial, ct);
+            await EnsureCameraAsync(deviceSerial, ct);
+            var result = await _ezviz.GetCamerasAsync(deviceSerial, User, ct);
             return ApiResponse<List<EzvizCameraDto>>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<List<EzvizCameraDto>>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<List<EzvizCameraDto>>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<List<EzvizCameraDto>>(ex); }
         catch (Exception ex) { return ApiResponse<List<EzvizCameraDto>>.Error(ex.Message); }
     }
@@ -96,9 +138,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetLiveAddressAsync(request, ct);
+            await EnsureCameraAsync(request.DeviceSerial, ct);
+            var result = await _ezviz.GetLiveAddressAsync(request, User, ct);
             return ApiResponse<EzvizLiveAddressDto>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<EzvizLiveAddressDto>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<EzvizLiveAddressDto>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<EzvizLiveAddressDto>(ex); }
         catch (Exception ex) { return ApiResponse<EzvizLiveAddressDto>.Error(ex.Message); }
     }
@@ -110,9 +155,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.CaptureAsync(request, ct);
+            await EnsureCameraAsync(request.DeviceSerial, ct);
+            var result = await _ezviz.CaptureAsync(request, User, ct);
             return ApiResponse<EzvizCaptureDto>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<EzvizCaptureDto>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<EzvizCaptureDto>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<EzvizCaptureDto>(ex); }
         catch (Exception ex) { return ApiResponse<EzvizCaptureDto>.Error(ex.Message); }
     }
@@ -124,9 +172,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetPlaybackAsync(request, ct);
+            await EnsureCameraAsync(request.DeviceSerial, ct);
+            var result = await _ezviz.GetPlaybackAsync(request, User, ct);
             return ApiResponse<List<EzvizPlaybackRecordDto>>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<List<EzvizPlaybackRecordDto>>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<List<EzvizPlaybackRecordDto>>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<List<EzvizPlaybackRecordDto>>(ex); }
         catch (Exception ex) { return ApiResponse<List<EzvizPlaybackRecordDto>>.Error(ex.Message); }
     }
@@ -138,9 +189,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            await _ezviz.PtzStartAsync(request, ct);
+            await EnsureCameraAsync(request.DeviceSerial, ct);
+            await _ezviz.PtzStartAsync(request, User, ct);
             return ApiResponse<object>.Success(new { ok = true }, "云台指令已下发");
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<object>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<object>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<object>(ex); }
         catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
     }
@@ -152,9 +206,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            await _ezviz.PtzStopAsync(request, ct);
+            await EnsureCameraAsync(request.DeviceSerial, ct);
+            await _ezviz.PtzStopAsync(request, User, ct);
             return ApiResponse<object>.Success(new { ok = true }, "云台已停止");
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<object>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<object>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<object>(ex); }
         catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
     }
@@ -166,9 +223,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetDeviceStatusAsync(deviceSerial, ct);
+            await EnsureCameraAsync(deviceSerial, ct);
+            var result = await _ezviz.GetDeviceStatusAsync(deviceSerial, User, ct);
             return ApiResponse<EzvizDeviceStatusDto>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<EzvizDeviceStatusDto>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<EzvizDeviceStatusDto>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<EzvizDeviceStatusDto>(ex); }
         catch (Exception ex) { return ApiResponse<EzvizDeviceStatusDto>.Error(ex.Message); }
     }
@@ -180,9 +240,13 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.BindCameraAsync(request, AppCode, ct);
+            // 【B1/M7】绑定目标区域必须授权；AppCode 从服务端点查的区域派生，不采信请求体/请求头。
+            var appCode = await ResolveBindAppCodeAsync(request, ct);
+            var result = await _ezviz.BindCameraAsync(request, appCode, User, ct);
             return ApiResponse<EzvizDeviceDto>.Success(result, "摄像头已绑定区域");
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<EzvizDeviceDto>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<EzvizDeviceDto>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<EzvizDeviceDto>(ex); }
         catch (Exception ex)
         {
@@ -198,13 +262,17 @@ public class EzvizController : ControllerBase
     /// </summary>
     [HttpPost("devices/{deviceSerial}/encrypt/off")]
     [PermissionAuthorize(Permissions.UPDATE_DEVICES)]
-    public async Task<ActionResult<ApiResponse<object>>> CloseEncryption(string deviceSerial, CancellationToken ct = default)
+    public async Task<ActionResult<ApiResponse<object>>> CloseEncryption(
+        string deviceSerial, CancellationToken ct = default)
     {
         try
         {
-            await _ezviz.CloseEncryptionAsync(deviceSerial, ct);
+            await EnsureCameraAsync(deviceSerial, ct);
+            await _ezviz.CloseEncryptionAsync(deviceSerial, User, ct);
             return ApiResponse<object>.Success(new { ok = true }, "设备视频加密已关闭");
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<object>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<object>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<object>(ex); }
         catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
     }
@@ -220,9 +288,12 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            await _ezviz.SetVideoEncodeAsync(deviceSerial, request.EncodeType, request.ChannelNo, ct);
+            await EnsureCameraAsync(deviceSerial, ct);
+            await _ezviz.SetVideoEncodeAsync(deviceSerial, request.EncodeType, request.ChannelNo, User, ct);
             return ApiResponse<object>.Success(new { ok = true }, $"设备视频编码已切换为 {request.EncodeType}");
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<object>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<object>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<object>(ex); }
         catch (Exception ex) { return ApiResponse<object>.Error(ex.Message); }
     }
@@ -234,10 +305,42 @@ public class EzvizController : ControllerBase
     {
         try
         {
-            var result = await _ezviz.GetVideoEncodeAsync(deviceSerial, channelNo, ct);
+            await EnsureCameraAsync(deviceSerial, ct);
+            var result = await _ezviz.GetVideoEncodeAsync(deviceSerial, channelNo, User, ct);
             return ApiResponse<int?>.Success(result);
         }
+        catch (ForbiddenAccessException ex) { return ApiResponse<int?>.Forbidden(ex.Message); }
+        catch (UnauthorizedAccessException ex) { return ApiResponse<int?>.Unauthorized(ex.Message); }
         catch (EzvizException ex) { return Fail<int?>(ex); }
         catch (Exception ex) { return ApiResponse<int?>.Error(ex.Message); }
+    }
+
+    /// <summary>
+    /// 解析绑定目标 AppCode：区域归属点查 + Guard 判定；无区域时仅允许授权内已绑定摄像头改信息。
+    /// </summary>
+    private async Task<string?> ResolveBindAppCodeAsync(EzvizBindCameraRequest request, CancellationToken ct)
+    {
+        if (request.AreaId.HasValue)
+        {
+            await _deviceGuard.EnsureAreaAccessAsync(User, request.AreaId.Value, ct);
+            var appCode = await _db.Areas
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(a => a.Id == request.AreaId.Value)
+                .Select(a => a.AppCode)
+                .FirstOrDefaultAsync(ct);
+
+            if (!string.IsNullOrWhiteSpace(appCode)) return appCode;
+        }
+        else
+        {
+            await _ezvizGuard.EnsureCameraAccessAsync(User, request.DeviceSerial, ct);
+        }
+
+        // 区域无 AppCode 的存量数据兜底：仅授权集合唯一时才能安全派生。
+        var scope = await _scope.ResolveAsync(User, ct);
+        if (scope.Mode == CustomerScopeMode.All) return null;
+        if (scope.AppCodes.Count == 1) return scope.AppCodes[0];
+        throw new ForbiddenAccessException("目标区域缺少租户归属，禁止绑定");
     }
 }

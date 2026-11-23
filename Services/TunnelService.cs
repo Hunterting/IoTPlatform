@@ -7,6 +7,8 @@ using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 
+using IoTPlatform.Services.Guards;
+
 namespace IoTPlatform.Services;
 
 /// <summary>
@@ -23,9 +25,14 @@ public class TunnelService : ITunnelService
         _mapper = mapper;
     }
 
-    public async Task<PagedResponse<TunnelDto>> GetTunnelsAsync(int page, int pageSize, string? keyword, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<TunnelDto>> GetTunnelsAsync(int page, int pageSize, string? keyword, string? appCode) => GetTunnelsAsync(page, pageSize, keyword, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<TunnelDto>> GetTunnelsAsync(int page, int pageSize, string? keyword, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _unitOfWork.GetRepository<Tunnel>().Query(appCode);
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (!string.IsNullOrEmpty(keyword))
         {

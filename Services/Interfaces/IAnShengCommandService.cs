@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
 
@@ -35,6 +36,28 @@ public interface IAnShengCommandService
         string? commandId = null);
 
     /// <summary>
+    /// 【授权缺口 B1 / M4 单点收口】带调用方身份的下发入口。
+    ///
+    /// <para>外部 HTTP 命令端点（含名义 GET 的 GetCalParams）必须经本重载下发：
+    /// 在<b>任何 MQTT 发布、在途登记与命令记录落库之前</b>由
+    /// <c>IDeviceAccessGuard.EnsureCanOperateAsync</c> 完成 deviceId → CustomerId 归属判定，
+    /// 越权直接抛 <see cref="ForbiddenAccessException"/>，物理设备零副作用（原则 G）。</para>
+    /// <para>旧签名保持原样供 HostedService / 调度器等内部系统通道使用，不做归属过滤（原则 E）。</para>
+    /// </summary>
+    /// <param name="deviceId">设备 ID。</param>
+    /// <param name="method">安圣 method。</param>
+    /// <param name="parameters">参数字典，可为 null。</param>
+    /// <param name="principal">当前请求 principal；<b>禁止为 null</b>，否则抛 <see cref="UnauthorizedAccessException"/>。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <param name="commandId">平台命令标识；为 null 时由服务生成。</param>
+    /// <returns>下发结果。</returns>
+    /// <exception cref="UnauthorizedAccessException">principal 为 null（外部调用未传 User）。</exception>
+    /// <exception cref="Guards.ForbiddenAccessException">跨租户/无归属设备。</exception>
+    Task<AnShengCommandResponse> SendCommandAsync(long deviceId, string method,
+        Dictionary<string, object?>? parameters, ClaimsPrincipal? principal,
+        CancellationToken ct = default, string? commandId = null);
+
+    /// <summary>
     /// 配置设备自动上报间隔并下发 setAutoReport 命令
     /// </summary>
     /// <param name="deviceId">设备 ID</param>
@@ -43,6 +66,10 @@ public interface IAnShengCommandService
     /// <returns>包含 FrameId 和下发结果的响应</returns>
     Task<AnShengCommandResponse> ConfigureAutoReportAsync(long deviceId,
         AnShengAutoReportSettings settings, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的自动上报配置下发；同一单点收口校验归属。</summary>
+    Task<AnShengCommandResponse> ConfigureAutoReportAsync(long deviceId,
+        AnShengAutoReportSettings settings, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>
     /// 触发设备发现：广播 getDevStatus 命令到所有未知 IMEI
@@ -57,6 +84,10 @@ public interface IAnShengCommandService
 
     /// <summary>远程重启二开设备</summary>
     Task<AnShengCommandResponse> RebootDeviceAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的重启下发；同一单点收口校验归属。</summary>
+    Task<AnShengCommandResponse> RebootDeviceAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>
     /// 按平台命令标识查询单条命令记录（T7-5 只读 API <c>GET /commands/{commandId}</c> 用）。

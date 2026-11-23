@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.DTOs.Responses;
@@ -49,6 +50,10 @@ public interface IAnShengEnergyService
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> RequestRealtimeAsync(long deviceId, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的实时读数请求；内部走命令服务单点归属校验。</summary>
+    Task<AnShengEnergyResultDto> RequestRealtimeAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>
     /// 下发 <c>getEMStatistics</c>，拉取电量计统计。
     /// 应答经 Router 钩子 → <see cref="ApplyStatisticsReadbackAsync"/> UPSERT 进聚合表（验收 #1/#2/#3）。
@@ -59,6 +64,10 @@ public interface IAnShengEnergyService
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> RequestStatisticsAsync(
         long deviceId, string? q = null, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的统计拉取下发。</summary>
+    Task<AnShengEnergyResultDto> RequestStatisticsAsync(
+        long deviceId, string? q, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>
     /// 下发 <c>clearEMStatistics</c>，清空<b>设备侧</b>统计。
@@ -75,11 +84,20 @@ public interface IAnShengEnergyService
     Task<AnShengEnergyResultDto> ClearStatisticsAsync(
         long deviceId, int? slotNum, bool confirm, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的设备侧统计清零。</summary>
+    Task<AnShengEnergyResultDto> ClearStatisticsAsync(
+        long deviceId, int? slotNum, bool confirm,
+        ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>下发 <c>getCalParams</c>（仅开关类放行，验收 #6）。</summary>
     /// <param name="deviceId">设备主键。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> GetCalParamsAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1/M11】名义 GET 实际下发命令，必须带 principal 走同一收口。</summary>
+    Task<AnShengEnergyResultDto> GetCalParamsAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>下发 <c>setCalParams</c>（仅开关类放行，验收 #6）。</summary>
     /// <param name="deviceId">设备主键。</param>
@@ -89,11 +107,20 @@ public interface IAnShengEnergyService
     Task<AnShengEnergyResultDto> SetCalParamsAsync(
         long deviceId, IReadOnlyDictionary<string, double> calParams, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的校准参数设置。</summary>
+    Task<AnShengEnergyResultDto> SetCalParamsAsync(
+        long deviceId, IReadOnlyDictionary<string, double> calParams,
+        ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>下发 <c>resetCalParams</c>（仅开关类放行，验收 #6）。</summary>
     /// <param name="deviceId">设备主键。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> ResetCalParamsAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的校准参数重置。</summary>
+    Task<AnShengEnergyResultDto> ResetCalParamsAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>下发 <c>autoCal</c>（仅开关类放行，验收 #6）。</summary>
     /// <param name="deviceId">设备主键。</param>
@@ -102,6 +129,10 @@ public interface IAnShengEnergyService
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> AutoCalAsync(
         long deviceId, double power, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的自动校准下发。</summary>
+    Task<AnShengEnergyResultDto> AutoCalAsync(
+        long deviceId, double power, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     // ─────────────────────────────────────────────────────────────
     // 只读查询（HTTP 作用域）

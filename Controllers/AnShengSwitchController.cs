@@ -32,6 +32,7 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -128,7 +129,8 @@ public class AnShengSwitchController : ControllerBase
                 parameters["hasStopDelayTask"] = request.HasStopDelayTask.Value;
             }
 
-            var response = await _commandService.SendCommandAsync(deviceId, MethodAction, parameters, ct);
+            // 【B1/M4】外部命令必须显式传 User；归属校验在 MQTT 下发前由命令服务单点完成。
+            var response = await _commandService.SendCommandAsync(deviceId, MethodAction, parameters, User, ct);
             var result = await BuildSwitchResultAsync(deviceId, response, ct);
 
             return result.Accepted
@@ -136,6 +138,15 @@ public class AnShengSwitchController : ControllerBase
                     result, $"插槽 {request.SlotNum} 动作 {parameters["action"]} 已下发")
                 : ApiResponse<AnShengSwitchResultDto>.BadRequest(
                     response.ErrorMessage ?? "开关动作下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 越权：命令服务在 Guard 处终止，零 MQTT publish、零命令落库。
+            return ApiResponse<AnShengSwitchResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengSwitchResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -191,7 +202,8 @@ public class AnShengSwitchController : ControllerBase
                 parameters["hasStopDelayTask"] = request.HasStopDelayTask.Value;
             }
 
-            var response = await _commandService.SendCommandAsync(deviceId, MethodActions, parameters, ct);
+            // 【B1/M4】外部命令必须显式传 User；归属校验在 MQTT 下发前由命令服务单点完成。
+            var response = await _commandService.SendCommandAsync(deviceId, MethodActions, parameters, User, ct);
             var result = await BuildSwitchResultAsync(deviceId, response, ct);
 
             return result.Accepted
@@ -199,6 +211,14 @@ public class AnShengSwitchController : ControllerBase
                     result, $"{request.SlotNums.Length} 个插槽动作 {parameters["action"]} 已下发")
                 : ApiResponse<AnShengSwitchResultDto>.BadRequest(
                     response.ErrorMessage ?? "批量开关动作下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengSwitchResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengSwitchResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -226,6 +246,12 @@ public class AnShengSwitchController : ControllerBase
     [HttpGet("{deviceId:long}/delay-tasks")]
     public async Task<ActionResult<ApiResponse<List<AnShengDelayTaskDto>>>> GetDelayTasks(long deviceId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<List<AnShengDelayTaskDto>>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
 
         try
@@ -255,6 +281,7 @@ public class AnShengSwitchController : ControllerBase
         long deviceId,
         [FromBody] AnShengStartDelayTaskRequest request)
     {
+        // 【B1/M4】显式把 User 传给业务服务，最终由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
 
         try
@@ -271,6 +298,7 @@ public class AnShengSwitchController : ControllerBase
                 request.SAction,
                 request.EAction,
                 request.Secs,
+                User,
                 ct);
 
             return result.Accepted
@@ -278,6 +306,14 @@ public class AnShengSwitchController : ControllerBase
                     result, $"插槽 {request.SlotNum} 延时任务已下发")
                 : ApiResponse<AnShengDelayTaskResultDto>.BadRequest(
                     result.ErrorMessage ?? "延时任务下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengDelayTaskResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengDelayTaskResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -301,6 +337,7 @@ public class AnShengSwitchController : ControllerBase
         long deviceId,
         [FromBody] AnShengStopDelayTaskRequest request)
     {
+        // 【B1/M4】显式把 User 传给业务服务，最终由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
 
         try
@@ -310,13 +347,21 @@ public class AnShengSwitchController : ControllerBase
                 return ApiResponse<AnShengDelayTaskResultDto>.BadRequest("请求体不能为空");
             }
 
-            var result = await _scheduleService.StopDelayTaskAsync(deviceId, request.SlotNum, ct);
+            var result = await _scheduleService.StopDelayTaskAsync(deviceId, request.SlotNum, User, ct);
 
             return result.Accepted
                 ? ApiResponse<AnShengDelayTaskResultDto>.Success(
                     result, $"插槽 {request.SlotNum} 延时任务已停止")
                 : ApiResponse<AnShengDelayTaskResultDto>.BadRequest(
                     result.ErrorMessage ?? "停止延时任务失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengDelayTaskResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengDelayTaskResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {

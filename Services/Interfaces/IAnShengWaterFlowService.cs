@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.DTOs.Requests;
@@ -48,6 +49,10 @@ public interface IAnShengWaterFlowService
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> RequestFlowInfoAsync(long deviceId, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的实时读数请求；内部走命令服务单点归属校验。</summary>
+    Task<AnShengEnergyResultDto> RequestFlowInfoAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>
     /// 下发 <c>resetTotalFlow</c>，重置设备累计流量。
     /// </summary>
@@ -55,6 +60,10 @@ public interface IAnShengWaterFlowService
     /// <param name="ct">取消令牌。</param>
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> ResetTotalFlowAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的累计流量重置。</summary>
+    Task<AnShengEnergyResultDto> ResetTotalFlowAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>
     /// 下发 <c>getFlowConfig</c>，拉取水流量配置。
@@ -64,6 +73,10 @@ public interface IAnShengWaterFlowService
     /// <param name="ct">取消令牌。</param>
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> GetFlowConfigAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的流量配置拉取（名义读、实际下发命令）。</summary>
+    Task<AnShengEnergyResultDto> GetFlowConfigAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>
     /// 下发 <c>setFlowConfig</c>，设置水流量配置（k / offset / minFlow / maxFlow，仅非 null 的才下发）。
@@ -75,6 +88,11 @@ public interface IAnShengWaterFlowService
     Task<AnShengEnergyResultDto> SetFlowConfigAsync(
         long deviceId, AnShengWaterFlowConfigRequest? request, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的流量配置下发。</summary>
+    Task<AnShengEnergyResultDto> SetFlowConfigAsync(
+        long deviceId, AnShengWaterFlowConfigRequest? request,
+        ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>
     /// 下发 <c>resetFlowConfig</c>，重置水流量配置。
     /// </summary>
@@ -82,6 +100,10 @@ public interface IAnShengWaterFlowService
     /// <param name="ct">取消令牌。</param>
     /// <returns>下发受理结果。</returns>
     Task<AnShengEnergyResultDto> ResetFlowConfigAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的流量配置重置。</summary>
+    Task<AnShengEnergyResultDto> ResetFlowConfigAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     // ─────────────────────────────────────────────────────────────
     // 只读查询（HTTP 作用域）

@@ -25,6 +25,8 @@ using IoTPlatform.Configuration;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -71,6 +73,12 @@ public class AnShengScheduleController : ControllerBase
     [HttpGet("{deviceId:long}/time-tasks")]
     public async Task<ActionResult<ApiResponse<List<AnShengSlotTimeTaskSetDto>>>> GetTimeTasks(long deviceId)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<List<AnShengSlotTimeTaskSetDto>>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -98,6 +106,7 @@ public class AnShengScheduleController : ControllerBase
         long deviceId,
         [FromBody] AnShengSetTimeTasksRequest request)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -116,7 +125,7 @@ public class AnShengScheduleController : ControllerBase
                 .ToList();
 
             var result = await _scheduleService.SetTimeTasksAsync(
-                deviceId, sets, request.Confirm, request.RowVersion, ct);
+                deviceId, sets, request.Confirm, User, request.RowVersion, ct);
 
             if (result.ConcurrencyConflict)
             {
@@ -130,6 +139,15 @@ public class AnShengScheduleController : ControllerBase
                 ? ApiResponse<AnShengTimeTaskResultDto>.Success(result, "定时任务已下发")
                 : ApiResponse<AnShengTimeTaskResultDto>.BadRequest(
                     result.ErrorMessage ?? "定时任务下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 越权：命令在 Guard 处终止，零 MQTT publish。
+            return ApiResponse<AnShengTimeTaskResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengTimeTaskResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -152,6 +170,12 @@ public class AnShengScheduleController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengSlotTimeTaskSetDto?>>> GetSlotTimeTasks(
         long deviceId, int slotNum)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<AnShengSlotTimeTaskSetDto?>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -184,6 +208,7 @@ public class AnShengScheduleController : ControllerBase
         long deviceId, int slotNum,
         [FromBody] AnShengSetSlotTimeTasksRequest request)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -202,7 +227,7 @@ public class AnShengScheduleController : ControllerBase
             var loopTasks = request.LoopTimeTasks.Select(ToLoopTimeTaskItem).ToList();
 
             var result = await _scheduleService.SetSlotTimeTasksAsync(
-                deviceId, slotNum, timeTasks, loopTasks, request.Confirm, request.RowVersion, ct);
+                deviceId, slotNum, timeTasks, loopTasks, request.Confirm, User, request.RowVersion, ct);
 
             if (result.ConcurrencyConflict)
             {
@@ -215,6 +240,14 @@ public class AnShengScheduleController : ControllerBase
                 ? ApiResponse<AnShengTimeTaskResultDto>.Success(result, $"插槽 {slotNum} 定时任务已下发")
                 : ApiResponse<AnShengTimeTaskResultDto>.BadRequest(
                     result.ErrorMessage ?? "定时任务下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengTimeTaskResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengTimeTaskResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {

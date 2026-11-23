@@ -28,6 +28,8 @@ using IoTPlatform.Configuration;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
@@ -80,14 +82,23 @@ public class AnShengEnergyController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> RequestRealtime(long deviceId)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _energyService.RequestRealtimeAsync(deviceId, ct);
+            var result = await _energyService.RequestRealtimeAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "电量计实时读数请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "实时读数请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -113,15 +124,24 @@ public class AnShengEnergyController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> RefreshStatistics(
         long deviceId, [FromBody] AnShengGetEMStatisticsRequest? request)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
             var q = request?.Q;
-            var result = await _energyService.RequestStatisticsAsync(deviceId, q, ct);
+            var result = await _energyService.RequestStatisticsAsync(deviceId, q, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "电量计统计请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "统计请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -145,6 +165,7 @@ public class AnShengEnergyController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> ClearStatistics(
         long deviceId, [FromBody] AnShengClearEMStatisticsRequest? request)
     {
+        // 【B1/M4】显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -154,12 +175,20 @@ public class AnShengEnergyController : ControllerBase
             }
 
             var result = await _energyService.ClearStatisticsAsync(
-                deviceId, request.SlotNum, request.Confirm, ct);
+                deviceId, request.SlotNum, request.Confirm, User, ct);
 
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "电量计统计清零请求已下发（平台数据保留）")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "清零请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -182,6 +211,12 @@ public class AnShengEnergyController : ControllerBase
         [FromQuery] int? slotNum = null,
         [FromQuery] AnShengEmGranularity? granularity = null)
     {
+            // B4/M6：设备/指令归属点查 + scope 判定（GetCalParams 已由 B1/M11 覆盖，不重复）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Device>(deviceId))
+            {
+                return Ok(ApiResponse<List<AnShengEmStatisticDto>>.Fail(403, "无权访问该设备"));
+            }
+
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -213,14 +248,24 @@ public class AnShengEnergyController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> GetCalParams(long deviceId)
     {
+        // 【B1/M11】名义 GET 实际下发 getCalParams 命令：按写操作鉴权，与其余命令走同一收口。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _energyService.GetCalParamsAsync(deviceId, ct);
+            var result = await _energyService.GetCalParamsAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "读取校准参数请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "读取校准参数请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 名义 GET 的越权同样返回 403，且设备侧零 publish（原则 I + G）。
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -241,6 +286,7 @@ public class AnShengEnergyController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> SetCalParams(
         long deviceId, [FromBody] AnShengSetCalParamsRequest? request)
     {
+        // 【B1/M4】校准命令显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -256,11 +302,19 @@ public class AnShengEnergyController : ControllerBase
                     "calParams 不能为空，至少需要提供 RL（校准电阻值）");
             }
 
-            var result = await _energyService.SetCalParamsAsync(deviceId, calParams, ct);
+            var result = await _energyService.SetCalParamsAsync(deviceId, calParams, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "设置校准参数请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "设置校准参数请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -278,14 +332,23 @@ public class AnShengEnergyController : ControllerBase
     [PermissionAuthorize(Permissions.SEND_DEVICE_COMMANDS)]
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> ResetCalParams(long deviceId)
     {
+        // 【B1/M4】校准命令显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
-            var result = await _energyService.ResetCalParamsAsync(deviceId, ct);
+            var result = await _energyService.ResetCalParamsAsync(deviceId, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "重置校准参数请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "重置校准参数请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {
@@ -305,6 +368,7 @@ public class AnShengEnergyController : ControllerBase
     public async Task<ActionResult<ApiResponse<AnShengEnergyResultDto>>> AutoCal(
         long deviceId, [FromBody] AnShengAutoCalRequest? request)
     {
+        // 【B1/M4】校准命令显式传 User，由命令服务单点校验归属。
         var ct = HttpContext.RequestAborted;
         try
         {
@@ -313,11 +377,19 @@ public class AnShengEnergyController : ControllerBase
                 return ApiResponse<AnShengEnergyResultDto>.BadRequest("请求体不能为空");
             }
 
-            var result = await _energyService.AutoCalAsync(deviceId, request.Power, ct);
+            var result = await _energyService.AutoCalAsync(deviceId, request.Power, User, ct);
             return result.Accepted
                 ? ApiResponse<AnShengEnergyResultDto>.Success(result, "自动校准请求已下发")
                 : ApiResponse<AnShengEnergyResultDto>.BadRequest(
                     result.ErrorMessage ?? "自动校准请求下发失败", result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Forbidden(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return ApiResponse<AnShengEnergyResultDto>.Unauthorized(ex.Message);
         }
         catch (Exception ex)
         {

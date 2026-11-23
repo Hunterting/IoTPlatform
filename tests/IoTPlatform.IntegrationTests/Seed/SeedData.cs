@@ -176,7 +176,12 @@ public static class SeedData
             UpdatedAt = now,
             RevokedAt = null
         });
+
         await db.SaveChangesAsync(cancellationToken);
+
+        // 【B1 AnSheng 单点收口兼容】admin 归属现在由 user_customers（DB 为准）判定，
+        // AuthTestHelper.AsAdmin() 必须携带真实播种用户的 Id，否则守卫会误判 403。
+        SharedTestConstants.SeededAdminUserId = user.Id;
 
         // 播种用的实体不应残留在 ChangeTracker 中，否则后续查询会命中缓存而非真实库
         db.ChangeTracker.Clear();

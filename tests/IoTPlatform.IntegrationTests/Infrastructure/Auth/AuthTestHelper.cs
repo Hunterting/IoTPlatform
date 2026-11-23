@@ -45,6 +45,10 @@ public static class AuthTestHelper
         client.AsRole(
             SharedTestConstants.RoleAdmin,
             SharedTestConstants.AppCode,
+            // B1 命令守卫按 user_customers 判定 admin 归属，必须使用真实播种用户的 Id。
+            userId: SharedTestConstants.SeededAdminUserId > 0
+                ? SharedTestConstants.SeededAdminUserId.ToString()
+                : SharedTestConstants.DefaultUserId,
             managedCustomerIds: SharedTestConstants.DefaultCustomerId);
 
     /// <summary>

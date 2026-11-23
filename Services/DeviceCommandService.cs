@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using IoTPlatform.Data;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -18,17 +20,26 @@ public class DeviceCommandService : IDeviceCommandService
     private readonly IMqttClientService _mqttClient;
     private readonly IAnShengCommandService? _anShengCommandService;
     private readonly ILogger<DeviceCommandService> _logger;
+    private readonly IDeviceAccessGuard? _deviceGuard;
+    private readonly ICustomerScopeService? _scope;
+    private readonly ICustomerScopeGuard? _scopeGuard;
 
     public DeviceCommandService(
         AppDbContext db,
         IMqttClientService mqttClient,
         ILogger<DeviceCommandService> logger,
-        IAnShengCommandService? anShengCommandService = null)
+        IAnShengCommandService? anShengCommandService = null,
+        IDeviceAccessGuard? deviceGuard = null,
+        ICustomerScopeService? scope = null,
+        ICustomerScopeGuard? scopeGuard = null)
     {
         _db = db;
         _mqttClient = mqttClient;
         _anShengCommandService = anShengCommandService;
         _logger = logger;
+        _deviceGuard = deviceGuard;
+        _scope = scope;
+        _scopeGuard = scopeGuard;
 
         // 监听 MQTT 指令响应事件
         _mqttClient.OnCommandResponse += OnCommandResponseReceived;
@@ -39,12 +50,44 @@ public class DeviceCommandService : IDeviceCommandService
     // ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<DeviceCommandResponse> SendCommandAsync(
+    public Task<DeviceCommandResponse> SendCommandAsync(
         SendDeviceCommandRequest request,
         string? appCode,
         long? userId,
         string? userName)
+        => SendCommandCoreAsync(request, appCode, userId, userName, principal: null, ct: default);
+
+    /// <inheritdoc />
+    public Task<DeviceCommandResponse> SendCommandAsync(
+        SendDeviceCommandRequest request,
+        string? appCode,
+        long? userId,
+        string? userName,
+        ClaimsPrincipal principal,
+        CancellationToken ct = default)
     {
+        RequirePrincipal(principal);
+        EnsureGuardsAvailable();
+        return SendCommandCoreAsync(request, appCode, userId, userName, principal, ct);
+    }
+
+    /// <summary>
+    /// 发送指令核心实现。principal 非空时先过设备归属守卫，越权在任何写库/MQTT 之前抛出（原则 G）。
+    /// </summary>
+    private async Task<DeviceCommandResponse> SendCommandCoreAsync(
+        SendDeviceCommandRequest request,
+        string? appCode,
+        long? userId,
+        string? userName,
+        ClaimsPrincipal? principal,
+        CancellationToken ct)
+    {
+        // 【B1/M4 双保险】Controller 已用 Guard 前置校验；Service 再校验一次，判据同源。
+        if (principal != null)
+        {
+            await _deviceGuard!.EnsureCanOperateAsync(principal, request.DeviceId, ct).ConfigureAwait(false);
+        }
+
         // 1. 验证设备存在性
         var device = await _db.Devices
             .IgnoreQueryFilters()
@@ -60,11 +103,14 @@ public class DeviceCommandService : IDeviceCommandService
             };
         }
 
+        // 归属（AppCode）以服务端点查的设备为准；admin 无单值 claim 时不再把 null 落库。
+        appCode = string.IsNullOrWhiteSpace(appCode) ? device.AppCode : appCode;
+
         // ★ 命令路由：如果设备配置了安圣协议（ProtocolConfigId 不为空），
         //    则通过安圣适配器下发，而非通用 MQTT 客户端
         if (device.ProtocolConfigId != null && _anShengCommandService != null)
         {
-            return await SendViaAnShengAsync(device, request, appCode, userId, userName);
+            return await SendViaAnShengAsync(device, request, appCode, userId, userName, principal, ct).ConfigureAwait(false);
         }
 
         // 2. 序列化参数
@@ -190,18 +236,45 @@ public class DeviceCommandService : IDeviceCommandService
     // ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<List<DeviceCommandResponse>> SendBatchCommandsAsync(
+    public Task<List<DeviceCommandResponse>> SendBatchCommandsAsync(
         List<SendDeviceCommandRequest> requests,
         string? appCode,
         long? userId,
         string? userName)
+        => SendBatchCommandsCoreAsync(requests, appCode, userId, userName, principal: null, ct: default);
+
+    /// <inheritdoc />
+    public Task<List<DeviceCommandResponse>> SendBatchCommandsAsync(
+        List<SendDeviceCommandRequest> requests,
+        string? appCode,
+        long? userId,
+        string? userName,
+        ClaimsPrincipal principal,
+        CancellationToken ct = default)
+    {
+        RequirePrincipal(principal);
+        EnsureGuardsAvailable();
+        return SendBatchCommandsCoreAsync(requests, appCode, userId, userName, principal, ct);
+    }
+
+    /// <summary>批量下发核心实现：principal 透传给每一条单发调用。</summary>
+    private async Task<List<DeviceCommandResponse>> SendBatchCommandsCoreAsync(
+        List<SendDeviceCommandRequest> requests,
+        string? appCode,
+        long? userId,
+        string? userName,
+        ClaimsPrincipal? principal,
+        CancellationToken ct)
     {
         var results = new List<DeviceCommandResponse>();
         foreach (var req in requests)
         {
-            var result = await SendCommandAsync(req, appCode, userId, userName);
+            var result = principal == null
+                ? await SendCommandCoreAsync(req, appCode, userId, userName, null, ct).ConfigureAwait(false)
+                : await SendCommandCoreAsync(req, appCode, userId, userName, principal, ct).ConfigureAwait(false);
             results.Add(result);
         }
+
         return results;
     }
 
@@ -224,15 +297,20 @@ public class DeviceCommandService : IDeviceCommandService
     }
 
     /// <inheritdoc />
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<DeviceCommandDto>> GetCommandsAsync(long deviceId, string? appCode, int page, int pageSize) => GetCommandsAsync(deviceId, appCode, page, pageSize, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
     public async Task<PagedResponse<DeviceCommandDto>> GetCommandsAsync(
         long deviceId,
         string? appCode,
         int page,
-        int pageSize)
+        int pageSize, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _db.DeviceCommands
             .Include(c => c.Device)
             .Where(c => c.DeviceId == deviceId);
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (!string.IsNullOrEmpty(appCode))
             query = query.Where(c => c.AppCode == appCode);
@@ -289,15 +367,36 @@ public class DeviceCommandService : IDeviceCommandService
     // ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<bool> CancelCommandAsync(string commandId, string? appCode)
+    public Task<bool> CancelCommandAsync(string commandId, string? appCode)
+        => CancelCommandCoreAsync(commandId, appCode, principal: null, ct: default);
+
+    /// <inheritdoc />
+    public Task<bool> CancelCommandAsync(
+        string commandId, string? appCode, ClaimsPrincipal principal, CancellationToken ct = default)
     {
-        var query = _db.DeviceCommands.Where(c => c.CommandId == commandId);
+        RequirePrincipal(principal);
+        EnsureGuardsAvailable();
+        return CancelCommandCoreAsync(commandId, appCode, principal, ct);
+    }
+
+    /// <summary>
+    /// 取消指令核心实现：先点查归属并断言范围，状态变更与 history 写入均在断言之后（原则 G）。
+    /// </summary>
+    private async Task<bool> CancelCommandCoreAsync(
+        string commandId, string? appCode, ClaimsPrincipal? principal, CancellationToken ct)
+    {
+        var query = _db.DeviceCommands.IgnoreQueryFilters().Where(c => c.CommandId == commandId);
         if (!string.IsNullOrEmpty(appCode))
             query = query.Where(c => c.AppCode == appCode);
 
-        var command = await query.FirstOrDefaultAsync();
+        var command = await query.FirstOrDefaultAsync(ct).ConfigureAwait(false);
         if (command == null)
             return false;
+
+        if (principal != null)
+        {
+            await AssertCommandScopeAsync(command.AppCode, principal, ct).ConfigureAwait(false);
+        }
 
         // 只有 Pending / Sent 状态可以取消
         if (command.Status != CommandStatus.Pending && command.Status != CommandStatus.Sent)
@@ -389,14 +488,37 @@ public class DeviceCommandService : IDeviceCommandService
     // ─────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<bool> RetryCommandAsync(string commandId)
+    public Task<bool> RetryCommandAsync(string commandId)
+        => RetryCommandCoreAsync(commandId, principal: null, ct: default);
+
+    /// <inheritdoc />
+    public Task<bool> RetryCommandAsync(
+        string commandId, ClaimsPrincipal principal, CancellationToken ct = default)
+    {
+        RequirePrincipal(principal);
+        EnsureGuardsAvailable();
+        return RetryCommandCoreAsync(commandId, principal, ct);
+    }
+
+    /// <summary>
+    /// 重试指令核心实现：归属断言在 RetryCount++/SaveChanges/MQTT 重新下发之前（原则 G）。
+    /// </summary>
+    private async Task<bool> RetryCommandCoreAsync(
+        string commandId, ClaimsPrincipal? principal, CancellationToken ct)
     {
         var command = await _db.DeviceCommands
+            .IgnoreQueryFilters()
             .Include(c => c.Device)
-            .FirstOrDefaultAsync(c => c.CommandId == commandId);
+            .FirstOrDefaultAsync(c => c.CommandId == commandId, ct)
+            .ConfigureAwait(false);
 
         if (command == null)
             return false;
+
+        if (principal != null)
+        {
+            await AssertCommandScopeAsync(command.AppCode, principal, ct).ConfigureAwait(false);
+        }
 
         // 只允许重试失败或超时的指令
         if (command.Status != CommandStatus.Failed && command.Status != CommandStatus.Timeout)
@@ -511,7 +633,9 @@ public class DeviceCommandService : IDeviceCommandService
         SendDeviceCommandRequest request,
         string? appCode,
         long? userId,
-        string? userName)
+        string? userName,
+        ClaimsPrincipal? principal,
+        CancellationToken ct)
     {
         // 创建指令记录（状态先 Pending）
         var parametersJson = request.Parameters != null
@@ -556,12 +680,22 @@ public class DeviceCommandService : IDeviceCommandService
         {
             // T7-3：透传 CommandId —— DeviceCommand.CommandId 即 AnShengCommandRecord.CommandId，
             // 二者同值构成「单一真相」，取代原 R1 静态 frameId→commandId 映射（已物理删除）。
-            var result = await _anShengCommandService!.SendCommandAsync(
-                deviceId: request.DeviceId,
-                method: request.CommandType,
-                parameters: request.Parameters,
-                ct: CancellationToken.None,
-                commandId: command.CommandId);
+            // 【B1/M4 遗留裸通道收口】外部命令必须显式传 principal，由 AnShengCommandService
+            // 单点 Guard 在 MQTT publish 之前校验归属；内部通道仍走旧签名，行为逐字不变。
+            var result = principal == null
+                ? await _anShengCommandService!.SendCommandAsync(
+                    deviceId: request.DeviceId,
+                    method: request.CommandType,
+                    parameters: request.Parameters,
+                    ct: ct == default ? CancellationToken.None : ct,
+                    commandId: command.CommandId)
+                : await _anShengCommandService!.SendCommandAsync(
+                    deviceId: request.DeviceId,
+                    method: request.CommandType,
+                    parameters: request.Parameters,
+                    principal: principal,
+                    ct: ct,
+                    commandId: command.CommandId);
 
             if (result.Success)
             {
@@ -667,6 +801,46 @@ public class DeviceCommandService : IDeviceCommandService
             Status = command.Status.ToString(),
             CreatedAt = command.CreatedAt
         };
+    }
+
+    // ─────────────────────────────────────────────
+    // 归属断言（B1/M4 双保险）
+    // ─────────────────────────────────────────────
+
+    /// <summary>外部调用必须带 principal；禁止把 null 当作“跳过校验”。</summary>
+    private static void RequirePrincipal(ClaimsPrincipal principal)
+    {
+        if (principal == null)
+        {
+            throw new UnauthorizedAccessException("外部命令通道必须显式传递调用方身份");
+        }
+    }
+
+    /// <summary> Guard 依赖缺失时 fail-closed，不允许静默降级为裸通道。</summary>
+    private void EnsureGuardsAvailable()
+    {
+        if (_deviceGuard == null || _scope == null || _scopeGuard == null)
+        {
+            throw new InvalidOperationException("DeviceCommandService 缺少归属守卫依赖，禁止处理外部命令");
+        }
+    }
+
+    /// <summary>
+    /// 指令 AppCode → CustomerId → CustomerScopeGuard.AssertScope（与 Controller 同一判据）。
+    /// AppCode 缺失或无法反查归属时，AssertScope 对非超管抛 ForbiddenAccessException。
+    /// </summary>
+    private async Task AssertCommandScopeAsync(string? appCode, ClaimsPrincipal principal, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(appCode))
+        {
+            var scope = await _scope!.ResolveAsync(principal, ct).ConfigureAwait(false);
+            _scopeGuard!.AssertScope(scope, null, appCode);
+            return;
+        }
+
+        var customerId = await _scope!.ResolveCustomerIdByAppCodeAsync(appCode, ct).ConfigureAwait(false);
+        var currentScope = await _scope.ResolveAsync(principal, ct).ConfigureAwait(false);
+        _scopeGuard!.AssertScope(currentScope, customerId, appCode);
     }
 
     // ─────────────────────────────────────────────

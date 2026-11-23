@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using IoTPlatform.DTOs.Responses;
@@ -39,11 +40,21 @@ public interface IAnShengScheduleService
         long deviceId, int slotNum, bool enable,
         string sAction, string eAction, int secs, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的延时任务下发。</summary>
+    Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
+        long deviceId, int slotNum, bool enable,
+        string sAction, string eAction, int secs,
+        ClaimsPrincipal? principal, CancellationToken ct = default);
+
     /// <summary>
     /// 停止某插槽的延时任务。经 <c>stopDelayTask</c> 下发 + 同样写后回读。
     /// </summary>
     Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
         long deviceId, int slotNum, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的延时任务停止。</summary>
+    Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
+        long deviceId, int slotNum, ClaimsPrincipal? principal, CancellationToken ct = default);
 
     /// <summary>读取平台延时任务镜像（按插槽升序）。</summary>
     Task<List<AnShengDelayTaskDto>> GetDelayTasksAsync(
@@ -85,6 +96,11 @@ public interface IAnShengScheduleService
         long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
         long? rowVersion = null, CancellationToken ct = default);
 
+    /// <summary>【B1】带 principal 的整表定时任务下发。</summary>
+    Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+        ClaimsPrincipal? principal, long? rowVersion = null, CancellationToken ct = default);
+
     /// <summary>读取单个插槽的定时任务镜像（普通 / 循环两组）。</summary>
     Task<AnShengSlotTimeTaskSetDto?> GetSlotTimeTasksAsync(
         long deviceId, int slotNum, CancellationToken ct = default);
@@ -98,6 +114,14 @@ public interface IAnShengScheduleService
         IReadOnlyList<AnShengTimeTaskItem> timeTasks,
         IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
         bool confirm, long? rowVersion = null, CancellationToken ct = default);
+
+    /// <summary>【B1】带 principal 的单插槽定时任务下发。</summary>
+    Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+        long deviceId, int slotNum,
+        IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+        IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+        bool confirm, ClaimsPrincipal? principal,
+        long? rowVersion = null, CancellationToken ct = default);
 
     /// <summary>
     /// getTimeTasks / getSlotTimeTasks 应答镜像回写（由 Router 钩子调用）。

@@ -1,5 +1,6 @@
 using IoTPlatform.Data;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -8,25 +9,32 @@ using System.Security.Claims;
 namespace IoTPlatform.Services;
 
 /// <summary>
-/// 文件存储服务 - 统一处理文件上传、删除、下载
+/// 文件存储服务 - 统一处理文件上传、删除、下载。
+///
+/// <para><b>M9-P0-0</b>：本服务<b>从不读取</b> Request.Headers["X-App-Code"]；appCode 一律由
+/// Controller 经 <see cref="ICustomerScopeService"/> 服务端派生后作为参数传入并原样落库。
+/// 删除路径新增带 scope 的重载，做到"先查归属 → 校验 → 再删物理文件 + DB 记录"（原则 G）。</para>
 /// </summary>
-public class FileStorageService
+public class FileStorageService : IFileStorageService
 {
     private readonly AppDbContext _dbContext;
     private readonly IConfiguration _configuration;
     private readonly IWebHostEnvironment _environment;
     private readonly ILogger<FileStorageService> _logger;
+    private readonly ICustomerScopeService _customerScope;
 
     public FileStorageService(
         AppDbContext dbContext,
         IConfiguration configuration,
         IWebHostEnvironment environment,
-        ILogger<FileStorageService> logger)
+        ILogger<FileStorageService> logger,
+        ICustomerScopeService customerScope)
     {
         _dbContext = dbContext;
         _configuration = configuration;
         _environment = environment;
         _logger = logger;
+        _customerScope = customerScope ?? throw new ArgumentNullException(nameof(customerScope));
     }
 
     /// <summary>
@@ -210,16 +218,109 @@ public class FileStorageService
     }
 
     /// <summary>
-    /// 删除附件（同时删除物理文件）
+    /// 旧签名：仅供内部/系统通道使用，委托到带 scope 的重载（null/null = 超管 All 不过滤，原则 E）。
+    /// 所有外部 Controller 路径必须使用带 scope 的重载（见 <see cref="DeleteAttachmentAsync(long, string?, IReadOnlyCollection{long})"/>）。
     /// </summary>
-    public async Task<bool> DeleteAttachmentAsync(long id)
+    public Task<bool> DeleteAttachmentAsync(long id) => DeleteAttachmentAsync(id, null, null);
+
+    /// <summary>
+    /// 带归属校验的附件删除（M9-P0-0）。
+    /// 先 IgnoreQueryFilters 点查记录归属 → 按 scope 校验 → 通过后才删物理文件 + DB 记录（原则 G）。
+    /// </summary>
+    /// <param name="id">附件 ID。</param>
+    /// <param name="appCode">服务端派生的 AppCode（Single 分支用；非 header）。</param>
+    /// <param name="customerIds">授权客户集合（Multi 分支用；空集合=全拒绝；null=不过滤）。</param>
+    /// <exception cref="ForbiddenAccessException">归属校验不通过；此时物理文件与 DB 记录均未改动。</exception>
+    public async Task<bool> DeleteAttachmentAsync(
+        long id, string? appCode, IReadOnlyCollection<long>? customerIds)
     {
-        var attachment = await _dbContext.Attachments.FindAsync(id);
+        return await DeleteRecordAsync(id, appCode, customerIds, requireModule: null).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 带归属校验的合同删除（module=contracts，M9-P0-0）。
+    /// 与附件删除共用"先校验再删除"内核，额外约束模块必须为 contracts，避免误删其它附件。
+    /// </summary>
+    /// <exception cref="ForbiddenAccessException">归属校验不通过；此时物理文件与 DB 记录均未改动。</exception>
+    public async Task<bool> DeleteContractAsync(
+        long id, string? appCode, IReadOnlyCollection<long>? customerIds)
+    {
+        return await DeleteRecordAsync(id, appCode, customerIds, Constants.ContractModule).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 删除内核：查询归属 → 校验 → 删除物理文件 + DB 记录。
+    /// </summary>
+    private async Task<bool> DeleteRecordAsync(
+        long id,
+        string? appCode,
+        IReadOnlyCollection<long>? customerIds,
+        string? requireModule)
+    {
+        var query = _dbContext.Attachments
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(a => a.Id == id);
+
+        if (requireModule != null)
+        {
+            query = query.Where(a => a.Module == requireModule);
+        }
+
+        var attachment = await query.FirstOrDefaultAsync().ConfigureAwait(false);
         if (attachment == null)
         {
             return false;
         }
 
+        // 【原则 G】校验必须在任何删除动作之前。越权抛出时物理文件与 DB 记录均保持原样。
+        await EnsureDeleteAllowedAsync(attachment, appCode, customerIds).ConfigureAwait(false);
+
+        await DeletePhysicalAndRecordAsync(attachment).ConfigureAwait(false);
+        _logger.LogInformation("附件记录已删除: {AttachmentId}", id);
+        return true;
+    }
+
+    /// <summary>
+    /// 删除归属校验：
+    /// - customerIds 非空：Multi 分支，按 AppCode→CustomerId（1:1 不变）判定集合归属；空集合=全拒绝（fail-closed）。
+    /// - customerIds 为 null 且 appCode 非空：Single 分支，单值比对（下级零回归）。
+    /// - 两者皆 null：超管 All / 系统内部通道，不过滤（原则 E）。
+    /// </summary>
+    private async Task EnsureDeleteAllowedAsync(
+        Attachment attachment, string? appCode, IReadOnlyCollection<long>? customerIds)
+    {
+        if (customerIds != null)
+        {
+            if (string.IsNullOrWhiteSpace(attachment.AppCode))
+            {
+                throw new ForbiddenAccessException("附件缺少归属，禁止删除");
+            }
+
+            var ownerCustomerId = await _customerScope
+                .ResolveCustomerIdByAppCodeAsync(attachment.AppCode).ConfigureAwait(false);
+            if (!ownerCustomerId.HasValue || !customerIds.Contains(ownerCustomerId.Value))
+            {
+                throw new ForbiddenAccessException("无权删除该附件");
+            }
+
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(appCode))
+        {
+            if (!string.Equals(appCode, attachment.AppCode, StringComparison.Ordinal))
+            {
+                throw new ForbiddenAccessException("无权删除该附件");
+            }
+
+            // appCode 非空即已按单值比对；空 appCode 走下方 both-null 分支（All/内部）由调用方保证。
+        }
+    }
+
+    /// <summary>删除物理文件 + DB 记录（仅在归属校验通过后调用）。</summary>
+    private async Task DeletePhysicalAndRecordAsync(Attachment attachment)
+    {
         // 删除物理文件（必须用与上传一致的 UploadRoot 前缀，否则找不到文件）
         if (!string.IsNullOrEmpty(attachment.FileUrl))
         {
@@ -236,10 +337,13 @@ public class FileStorageService
         }
 
         _dbContext.Attachments.Remove(attachment);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync().ConfigureAwait(false);
+    }
 
-        _logger.LogInformation("附件记录已删除: {AttachmentId}", id);
-        return true;
+    /// <summary>模块名常量：合同在通用附件表中以 module=contracts 存储。</summary>
+    private static class Constants
+    {
+        public const string ContractModule = "contracts";
     }
 
     /// <summary>

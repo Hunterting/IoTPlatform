@@ -2,8 +2,8 @@ using IoTPlatform.Configuration;
 using IoTPlatform.Data;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
-using IoTPlatform.Infrastructure.Tenant;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,23 +20,25 @@ namespace IoTPlatform.Controllers;
 public class AttachmentsController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
-    private readonly FileStorageService _fileStorageService;
+    private readonly IFileStorageService _fileStorageService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AttachmentsController> _logger;
-    private readonly ITenantContextAccessor _tenantContextAccessor;
+    private readonly ICustomerScopeService _customerScope;
 
+    // 【M9-P0-0】刻意不注入 ITenantContextAccessor：admin 的 tenantContext.AppCode 为 null，
+    // 且请求头 X-App-Code 完全前端可控——两者都不得作为归属来源。归属只从服务端 scope 派生。
     public AttachmentsController(
         AppDbContext dbContext,
-        FileStorageService fileStorageService,
+        IFileStorageService fileStorageService,
         IConfiguration configuration,
         ILogger<AttachmentsController> logger,
-        ITenantContextAccessor tenantContextAccessor)
+        ICustomerScopeService customerScope)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
         _configuration = configuration;
         _logger = logger;
-        _tenantContextAccessor = tenantContextAccessor;
+        _customerScope = customerScope ?? throw new ArgumentNullException(nameof(customerScope));
     }
 
     /// <summary>
@@ -68,15 +70,19 @@ public class AttachmentsController : ControllerBase
                 ? System.IO.Path.GetFileNameWithoutExtension(request.File.FileName)
                 : request.Name;
 
-            // 获取当前用户和租户信息
+            // 获取当前用户信息
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userId = long.TryParse(userIdClaim, out var uid) ? uid : (long?)null;
-            
-            // 优先从请求头获取AppCode，其次从租户上下文
-            var appCode = Request.Headers["X-App-Code"].FirstOrDefault() 
-                ?? _tenantContextAccessor.Current?.AppCode;
 
-            // 上传文件
+            // 【M9-P0-0】归属一律服务端派生：绝不读 X-App-Code 头、绝不取 tenantContext 空值。
+            var (ok, appCode, errorCode, errorMessage) =
+                await ResolveUploadAppCodeAsync(request.CustomerId);
+            if (!ok)
+            {
+                return ApiResponse<AttachmentDto>.Fail(errorCode, errorMessage);
+            }
+
+            // 上传文件（appCode 已由服务端派生并校验）
             var attachment = await _fileStorageService.UploadFileAsync(
                 request.File,
                 request.Module,
@@ -125,10 +131,14 @@ public class AttachmentsController : ControllerBase
 
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userId = long.TryParse(userIdClaim, out var uid) ? uid : (long?)null;
-            
-            // 优先从请求头获取AppCode，其次从租户上下文
-            var appCode = Request.Headers["X-App-Code"].FirstOrDefault() 
-                ?? _tenantContextAccessor.Current?.AppCode;
+
+            // 【M9-P0-0】每批一次服务端派生 + 校验，批量放大不再放大越权面。
+            var (ok, appCode, errorCode, errorMessage) =
+                await ResolveUploadAppCodeAsync(request.CustomerId);
+            if (!ok)
+            {
+                return ApiResponse<List<AttachmentDto>>.Fail(errorCode, errorMessage);
+            }
 
             var results = new List<AttachmentDto>();
 
@@ -190,6 +200,10 @@ public class AttachmentsController : ControllerBase
                 query = query.Where(a => a.BusinessId == businessId.Value);
             }
 
+            // B4/M5：附件同样有 AppCode 归属，admin 的 null appCode 不得退化为全量。
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            query = query.ApplyQueryScope(listScope.AppCode, listScope.CustomerIds, listScope.AppCodes);
+
             var total = await query.CountAsync();
 
             var attachments = await query
@@ -222,6 +236,12 @@ public class AttachmentsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<AttachmentDto>>> GetById(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Attachment>(id, false))
+            {
+                return Ok(ApiResponse<AttachmentDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var attachment = await _fileStorageService.GetAttachmentAsync(id);
@@ -248,13 +268,38 @@ public class AttachmentsController : ControllerBase
     {
         try
         {
-            var result = await _fileStorageService.DeleteAttachmentAsync(id);
+            // 【M9-P0-0】先解析 scope 并下推归属，Service 内"先查记录归属 → 校验 → 再删物理文件+DB"。
+            var scope = await _customerScope.ResolveAsync(User);
+            string? appCode = null;
+            IReadOnlyCollection<long>? customerIds = null;
+
+            switch (scope.Mode)
+            {
+                case CustomerScopeMode.Multi:
+                    customerIds = scope.CustomerIds; // 空集合=全拒绝，fail-closed（Service 侧 Contains 判定）
+                    break;
+                case CustomerScopeMode.Single:
+                    appCode = User.FindFirst("AppCode")?.Value;
+                    if (string.IsNullOrEmpty(appCode))
+                    {
+                        return Ok(ApiResponse.Forbidden("缺少客户归属"));
+                    }
+                    break;
+                // 超管 All：appCode/customerIds 皆 null = 不过滤（原则 E）。
+            }
+
+            var result = await _fileStorageService.DeleteAttachmentAsync(id, appCode, customerIds);
             if (!result)
             {
                 return ApiResponse.Error("附件不存在");
             }
 
             return ApiResponse.Success("删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 越权：物理文件与 DB 记录均未被删除（Service 在校验通过前不做任何写动作）。
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
@@ -271,6 +316,12 @@ public class AttachmentsController : ControllerBase
     {
         try
         {
+            // B4/M6：下载与详情同一归属判据，越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Attachment>(id))
+            {
+                return Ok(ApiResponse.Forbidden("无权下载该附件"));
+            }
+
             var attachment = await _fileStorageService.GetAttachmentAsync(id);
             if (attachment == null)
             {
@@ -315,6 +366,65 @@ public class AttachmentsController : ControllerBase
             MaxFileSizeMB = int.Parse(maxFileSizeMB),
             MaxFileSizeBytes = int.Parse(maxFileSizeMB) * 1024 * 1024
         });
+    }
+
+    /// <summary>
+    /// 【M9-P0-0】服务端派生上传归属 AppCode。
+    ///
+    /// <para>三分支口径（设计 §2.10 标准模板）：
+    /// 超管 All → 必须显式给出目标客户，从 CustomerId 反查 AppCode（不得用 header/隐式 null）；
+    /// admin Multi → 必须有 CustomerId 且通过 CanAccessCustomerAsync，再反查 AppCode；
+    /// 下级 Single → 只读自身 AppCode claim（逐字零回归），且不读 header。</para>
+    ///
+    /// <para>返回的 AppCode 是<b>唯一</b>传给 FileStorageService 落库的值；请求头 X-App-Code 不参与任何判定。</para>
+    /// </summary>
+    /// <param name="requestCustomerId">请求体声明的目标客户 ID（仅作待校验目标，不是授权凭据）。</param>
+    /// <returns>(是否放行, 服务端派生 AppCode, 错误码, 错误消息)。</returns>
+    private async Task<(bool Ok, string? AppCode, int ErrorCode, string ErrorMessage)> ResolveUploadAppCodeAsync(
+        long? requestCustomerId)
+    {
+        var scope = await _customerScope.ResolveAsync(User);
+
+        switch (scope.Mode)
+        {
+            case CustomerScopeMode.All:
+                if (!requestCustomerId.HasValue)
+                {
+                    return (false, null, 400, "请指定目标客户");
+                }
+
+                var superAppCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(requestCustomerId.Value);
+                if (string.IsNullOrEmpty(superAppCode))
+                {
+                    return (false, null, 400, "目标客户不存在或缺少 AppCode");
+                }
+
+                return (true, superAppCode, 200, string.Empty);
+
+            case CustomerScopeMode.Multi:
+                if (!requestCustomerId.HasValue ||
+                    !await _customerScope.CanAccessCustomerAsync(User, requestCustomerId.Value))
+                {
+                    return (false, null, 403, "无权在该客户下上传");
+                }
+
+                var appCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(requestCustomerId.Value);
+                if (string.IsNullOrEmpty(appCode))
+                {
+                    return (false, null, 400, "目标客户缺少 AppCode");
+                }
+
+                return (true, appCode, 200, string.Empty);
+
+            default: // Single：下级 claim 单值零回归，且不读 header。
+                var singleAppCode = User.FindFirst("AppCode")?.Value;
+                if (string.IsNullOrEmpty(singleAppCode))
+                {
+                    return (false, null, 403, "缺少客户归属");
+                }
+
+                return (true, singleAppCode, 200, string.Empty);
+        }
     }
 
     private static AttachmentDto MapToDto(Models.Attachment attachment)
@@ -383,6 +493,12 @@ public class UploadAttachmentRequest
     /// <summary>业务ID，如项目ID、工单ID（可选）</summary>
     public long? BusinessId { get; set; }
 
+    /// <summary>
+    /// 目标客户 ID（超管/admin 必填，仅作待校验目标，不是授权凭据）。
+    /// AppCode 由服务端按 scope 校验后从此 ID 反查，绝不接受请求头/请求体 AppCode 落库。
+    /// </summary>
+    public long? CustomerId { get; set; }
+
     /// <summary>附件名称（可选，默认使用文件名）</summary>
     public string? Name { get; set; }
 
@@ -403,6 +519,9 @@ public class UploadBatchAttachmentRequest
 
     /// <summary>业务ID（可选）</summary>
     public long? BusinessId { get; set; }
+
+    /// <summary>目标客户 ID（超管/admin 必填，服务端校验后反查 AppCode，不接受头伪造）。</summary>
+    public long? CustomerId { get; set; }
 
     /// <summary>备注（可选）</summary>
     public string? Remark { get; set; }

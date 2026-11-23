@@ -22,6 +22,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -104,9 +105,23 @@ public class AnShengScheduleService : IAnShengScheduleService
     // ─────────────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
+    public Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
         long deviceId, int slotNum, bool enable,
         string sAction, string eAction, int secs, CancellationToken ct = default)
+        => StartDelayTaskCoreAsync(deviceId, slotNum, enable, sAction, eAction, secs, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengDelayTaskResultDto> StartDelayTaskAsync(
+        long deviceId, int slotNum, bool enable,
+        string sAction, string eAction, int secs,
+        ClaimsPrincipal? principal, CancellationToken ct = default)
+        => StartDelayTaskCoreAsync(deviceId, slotNum, enable, sAction, eAction, secs, principal, ct);
+
+    /// <summary>延时任务下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengDelayTaskResultDto> StartDelayTaskCoreAsync(
+        long deviceId, int slotNum, bool enable,
+        string sAction, string eAction, int secs,
+        ClaimsPrincipal? principal, CancellationToken ct)
     {
         // 动作串只做「空 → 缺省」与大小写归一，**不做白名单纠正**：
         // 非法值必须原样送到 Guard 手里被拒，否则调用方永远不知道自己传错了。
@@ -122,7 +137,7 @@ public class AnShengScheduleService : IAnShengScheduleService
             ["secs"] = secs
         };
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodStartDelayTask, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodStartDelayTask, parameters, principal, ct);
 
         if (!response.Success)
         {
@@ -151,15 +166,25 @@ public class AnShengScheduleService : IAnShengScheduleService
     }
 
     /// <inheritdoc />
-    public async Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
+    public Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
         long deviceId, int slotNum, CancellationToken ct = default)
+        => StopDelayTaskCoreAsync(deviceId, slotNum, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengDelayTaskResultDto> StopDelayTaskAsync(
+        long deviceId, int slotNum, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => StopDelayTaskCoreAsync(deviceId, slotNum, principal, ct);
+
+    /// <summary>延时任务停止核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengDelayTaskResultDto> StopDelayTaskCoreAsync(
+        long deviceId, int slotNum, ClaimsPrincipal? principal, CancellationToken ct)
     {
         var parameters = new Dictionary<string, object?>
         {
             ["slotNum"] = slotNum
         };
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodStopDelayTask, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodStopDelayTask, parameters, principal, ct);
 
         if (!response.Success)
         {
@@ -488,6 +513,16 @@ public class AnShengScheduleService : IAnShengScheduleService
     /// <param name="action">原始动作串。</param>
     /// <param name="fallback">空白时的缺省值。</param>
     /// <returns>归一化后的动作串。</returns>
+    /// <summary>
+    /// B1 统一分派：null → 内部通道旧签名；非 null → 带 principal 的新重载（命令服务单点守卫）。
+    /// </summary>
+    private async Task<AnShengCommandResponse> DispatchAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct)
+        => principal == null
+            ? await _cmd.SendCommandAsync(deviceId, method, parameters, ct)
+            : await _cmd.SendCommandAsync(deviceId, method, parameters, principal, ct);
+
     private static string NormalizeAction(string? action, string fallback)
         => string.IsNullOrWhiteSpace(action) ? fallback : action.Trim().ToLowerInvariant();
 
@@ -653,9 +688,21 @@ public class AnShengScheduleService : IAnShengScheduleService
     }
 
     /// <inheritdoc />
-    public async Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+    public Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
         long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
         long? rowVersion = null, CancellationToken ct = default)
+        => SetTimeTasksCoreAsync(deviceId, slots, confirm, null, rowVersion, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengTimeTaskResultDto> SetTimeTasksAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+        ClaimsPrincipal? principal, long? rowVersion = null, CancellationToken ct = default)
+        => SetTimeTasksCoreAsync(deviceId, slots, confirm, principal, rowVersion, ct);
+
+    /// <summary>整表定时任务下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengTimeTaskResultDto> SetTimeTasksCoreAsync(
+        long deviceId, IReadOnlyList<AnShengSlotTimeTaskSet> slots, bool confirm,
+        ClaimsPrincipal? principal, long? rowVersion, CancellationToken ct)
     {
         if (!confirm)
         {
@@ -666,7 +713,7 @@ public class AnShengScheduleService : IAnShengScheduleService
         }
 
         var parameters = BuildSetTimeTasksParameters(slots);
-        var response = await _cmd.SendCommandAsync(deviceId, MethodSetTimeTasks, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodSetTimeTasks, parameters, principal, ct);
         if (!response.Success)
         {
             return BuildTimeRejected(response);
@@ -694,11 +741,31 @@ public class AnShengScheduleService : IAnShengScheduleService
     }
 
     /// <inheritdoc />
-    public async Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+    public Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
         long deviceId, int slotNum,
         IReadOnlyList<AnShengTimeTaskItem> timeTasks,
         IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
         bool confirm, long? rowVersion = null, CancellationToken ct = default)
+        => SetSlotTimeTasksCoreAsync(
+            deviceId, slotNum, timeTasks, loopTimeTasks, confirm, null, rowVersion, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengTimeTaskResultDto> SetSlotTimeTasksAsync(
+        long deviceId, int slotNum,
+        IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+        IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+        bool confirm, ClaimsPrincipal? principal,
+        long? rowVersion = null, CancellationToken ct = default)
+        => SetSlotTimeTasksCoreAsync(
+            deviceId, slotNum, timeTasks, loopTimeTasks, confirm, principal, rowVersion, ct);
+
+    /// <summary>单插槽定时任务下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengTimeTaskResultDto> SetSlotTimeTasksCoreAsync(
+        long deviceId, int slotNum,
+        IReadOnlyList<AnShengTimeTaskItem> timeTasks,
+        IReadOnlyList<AnShengLoopTimeTaskItem> loopTimeTasks,
+        bool confirm, ClaimsPrincipal? principal,
+        long? rowVersion, CancellationToken ct)
     {
         if (!confirm)
         {
@@ -722,7 +789,7 @@ public class AnShengScheduleService : IAnShengScheduleService
             ["loopTimeTasks"] = loopTimeTasks.Select(ToLoopTimeTaskWire).ToList()
         };
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodSetSlotTimeTasks, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodSetSlotTimeTasks, parameters, principal, ct);
         if (!response.Success)
         {
             return BuildTimeRejected(response);

@@ -24,6 +24,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -95,32 +96,50 @@ public class AnShengWaterFlowService : IAnShengWaterFlowService
     // ─────────────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> RequestFlowInfoAsync(
+    public Task<AnShengEnergyResultDto> RequestFlowInfoAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodGetFlowInfo, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodGetFlowInfo, null, null, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> ResetTotalFlowAsync(
-        long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodResetTotalFlow, null, ct);
-        return BuildResult(response);
-    }
+    public Task<AnShengEnergyResultDto> RequestFlowInfoAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodGetFlowInfo, null, principal, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> GetFlowConfigAsync(
+    public Task<AnShengEnergyResultDto> ResetTotalFlowAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodGetFlowConfig, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodResetTotalFlow, null, null, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> SetFlowConfigAsync(
+    public Task<AnShengEnergyResultDto> ResetTotalFlowAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodResetTotalFlow, null, principal, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> GetFlowConfigAsync(
+        long deviceId, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodGetFlowConfig, null, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> GetFlowConfigAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodGetFlowConfig, null, principal, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> SetFlowConfigAsync(
         long deviceId, AnShengWaterFlowConfigRequest? request, CancellationToken ct = default)
+        => SetFlowConfigCoreAsync(deviceId, request, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> SetFlowConfigAsync(
+        long deviceId, AnShengWaterFlowConfigRequest? request,
+        ClaimsPrincipal? principal, CancellationToken ct = default)
+        => SetFlowConfigCoreAsync(deviceId, request, principal, ct);
+
+    /// <summary>流量配置下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengEnergyResultDto> SetFlowConfigCoreAsync(
+        long deviceId, AnShengWaterFlowConfigRequest? request,
+        ClaimsPrincipal? principal, CancellationToken ct)
     {
         Dictionary<string, object?>? parameters = null;
 
@@ -149,17 +168,35 @@ public class AnShengWaterFlowService : IAnShengWaterFlowService
             }
         }
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodSetFlowConfig, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodSetFlowConfig, parameters, principal, ct);
         return BuildResult(response);
     }
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> ResetFlowConfigAsync(
+    public Task<AnShengEnergyResultDto> ResetFlowConfigAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodResetFlowConfig, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodResetFlowConfig, null, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> ResetFlowConfigAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodResetFlowConfig, null, principal, ct);
+
+    /// <summary>
+    /// B1 统一分派：null → 内部通道旧签名；非 null → 带 principal 的新重载（命令服务单点守卫）。
+    /// </summary>
+    private async Task<AnShengCommandResponse> DispatchAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct)
+        => principal == null
+            ? await _cmd.SendCommandAsync(deviceId, method, parameters, ct)
+            : await _cmd.SendCommandAsync(deviceId, method, parameters, principal, ct);
+
+    /// <summary>无附加业务动作的下发端点：分派后直接构造统一结果。</summary>
+    private async Task<AnShengEnergyResultDto> DispatchResultAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct)
+        => BuildResult(await DispatchAsync(deviceId, method, parameters, principal, ct));
 
     // ─────────────────────────────────────────────────────────────
     // 只读查询（HTTP 作用域）

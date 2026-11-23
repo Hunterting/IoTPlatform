@@ -25,6 +25,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -110,16 +111,28 @@ public class AnShengEnergyService : IAnShengEnergyService
     // ─────────────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> RequestRealtimeAsync(
+    public Task<AnShengEnergyResultDto> RequestRealtimeAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodGetEMRealtime, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodGetEMRealtime, null, null, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> RequestStatisticsAsync(
+    public Task<AnShengEnergyResultDto> RequestRealtimeAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodGetEMRealtime, null, principal, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> RequestStatisticsAsync(
         long deviceId, string? q = null, CancellationToken ct = default)
+        => RequestStatisticsCoreAsync(deviceId, q, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> RequestStatisticsAsync(
+        long deviceId, string? q, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => RequestStatisticsCoreAsync(deviceId, q, principal, ct);
+
+    /// <summary>统计拉取下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengEnergyResultDto> RequestStatisticsCoreAsync(
+        long deviceId, string? q, ClaimsPrincipal? principal, CancellationToken ct)
     {
         Dictionary<string, object?>? parameters = null;
 
@@ -132,13 +145,25 @@ public class AnShengEnergyService : IAnShengEnergyService
             };
         }
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodGetEMStatistics, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodGetEMStatistics, parameters, principal, ct);
         return BuildResult(response);
     }
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> ClearStatisticsAsync(
+    public Task<AnShengEnergyResultDto> ClearStatisticsAsync(
         long deviceId, int? slotNum, bool confirm, CancellationToken ct = default)
+        => ClearStatisticsCoreAsync(deviceId, slotNum, confirm, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> ClearStatisticsAsync(
+        long deviceId, int? slotNum, bool confirm,
+        ClaimsPrincipal? principal, CancellationToken ct = default)
+        => ClearStatisticsCoreAsync(deviceId, slotNum, confirm, principal, ct);
+
+    /// <summary>统计清零下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengEnergyResultDto> ClearStatisticsCoreAsync(
+        long deviceId, int? slotNum, bool confirm,
+        ClaimsPrincipal? principal, CancellationToken ct)
     {
         if (!confirm)
         {
@@ -157,7 +182,7 @@ public class AnShengEnergyService : IAnShengEnergyService
             };
         }
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodClearEMStatistics, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodClearEMStatistics, parameters, principal, ct);
 
         if (!response.Success)
         {
@@ -172,16 +197,30 @@ public class AnShengEnergyService : IAnShengEnergyService
     }
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> GetCalParamsAsync(
+    public Task<AnShengEnergyResultDto> GetCalParamsAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodGetCalParams, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodGetCalParams, null, null, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> SetCalParamsAsync(
+    public Task<AnShengEnergyResultDto> GetCalParamsAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodGetCalParams, null, principal, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> SetCalParamsAsync(
         long deviceId, IReadOnlyDictionary<string, double> calParams, CancellationToken ct = default)
+        => SetCalParamsCoreAsync(deviceId, calParams, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> SetCalParamsAsync(
+        long deviceId, IReadOnlyDictionary<string, double> calParams,
+        ClaimsPrincipal? principal, CancellationToken ct = default)
+        => SetCalParamsCoreAsync(deviceId, calParams, principal, ct);
+
+    /// <summary>校准参数下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengEnergyResultDto> SetCalParamsCoreAsync(
+        long deviceId, IReadOnlyDictionary<string, double> calParams,
+        ClaimsPrincipal? principal, CancellationToken ct)
     {
         if (calParams == null || calParams.Count == 0)
         {
@@ -201,30 +240,58 @@ public class AnShengEnergyService : IAnShengEnergyService
             ["calParams"] = calParamsElement
         };
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodSetCalParams, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodSetCalParams, parameters, principal, ct);
         return BuildResult(response);
     }
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> ResetCalParamsAsync(
+    public Task<AnShengEnergyResultDto> ResetCalParamsAsync(
         long deviceId, CancellationToken ct = default)
-    {
-        var response = await _cmd.SendCommandAsync(deviceId, MethodResetCalParams, null, ct);
-        return BuildResult(response);
-    }
+        => DispatchResultAsync(deviceId, MethodResetCalParams, null, null, ct);
 
     /// <inheritdoc />
-    public async Task<AnShengEnergyResultDto> AutoCalAsync(
+    public Task<AnShengEnergyResultDto> ResetCalParamsAsync(
+        long deviceId, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => DispatchResultAsync(deviceId, MethodResetCalParams, null, principal, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> AutoCalAsync(
         long deviceId, double power, CancellationToken ct = default)
+        => AutoCalCoreAsync(deviceId, power, null, ct);
+
+    /// <inheritdoc />
+    public Task<AnShengEnergyResultDto> AutoCalAsync(
+        long deviceId, double power, ClaimsPrincipal? principal, CancellationToken ct = default)
+        => AutoCalCoreAsync(deviceId, power, principal, ct);
+
+    /// <summary>自动校准下发核心：principal 由 Controller 显式传入。</summary>
+    private async Task<AnShengEnergyResultDto> AutoCalCoreAsync(
+        long deviceId, double power, ClaimsPrincipal? principal, CancellationToken ct)
     {
         var parameters = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["power"] = power
         };
 
-        var response = await _cmd.SendCommandAsync(deviceId, MethodAutoCal, parameters, ct);
+        var response = await DispatchAsync(deviceId, MethodAutoCal, parameters, principal, ct);
         return BuildResult(response);
     }
+
+    /// <summary>
+    /// B1 统一分派：null → 内部通道旧签名；非 null → 带 principal 的新重载（命令服务单点守卫）。
+    /// </summary>
+    private async Task<AnShengCommandResponse> DispatchAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct)
+        => principal == null
+            ? await _cmd.SendCommandAsync(deviceId, method, parameters, ct)
+            : await _cmd.SendCommandAsync(deviceId, method, parameters, principal, ct);
+
+    /// <summary>无附加业务动作的下发端点：分派后直接构造统一结果。</summary>
+    private async Task<AnShengEnergyResultDto> DispatchResultAsync(
+        long deviceId, string method, Dictionary<string, object?>? parameters,
+        ClaimsPrincipal? principal, CancellationToken ct)
+        => BuildResult(await DispatchAsync(deviceId, method, parameters, principal, ct));
 
     // ─────────────────────────────────────────────────────────────
     // 只读查询（HTTP 作用域）

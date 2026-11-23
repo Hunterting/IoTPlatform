@@ -74,4 +74,60 @@ public interface ICustomerScopeService
     /// <param name="ct">取消令牌。</param>
     /// <returns>AppCode 只读列表；无可达租户时为空列表。</returns>
     Task<IReadOnlyList<string>> GetAppCodesAsync(ClaimsPrincipal principal, CancellationToken ct = default);
+
+    // ── 授权缺口统一修复新增（设计 §3.2 A；点查一律服务端派生，禁止采信客户端可控归属）──────
+
+    /// <summary>
+    /// 由 AppCode 反查客户 ID（AppCode↔Customer 1:1 不变，设计 §7.2-7）。
+    /// 点查使用 IgnoreQueryFilters()，不受启动期冻结的租户全局过滤器影响。
+    /// </summary>
+    /// <param name="appCode">待解析的 AppCode（来自已校验的目标或 claim，禁止直接取请求头）。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>客户 ID；AppCode 为空或不存在时返回 null。</returns>
+    Task<long?> ResolveCustomerIdByAppCodeAsync(string appCode, CancellationToken ct = default);
+
+    /// <summary>
+    /// 由客户 ID 反查 AppCode（M1/M2/M9/M10 归属派生入口）。
+    /// 调用方必须先通过 <see cref="CanAccessCustomerAsync"/> 校验目标归属，再取返回的 AppCode 落库。
+    /// </summary>
+    /// <param name="customerId">已授权的目标客户 ID。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>AppCode；客户不存在时返回 null。</returns>
+    Task<string?> ResolveAppCodeByCustomerIdAsync(long customerId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 由设备 ID 反查其归属客户 ID（M4 间接归属）。
+    /// 设备仅带 AppCode，先 IgnoreQueryFilters 点查设备 AppCode，再按 1:1 不变映射反查客户。
+    /// </summary>
+    /// <param name="deviceId">设备 ID。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>客户 ID；设备不存在或归属缺失时返回 null。</returns>
+    Task<long?> ResolveCustomerIdByDeviceIdAsync(long deviceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 由项目 ID 反查其归属客户 ID（M9 合同上传用）。
+    /// 项目表自带 CustomerId 权威列，IgnoreQueryFilters 点查后原值返回。
+    /// </summary>
+    /// <param name="projectId">项目 ID。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>客户 ID；项目不存在时返回 null。</returns>
+    Task<long?> ResolveCustomerIdByProjectIdAsync(long projectId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 判定一行是否属于"有意的平台级共享数据"（字典/配置类：AppCode 为空或 IsSystem=true，设计 §3.5）。
+    /// <b>绝不可泛化</b>：附件/角色/受控设备的 AppCode=null 是缺陷（无归属），必须 fail-closed。
+    /// </summary>
+    /// <param name="appCode">实体的 AppCode。</param>
+    /// <param name="isSystem">实体的 IsSystem 标记（无该列时传 null）。</param>
+    /// <returns>共享行返回 true；否则 false。</returns>
+    bool IsSharedSystemRow(string? appCode, bool? isSystem);
+
+    /// <summary>
+    /// 读侧共享行判据：在 <see cref="IsSharedSystemRow"/> 基础上额外认可字符串 AppCode="system"
+    /// （与 QueryScopeHelper.BuildSharedPredicate 同源）。<b>仅用于读</b>——写侧仍走严格判据，
+    /// 避免把 "system" 行泛化为任何角色可写（设计 §3.5 铁律）。
+    /// </summary>
+    bool IsSharedReadRow(string? appCode, bool? isSystem)
+        => IsSharedSystemRow(appCode, isSystem)
+           || string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
 }

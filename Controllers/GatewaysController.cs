@@ -1,12 +1,15 @@
+using IoTPlatform.Data;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using IoTPlatform.Configuration;
+using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,10 +22,46 @@ namespace IoTPlatform.Controllers;
 public class GatewaysController : ControllerBase
 {
     private readonly IGatewayService _gatewayService;
+    private readonly AppDbContext _db;
+    private readonly ICustomerScopeService _scope;
+    private readonly ICustomerScopeGuard _scopeGuard;
 
-    public GatewaysController(IGatewayService gatewayService)
+    public GatewaysController(
+        IGatewayService gatewayService,
+        AppDbContext db,
+        ICustomerScopeService scope,
+        ICustomerScopeGuard scopeGuard)
     {
         _gatewayService = gatewayService;
+        _db = db;
+        _scope = scope;
+        _scopeGuard = scopeGuard;
+    }
+
+    private CancellationToken RequestAborted =>
+        ControllerContext?.HttpContext?.RequestAborted ?? CancellationToken.None;
+
+    /// <summary>
+    /// 【B1/M4】网关 id → AppCode（IgnoreQueryFilters 点查）→ CustomerId → 统一范围守卫。
+    /// 判定必须在启停/改删等任何副作用之前；拿不到归属即 fail-closed。
+    /// </summary>
+    private async Task EnsureGatewayAccessAsync(long id)
+    {
+        var appCode = await _db.Gateways
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(g => g.Id == id)
+            .Select(g => g.AppCode)
+            .FirstOrDefaultAsync(RequestAborted);
+
+        if (appCode == null)
+        {
+            throw new NotFoundException("网关不存在");
+        }
+
+        var customerId = await _scope.ResolveCustomerIdByAppCodeAsync(appCode, RequestAborted);
+        var scope = await _scope.ResolveAsync(User, RequestAborted);
+        _scopeGuard.AssertScope(scope, customerId, appCode);
     }
 
     /// <summary>
@@ -37,7 +76,8 @@ public class GatewaysController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _gatewayService.GetGatewaysAsync(page, pageSize, keyword, appCode);
+            var listScope = await this.ResolveListScopeAsync(_scope);
+            var result = await _gatewayService.GetGatewaysAsync(page, pageSize, keyword, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<GatewayDto>>.Success(result);
         }
         catch (Exception ex)
@@ -52,6 +92,12 @@ public class GatewaysController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<GatewayDto>>> GetGateway(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Gateway>(id, false))
+            {
+                return Ok(ApiResponse<GatewayDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
@@ -100,6 +146,7 @@ public class GatewaysController : ControllerBase
     {
         try
         {
+            await EnsureGatewayAccessAsync(id);
             var appCode = User.FindFirst("AppCode")?.Value;
             var result = await _gatewayService.UpdateGatewayAsync(id, request, appCode);
             return ApiResponse<GatewayDto>.Success(result, "网关更新成功");
@@ -107,6 +154,10 @@ public class GatewaysController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Ok(ApiResponse.BadRequest(ex.Message));
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -127,6 +178,7 @@ public class GatewaysController : ControllerBase
     {
         try
         {
+            await EnsureGatewayAccessAsync(id);
             var appCode = User.FindFirst("AppCode")?.Value;
             await _gatewayService.DeleteGatewayAsync(id, appCode);
             return ApiResponse.Success("网关删除成功");
@@ -134,6 +186,10 @@ public class GatewaysController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Ok(ApiResponse.BadRequest(ex.Message));
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -154,6 +210,8 @@ public class GatewaysController : ControllerBase
     {
         try
         {
+            // 【M4】越权时绝不进入 GatewayService.StartGatewayAsync（0 次启动副作用）。
+            await EnsureGatewayAccessAsync(id);
             var appCode = User.FindFirst("AppCode")?.Value;
             await _gatewayService.StartGatewayAsync(id, appCode);
             return ApiResponse.Success("网关启动成功");
@@ -161,6 +219,10 @@ public class GatewaysController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Ok(ApiResponse.BadRequest(ex.Message));
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {
@@ -181,6 +243,8 @@ public class GatewaysController : ControllerBase
     {
         try
         {
+            // 【M4】越权时绝不进入 GatewayService.StopGatewayAsync（0 次停止副作用）。
+            await EnsureGatewayAccessAsync(id);
             var appCode = User.FindFirst("AppCode")?.Value;
             await _gatewayService.StopGatewayAsync(id, appCode);
             return ApiResponse.Success("网关停止成功");
@@ -188,6 +252,10 @@ public class GatewaysController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return Ok(ApiResponse.BadRequest(ex.Message));
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (UnauthorizedAccessException ex)
         {

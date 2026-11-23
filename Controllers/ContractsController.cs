@@ -2,8 +2,8 @@ using IoTPlatform.Configuration;
 using IoTPlatform.Data;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
-using IoTPlatform.Infrastructure.Tenant;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,25 +20,30 @@ namespace IoTPlatform.Controllers;
 public class ContractsController : ControllerBase
 {
     private readonly AppDbContext _dbContext;
-    private readonly FileStorageService _fileStorageService;
+    private readonly IFileStorageService _fileStorageService;
     private readonly IConfiguration _configuration;
     private readonly ILogger<ContractsController> _logger;
-    private readonly ITenantContextAccessor _tenantContextAccessor;
+    private readonly ICustomerScopeService _customerScope;
+    private readonly IDeviceAccessGuard _deviceGuard;
 
     private const string MODULE_NAME = "contracts";
 
+    // 【M9-P0-0】不注入 ITenantContextAccessor：admin 的 tenantContext.AppCode 为 null，
+    // 合同 AppCode 必须从"已授权的项目归属"服务端派生（设计 §2.10）。
     public ContractsController(
         AppDbContext dbContext,
-        FileStorageService fileStorageService,
+        IFileStorageService fileStorageService,
         IConfiguration configuration,
         ILogger<ContractsController> logger,
-        ITenantContextAccessor tenantContextAccessor)
+        ICustomerScopeService customerScope,
+        IDeviceAccessGuard deviceGuard)
     {
         _dbContext = dbContext;
         _fileStorageService = fileStorageService;
         _configuration = configuration;
         _logger = logger;
-        _tenantContextAccessor = tenantContextAccessor;
+        _customerScope = customerScope ?? throw new ArgumentNullException(nameof(customerScope));
+        _deviceGuard = deviceGuard ?? throw new ArgumentNullException(nameof(deviceGuard));
     }
 
     /// <summary>
@@ -53,11 +58,30 @@ public class ContractsController : ControllerBase
     {
         try
         {
-            // 验证项目存在
-            var project = await _dbContext.Projects.FindAsync(request.ProjectId);
+            // 点查项目归属（IgnoreQueryFilters，不依赖启动期冻结的全局过滤器）
+            var project = await _dbContext.Projects
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(p => p.Id == request.ProjectId)
+                .Select(p => new { p.Id, p.CustomerId })
+                .FirstOrDefaultAsync();
             if (project == null)
             {
                 return ApiResponse<ContractDto>.Error("项目不存在");
+            }
+
+            // 【M9-P0-0】在写库前先做归属校验（原则 G）：越权立刻 403，且不落任何文件。
+            try
+            {
+                await _deviceGuard.EnsureProjectAccessAsync(User, request.ProjectId);
+            }
+            catch (NotFoundException)
+            {
+                return ApiResponse<ContractDto>.Error("项目不存在");
+            }
+            catch (ForbiddenAccessException ex)
+            {
+                return ApiResponse<ContractDto>.Forbidden(ex.Message);
             }
 
             if (request.File == null || request.File.Length == 0)
@@ -68,9 +92,29 @@ public class ContractsController : ControllerBase
             // 获取当前用户信息
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var userId = long.TryParse(userIdClaim, out var uid) ? uid : (long?)null;
-            var appCode = _tenantContextAccessor.Current?.AppCode;
 
-            // 使用通用附件服务上传
+            // 【M9-P0-0】AppCode 从项目归属派生：超管/admin 按已校验的 CustomerId 反查；
+            // 下级按自身 claim 单值（零回归）。绝不取 tenantContext 空值，也不读任何请求头。
+            string? appCode;
+            var scope = await _customerScope.ResolveAsync(User);
+            if (scope.Mode == CustomerScopeMode.Single)
+            {
+                appCode = User.FindFirst("AppCode")?.Value;
+                if (string.IsNullOrEmpty(appCode))
+                {
+                    return ApiResponse<ContractDto>.Forbidden("缺少客户归属");
+                }
+            }
+            else
+            {
+                appCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(project.CustomerId);
+                if (string.IsNullOrEmpty(appCode))
+                {
+                    return ApiResponse<ContractDto>.Error("项目归属客户缺少 AppCode");
+                }
+            }
+
+            // 使用通用附件服务上传（appCode 为服务端派生值）
             var attachment = await _fileStorageService.UploadFileAsync(
                 request.File,
                 MODULE_NAME,
@@ -116,6 +160,12 @@ public class ContractsController : ControllerBase
     {
         try
         {
+            // B4/M6：项目归属校验在返回其合同列表之前完成（admin 不得越权枚举）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Project>(projectId))
+            {
+                return Ok(ApiResponse<List<ContractDto>>.Fail(403, "无权访问该项目的合同"));
+            }
+
             // 通过通用附件接口获取
             var attachments = await _fileStorageService.GetAttachmentsAsync(MODULE_NAME, projectId);
 
@@ -145,6 +195,12 @@ public class ContractsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<ContractDto>>> GetContract(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Attachment>(id, false))
+            {
+                return Ok(ApiResponse<ContractDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var attachment = await _fileStorageService.GetAttachmentAsync(id);
@@ -182,7 +238,27 @@ public class ContractsController : ControllerBase
     {
         try
         {
-            var result = await _fileStorageService.DeleteAttachmentAsync(id);
+            // 【M9-P0-0】按 scope 下推归属；Service 先查合同记录归属 → 校验 → 再删物理文件 + DB 记录。
+            var scope = await _customerScope.ResolveAsync(User);
+            string? appCode = null;
+            IReadOnlyCollection<long>? customerIds = null;
+
+            switch (scope.Mode)
+            {
+                case CustomerScopeMode.Multi:
+                    customerIds = scope.CustomerIds; // 空集合=全拒绝，fail-closed
+                    break;
+                case CustomerScopeMode.Single:
+                    appCode = User.FindFirst("AppCode")?.Value;
+                    if (string.IsNullOrEmpty(appCode))
+                    {
+                        return Ok(ApiResponse.Forbidden("缺少客户归属"));
+                    }
+                    break;
+                // 超管 All：两者皆 null = 不过滤（原则 E）。
+            }
+
+            var result = await _fileStorageService.DeleteContractAsync(id, appCode, customerIds);
             if (!result)
             {
                 return ApiResponse.Error("合同不存在");
@@ -190,6 +266,11 @@ public class ContractsController : ControllerBase
 
             _logger.LogInformation("合同删除成功: {ContractId}", id);
             return ApiResponse.Success("合同删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            // 越权：物理文件与 DB 记录均未被删除。
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (Exception ex)
         {
@@ -206,6 +287,12 @@ public class ContractsController : ControllerBase
     {
         try
         {
+            // B4/M6：合同下载归属校验（与详情同判据）。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Attachment>(id))
+            {
+                return Ok(ApiResponse.Forbidden("无权下载该合同"));
+            }
+
             var attachment = await _fileStorageService.GetAttachmentAsync(id);
             if (attachment == null)
             {
