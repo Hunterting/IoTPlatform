@@ -10,6 +10,12 @@ namespace IoTPlatform.Services;
 public interface IDeviceService
 {
     Task<PagedResponse<DeviceDto>> GetDevicesAsync(int page, int pageSize, string? keyword, string? status, string? appCode, List<long>? allowedAreaIds);
+
+    /// <summary>B4/M5：Multi 授权客户集合范围下推重载；旧签名保持不变。</summary>
+    Task<PagedResponse<DeviceDto>> GetDevicesAsync(
+        int page, int pageSize, string? keyword, string? status, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
+        => GetDevicesAsync(page, pageSize, keyword, status, appCode, allowedAreaIds);
     Task<DeviceDto?> GetDeviceAsync(long id, string? appCode, List<long>? allowedAreaIds);
     Task<DeviceDto> CreateDeviceAsync(CreateDeviceRequest request);
     Task<DeviceDto> UpdateDeviceAsync(long id, UpdateDeviceRequest request);

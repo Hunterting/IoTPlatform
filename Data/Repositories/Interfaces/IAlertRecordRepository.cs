@@ -133,7 +133,13 @@ public interface IAlertRecordRepository : IRepository<AlertRecord>
     /// <param name="page">页码</param>
     /// <param name="pageSize">页大小</param>
     /// <returns>分页结果</returns>
+    /// <summary>旧签名保留。</summary>
     Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(string? status = null, string? level = null, string? alertType = null, string? appCode = null, List<long>? allowedAreaIds = null, int page = 1, int pageSize = 20);
+
+    /// <summary>B4/M5：Multi 授权客户集合下推。</summary>
+    Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(
+        string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds,
+        int page, int pageSize, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null);
 
     /// <summary>
     /// 获取告警详情（带权限检查）
@@ -142,7 +148,13 @@ public interface IAlertRecordRepository : IRepository<AlertRecord>
     /// <param name="appCode">应用代码</param>
     /// <param name="allowedAreaIds">允许的区域ID列表</param>
     /// <returns>告警对象或null</returns>
+    /// <summary>旧签名保留。</summary>
     Task<AlertRecord?> GetAlertWithDetailsAsync(long id, string? appCode = null, List<long>? allowedAreaIds = null);
+
+    /// <summary>B4/M5：Multi 授权客户集合下推。</summary>
+    Task<AlertRecord?> GetAlertWithDetailsAsync(
+        long id, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null);
 
     /// <summary>
     /// 获取告警日志
@@ -158,7 +170,13 @@ public interface IAlertRecordRepository : IRepository<AlertRecord>
     /// <param name="endTime">结束时间</param>
     /// <param name="appCode">应用代码</param>
     /// <returns>告警摘要</returns>
+    /// <summary>旧签名保留。</summary>
     Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null);
+
+    /// <summary>B4/M5：Multi 授权客户集合下推。</summary>
+    Task<AlertSummaryDto> GetAlertSummaryAsync(
+        DateTime? startTime, DateTime? endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null);
 }
 
 /// <summary>

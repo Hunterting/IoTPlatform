@@ -1,6 +1,7 @@
 using IoTPlatform.Data;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 using System.Text.Json;
@@ -22,7 +23,12 @@ public class AnalyticsService : IAnalyticsService
     /// <summary>
     /// 获取汇总统计
     /// </summary>
-    public async Task<AnalyticsSummaryDto> GetSummaryAsync(string? appCode)
+    public Task<AnalyticsSummaryDto> GetSummaryAsync(string? appCode)
+        => GetSummaryAsync(appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到三张统计源表。</summary>
+    public async Task<AnalyticsSummaryDto> GetSummaryAsync(
+        string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var deviceQuery = _dbContext.Devices.AsQueryable();
         var alertQuery = _dbContext.AlertRecords.AsQueryable();
@@ -34,6 +40,10 @@ public class AnalyticsService : IAnalyticsService
             alertQuery = alertQuery.Where(a => a.AppCode == appCode);
             workOrderQuery = workOrderQuery.Where(w => w.AppCode == appCode);
         }
+
+        deviceQuery = deviceQuery.ApplyQueryScope(appCode, customerIds, appCodes);
+        alertQuery = alertQuery.ApplyQueryScope(appCode, customerIds, appCodes);
+        workOrderQuery = workOrderQuery.ApplyQueryScope(appCode, customerIds, appCodes);
 
         var totalDevices = await deviceQuery.CountAsync();
         var onlineDevices = await deviceQuery.CountAsync(d => d.Status == "online");
@@ -107,14 +117,17 @@ public class AnalyticsService : IAnalyticsService
     /// <summary>
     /// 获取能耗统计（基于设备真实上报采样值；无累计读数时不伪造累计电量，TotalConsumption 表示采样点累计功率之和 kW）
     /// </summary>
-    public async Task<EnergyConsumptionDto> GetEnergyConsumptionAsync(DateTime startTime, DateTime endTime, string? appCode)
+    public Task<EnergyConsumptionDto> GetEnergyConsumptionAsync(DateTime startTime, DateTime endTime, string? appCode)
+        => GetEnergyConsumptionAsync(startTime, endTime, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推到采样记录。</summary>
+    public async Task<EnergyConsumptionDto> GetEnergyConsumptionAsync(
+        DateTime startTime, DateTime endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _dbContext.DeviceDataRecords.AsNoTracking()
             .Where(r => r.Timestamp >= startTime && r.Timestamp <= endTime);
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(r => r.AppCode == appCode);
-        }
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         var records = await query.Take(20000).ToListAsync();
         var breakdown = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -150,8 +163,14 @@ public class AnalyticsService : IAnalyticsService
     ///  ② 若类型化列为 null，则从 SensorData 原始 JSON 解析安圣 EMdata[].p / tasks[].power —— 兼容历史数据。
     /// 每个时间桶取采样【平均值】，口径是「平均功率/平均流量」，不是 kWh 累计电量。
     /// </summary>
-    public async Task<EnergyAnalysisDto> GetEnergyAnalysisAsync(
+    public Task<EnergyAnalysisDto> GetEnergyAnalysisAsync(
         string energyType, int year, int month, long? areaId, string? appCode)
+        => GetEnergyAnalysisAsync(energyType, year, month, areaId, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推到用能分析采样记录。</summary>
+    public async Task<EnergyAnalysisDto> GetEnergyAnalysisAsync(
+        string energyType, int year, int month, long? areaId, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var type = NormalizeEnergyType(energyType);
         var isElectric = type == "electric";
@@ -183,10 +202,7 @@ public class AnalyticsService : IAnalyticsService
 
         var query = _dbContext.DeviceDataRecords.AsNoTracking()
             .Where(r => r.Timestamp >= rangeStart && r.Timestamp <= rangeEnd);
-        if (!string.IsNullOrEmpty(appCode))
-        {
-            query = query.Where(r => r.AppCode == appCode);
-        }
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
         if (areaId.HasValue)
         {
             query = query.Where(r => r.AreaId == areaId.Value);

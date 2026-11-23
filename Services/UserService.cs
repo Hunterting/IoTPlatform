@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -32,10 +33,17 @@ public class UserService : IUserService
         _unitOfWork = unitOfWork;
     }
 
+    /// <summary>旧签名保留：委托到范围下推重载，旧参数组合（下级/内部）零回归。</summary>
+    public Task<PagedResponse<UserDto>> GetUsersAsync(
+        int page, int pageSize, string? keyword, string? appCode, string? currentUserRole)
+        => GetUsersAsync(page, pageSize, keyword, appCode, currentUserRole, null, null);
+
     /// <summary>
-    /// 获取用户列表
+    /// B4/M5：列表范围下推。admin 的 appCode=null 不再等于零过滤——授权客户集合在此真正生效。
     /// </summary>
-    public async Task<PagedResponse<UserDto>> GetUsersAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole)
+    public async Task<PagedResponse<UserDto>> GetUsersAsync(
+        int page, int pageSize, string? keyword, string? appCode, string? currentUserRole,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         // 确定查询的appCode
         var queryAppCode = appCode;
@@ -45,7 +53,7 @@ public class UserService : IUserService
         }
 
         // 构建查询条件
-        var query = _userRepository.GetQueryable(queryAppCode);
+        var query = _userRepository.GetQueryable(queryAppCode, null, customerIds, appCodes);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -218,19 +226,44 @@ public class UserService : IUserService
     /// <summary>
     /// 更新用户
     /// </summary>
-    public async Task<UserDto> UpdateUserAsync(long id, UpdateUserRequest request, string? appCode, string? currentUserRole)
+    public Task<UserDto> UpdateUserAsync(long id, UpdateUserRequest request, string? appCode, string? currentUserRole)
+        => UpdateUserCoreAsync(id, request, appCode, currentUserRole, null, false);
+
+    /// <summary>B5/M8 三分支改删重载：范围由 Controller 显式解析后下推；未校验通过一律 403。</summary>
+    public Task<UserDto> UpdateUserAsync(
+        long id, UpdateUserRequest request, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException<UserDto>(
+                new ForbiddenAccessException("用户更新未通过客户范围校验"));
+        }
+
+        return UpdateUserCoreAsync(id, request, appCode, null, scope, true);
+    }
+
+    private async Task<UserDto> UpdateUserCoreAsync(
+        long id,
+        UpdateUserRequest request,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("用户更新未通过客户范围校验");
+        }
+
         var user = await _userRepository.GetByIdAsync(id);
         if (user == null)
         {
             throw new InvalidOperationException("用户不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && user.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权修改该用户");
-        }
+        // B5/M8：All 放行 / Multi 比 DB 授权集合 / Single 沿用 claim 单值；写库之前完成。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, user.CustomerId, user.AppCode, appCode, currentUserRole, "修改该用户");
 
         // 检查邮箱是否被其他用户使用
         var emailExists = await _userRepository.EmailExistsAsync(request.Email, id);
@@ -286,19 +319,41 @@ public class UserService : IUserService
     /// <summary>
     /// 删除用户
     /// </summary>
-    public async Task DeleteUserAsync(long id, string? appCode, string? currentUserRole)
+    public Task DeleteUserAsync(long id, string? appCode, string? currentUserRole)
+        => DeleteUserCoreAsync(id, appCode, currentUserRole, null, false);
+
+    /// <summary>B5/M8 三分支删除重载：范围由 Controller 显式解析后下推；未校验通过一律 403。</summary>
+    public Task DeleteUserAsync(long id, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException(new ForbiddenAccessException("用户删除未通过客户范围校验"));
+        }
+
+        return DeleteUserCoreAsync(id, appCode, null, scope, true);
+    }
+
+    private async Task DeleteUserCoreAsync(
+        long id,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("用户删除未通过客户范围校验");
+        }
+
         var user = await _userRepository.GetByIdAsync(id);
         if (user == null)
         {
             throw new InvalidOperationException("用户不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && user.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权删除该用户");
-        }
+        // B5/M8：任何关联数据检查与写库之前完成归属判定。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, user.CustomerId, user.AppCode, appCode, currentUserRole, "删除该用户");
 
         // 检查是否有关联数据（工单、操作日志等）
         var hasWorkOrders = await _workOrderRepository.ExistsAsync(w => w.CreatedBy == user.Email);

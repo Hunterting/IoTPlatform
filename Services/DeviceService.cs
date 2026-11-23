@@ -105,12 +105,17 @@ public class DeviceService : IDeviceService
         }
     }
 
-    /// <summary>
-    /// 获取设备列表
-    /// </summary>
-    public async Task<PagedResponse<DeviceDto>> GetDevicesAsync(int page, int pageSize, string? keyword, string? status, string? appCode, List<long>? allowedAreaIds)
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
+    public Task<PagedResponse<DeviceDto>> GetDevicesAsync(
+        int page, int pageSize, string? keyword, string? status, string? appCode, List<long>? allowedAreaIds)
+        => GetDevicesAsync(page, pageSize, keyword, status, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：Multi 授权客户集合真正下推；All 时不过滤。</summary>
+    public async Task<PagedResponse<DeviceDto>> GetDevicesAsync(
+        int page, int pageSize, string? keyword, string? status, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = _deviceRepository.GetQueryable(appCode, allowedAreaIds);
+        var query = _deviceRepository.GetQueryable(appCode, allowedAreaIds, customerIds, appCodes);
 
         // 状态过滤
         if (!string.IsNullOrEmpty(status))

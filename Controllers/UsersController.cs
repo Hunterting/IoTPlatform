@@ -4,8 +4,10 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 
 namespace IoTPlatform.Controllers;
@@ -20,11 +22,24 @@ public class UsersController : ControllerBase
 {
     private readonly IUserService _userService;
     private readonly ICustomerScopeService _customerScope;
+    private readonly IDetailScopeGuard? _detailGuard;
 
+    /// <summary>兼容构造：存量单测按原签名创建，行为与 B4 之前一致。</summary>
     public UsersController(IUserService userService, ICustomerScopeService customerScope)
+        : this(userService, customerScope, null)
+    {
+    }
+
+    /// <summary>生产构造：显式注入详情归属守卫（HTTP 恒 200 + 业务码 403）。</summary>
+    [ActivatorUtilitiesConstructor]
+    public UsersController(
+        IUserService userService,
+        ICustomerScopeService customerScope,
+        IDetailScopeGuard? detailGuard)
     {
         _userService = userService;
         _customerScope = customerScope;
+        _detailGuard = detailGuard;
     }
 
     /// <summary>
@@ -40,8 +55,10 @@ public class UsersController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _userService.GetUsersAsync(page, pageSize, keyword, appCode, role);
+            var result = await _userService.GetUsersAsync(
+                page, pageSize, keyword, appCode, role, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<UserDto>>.Success(result);
         }
         catch (Exception ex)
@@ -58,6 +75,12 @@ public class UsersController : ControllerBase
     {
         try
         {
+            // B4/M6 + PII：先按权威归属判定，越权 403；UserDto 投影不含 PasswordHash。
+            if (_detailGuard != null && !await _detailGuard.CanReadAsync<IoTPlatform.Models.User>(User, id))
+            {
+                return Ok(ApiResponse<UserDto>.Fail(403, "无权访问该用户"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
@@ -139,10 +162,15 @@ public class UsersController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            var result = await _userService.UpdateUserAsync(id, request, appCode, role);
+            // B5/M8：显式解析范围，Admin 可改授权客户下的用户；集合外仍 403。
+            var scope = await _customerScope.ResolveAsync(User);
+            var result = await _userService.UpdateUserAsync(id, request, appCode, scope, customerScopeVerified: true);
             return ApiResponse<UserDto>.Success(result, "用户更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<UserDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -171,10 +199,15 @@ public class UsersController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            await _userService.DeleteUserAsync(id, appCode, role);
+            // B5/M8：删除前按权威范围判定，集合外客户的用户仍拒绝删除。
+            var scope = await _customerScope.ResolveAsync(User);
+            await _userService.DeleteUserAsync(id, appCode, scope, customerScopeVerified: true);
             return ApiResponse.Success("用户删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {

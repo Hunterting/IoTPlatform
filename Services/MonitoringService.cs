@@ -1,7 +1,8 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -26,7 +27,13 @@ public class MonitoringService : IMonitoringService
     /// <summary>
     /// 获取监控数据列表
     /// </summary>
-    public async Task<PagedResponse<MonitoringDataDto>> GetMonitoringDataAsync(int page, int pageSize, string? appCode, List<long>? allowedAreaIds)
+    public Task<PagedResponse<MonitoringDataDto>> GetMonitoringDataAsync(int page, int pageSize, string? appCode, List<long>? allowedAreaIds)
+        => GetMonitoringDataAsync(page, pageSize, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推。</summary>
+    public async Task<PagedResponse<MonitoringDataDto>> GetMonitoringDataAsync(
+        int page, int pageSize, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _monitoringRepository.GetQueryable();
 
@@ -35,6 +42,8 @@ public class MonitoringService : IMonitoringService
         {
             query = query.Where(d => d.AppCode == appCode);
         }
+
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 区域权限过滤
         if (allowedAreaIds != null && allowedAreaIds.Count > 0)
@@ -150,7 +159,13 @@ public class MonitoringService : IMonitoringService
     /// <summary>
     /// 获取空气质量数据
     /// </summary>
-    public async Task<List<AirQualityDataDto>> GetAirQualityDataAsync(long areaId, DateTime? startTime, DateTime? endTime, string? appCode)
+    public Task<List<AirQualityDataDto>> GetAirQualityDataAsync(long areaId, DateTime? startTime, DateTime? endTime, string? appCode)
+        => GetAirQualityDataAsync(areaId, startTime, endTime, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推。</summary>
+    public async Task<List<AirQualityDataDto>> GetAirQualityDataAsync(
+        long areaId, DateTime? startTime, DateTime? endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _monitoringRepository.GetQueryable();
 
@@ -162,6 +177,8 @@ public class MonitoringService : IMonitoringService
         {
             query = query.Where(a => a.AppCode == appCode);
         }
+
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 时间范围过滤
         if (startTime.HasValue)
@@ -196,7 +213,13 @@ public class MonitoringService : IMonitoringService
     /// <summary>
     /// 获取环境监测数据
     /// </summary>
-    public async Task<List<EnvironmentDataDto>> GetEnvironmentDataAsync(long deviceId, DateTime? startTime, DateTime? endTime, string? appCode)
+    public Task<List<EnvironmentDataDto>> GetEnvironmentDataAsync(long deviceId, DateTime? startTime, DateTime? endTime, string? appCode)
+        => GetEnvironmentDataAsync(deviceId, startTime, endTime, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推。</summary>
+    public async Task<List<EnvironmentDataDto>> GetEnvironmentDataAsync(
+        long deviceId, DateTime? startTime, DateTime? endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _monitoringRepository.GetQueryable();
 
@@ -208,6 +231,8 @@ public class MonitoringService : IMonitoringService
         {
             query = query.Where(e => e.AppCode == appCode);
         }
+
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 时间范围过滤
         if (startTime.HasValue)
@@ -247,7 +272,12 @@ public class MonitoringService : IMonitoringService
     /// <summary>
     /// 获取监控汇总
     /// </summary>
-    public async Task<MonitoringSummaryDto> GetMonitoringSummaryAsync(string? appCode)
+    public Task<MonitoringSummaryDto> GetMonitoringSummaryAsync(string? appCode)
+        => GetMonitoringSummaryAsync(appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合下推到设备/告警汇总。</summary>
+    public async Task<MonitoringSummaryDto> GetMonitoringSummaryAsync(
+        string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var devicesQuery = _monitoringRepository.GetQueryable();
         if (!string.IsNullOrEmpty(appCode))
@@ -259,11 +289,14 @@ public class MonitoringService : IMonitoringService
         var onlineDevices = await devicesQuery.CountAsync(d => d.Status == "online");
         var offlineDevices = totalDevices - onlineDevices;
 
+        devicesQuery = devicesQuery.ApplyQueryScope(appCode, customerIds, appCodes);
+
         var alertsQuery = _monitoringRepository.GetQueryable();
         if (!string.IsNullOrEmpty(appCode))
         {
             alertsQuery = alertsQuery.Where(a => a.AppCode == appCode);
         }
+        alertsQuery = alertsQuery.ApplyQueryScope(appCode, customerIds, appCodes);
 
         var totalAlerts = await alertsQuery.CountAsync();
         var pendingAlerts = await alertsQuery.CountAsync(a => a.Status == "pending");

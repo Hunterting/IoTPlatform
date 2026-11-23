@@ -1,9 +1,11 @@
-﻿using IoTPlatform.Configuration;
+using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 
 namespace IoTPlatform.Controllers;
@@ -17,10 +19,20 @@ namespace IoTPlatform.Controllers;
 public class MonitoringController : ControllerBase
 {
     private readonly IMonitoringService _monitoringService;
+    private readonly ICustomerScopeService? _customerScope;
 
+    /// <summary>兼容构造：存量单测零改动。</summary>
     public MonitoringController(IMonitoringService monitoringService)
+        : this(monitoringService, null)
+    {
+    }
+
+    /// <summary>生产构造：显式注入范围服务。</summary>
+    [ActivatorUtilitiesConstructor]
+    public MonitoringController(IMonitoringService monitoringService, ICustomerScopeService? customerScope)
     {
         _monitoringService = monitoringService;
+        _customerScope = customerScope;
     }
 
     /// <summary>
@@ -35,8 +47,10 @@ public class MonitoringController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _monitoringService.GetMonitoringDataAsync(page, pageSize, appCode, allowedAreaIds);
+            var result = await _monitoringService.GetMonitoringDataAsync(
+                page, pageSize, appCode, allowedAreaIds, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<MonitoringDataDto>>.Success(result);
         }
         catch (Exception ex)
@@ -57,8 +71,10 @@ public class MonitoringController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _monitoringService.GetAirQualityDataAsync(areaId, startTime, endTime, appCode);
+            var result = await _monitoringService.GetAirQualityDataAsync(
+                areaId, startTime, endTime, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<List<AirQualityDataDto>>.Success(result);
         }
         catch (Exception ex)
@@ -79,8 +95,10 @@ public class MonitoringController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _monitoringService.GetEnvironmentDataAsync(deviceId, startTime, endTime, appCode);
+            var result = await _monitoringService.GetEnvironmentDataAsync(
+                deviceId, startTime, endTime, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<List<EnvironmentDataDto>>.Success(result);
         }
         catch (Exception ex)
@@ -98,8 +116,10 @@ public class MonitoringController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _monitoringService.GetMonitoringSummaryAsync(appCode);
+            var result = await _monitoringService.GetMonitoringSummaryAsync(
+                appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<MonitoringSummaryDto>.Success(result);
         }
         catch (Exception ex)

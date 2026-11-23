@@ -35,11 +35,7 @@ public interface IRepository<T> where T : class
     /// <param name="appCode">应用代码（用于多租户过滤）</param>
     /// <param name="allowedAreaIds">允许访问的区域ID列表（用于区域权限过滤）</param>
     /// <returns>符合条件的实体列表</returns>
-    Task<IEnumerable<T>> GetAsync(
-        Expression<Func<T, bool>> predicate, 
-        string[]? includeProperties = null, 
-        string? appCode = null, 
-        List<long>? allowedAreaIds = null);
+    Task<IEnumerable<T>> GetAsync(Expression<Func<T, bool>> predicate, string[]? includeProperties = null, string? appCode = null, List<long>? allowedAreaIds = null);
     
     /// <summary>
     /// 分页查询实体
@@ -54,14 +50,7 @@ public interface IRepository<T> where T : class
     /// <param name="allowedAreaIds">允许访问的区域ID列表（用于区域权限过滤）</param>
     /// <returns>分页结果</returns>
     Task<(IEnumerable<T> Items, int TotalCount, int TotalPages)> GetPagedAsync(
-        int pageNumber = 1, 
-        int pageSize = 10, 
-        Expression<Func<T, bool>>? predicate = null,
-        Expression<Func<T, object>>? orderBy = null,
-        bool isDescending = false,
-        string[]? includeProperties = null,
-        string? appCode = null,
-        List<long>? allowedAreaIds = null);
+        int pageNumber = 1, int pageSize = 10, Expression<Func<T, bool>>? predicate = null, Expression<Func<T, object>>? orderBy = null, bool isDescending = false, string[]? includeProperties = null, string? appCode = null, List<long>? allowedAreaIds = null);
     
     /// <summary>
     /// 获取查询对象（可用于进一步LINQ查询）
@@ -70,6 +59,14 @@ public interface IRepository<T> where T : class
     /// <param name="allowedAreaIds">允许访问的区域ID列表（用于区域权限过滤）</param>
     /// <returns>IQueryable查询对象</returns>
     IQueryable<T> GetQueryable(string? appCode = null, List<long>? allowedAreaIds = null);
+
+    /// <summary>
+    /// B4/M5 列表范围下推重载：customerIds 为 Multi 授权的权威客户集合；appCodes 为对应 AppCode 集合。
+    /// 旧签名保留，二者皆为 null 时行为与旧签名完全一致（超管全量）。
+    /// </summary>
+    IQueryable<T> GetQueryable(
+        string? appCode, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
+        => GetQueryable(appCode, allowedAreaIds);
 
     /// <summary>
     /// 获取查询对象（GetQueryable的别名方法）

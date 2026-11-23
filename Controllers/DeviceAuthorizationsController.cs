@@ -3,7 +3,9 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,13 +21,26 @@ public class DeviceAuthorizationsController : ControllerBase
 {
     private readonly IDeviceAuthorizationService _service;
     private readonly ILogger<DeviceAuthorizationsController> _logger;
+    private readonly ICustomerScopeService? _customerScope;
 
+    /// <summary>兼容构造：存量单测零改动。</summary>
     public DeviceAuthorizationsController(
         IDeviceAuthorizationService service,
         ILogger<DeviceAuthorizationsController> logger)
+        : this(service, logger, null)
+    {
+    }
+
+    /// <summary>生产构造：显式注入范围服务。</summary>
+    [ActivatorUtilitiesConstructor]
+    public DeviceAuthorizationsController(
+        IDeviceAuthorizationService service,
+        ILogger<DeviceAuthorizationsController> logger,
+        ICustomerScopeService? customerScope)
     {
         _service = service;
         _logger = logger;
+        _customerScope = customerScope;
     }
 
     private string? AppCode => User.FindFirst("AppCode")?.Value;
@@ -40,7 +55,9 @@ public class DeviceAuthorizationsController : ControllerBase
     {
         try
         {
-            var result = await _service.GetListAsync(IsSuperAdmin ? null : AppCode, ct);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _service.GetListAsync(
+                IsSuperAdmin ? null : AppCode, ct, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<List<DeviceAuthorizationDto>>.Success(result);
         }
         catch (Exception ex)
@@ -56,7 +73,9 @@ public class DeviceAuthorizationsController : ControllerBase
     {
         try
         {
-            var result = await _service.GetSummaryAsync(IsSuperAdmin ? null : AppCode, ct);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _service.GetSummaryAsync(
+                IsSuperAdmin ? null : AppCode, ct, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<DeviceAuthorizationSummaryDto>.Success(result);
         }
         catch (Exception ex)

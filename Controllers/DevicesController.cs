@@ -5,8 +5,10 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 
 namespace IoTPlatform.Controllers;
@@ -22,17 +24,29 @@ public class DevicesController : ControllerBase
     private readonly IDeviceService _deviceService;
     private readonly AppDbContext? _db;
     private readonly ICustomerScopeService? _customerScope;
+    private readonly IDetailScopeGuard? _detailGuard;
+
+    /// <summary>兼容构造：存量单测按原签名创建（显式传 null），行为零回归。</summary>
+    public DevicesController(IDeviceService deviceService, AppDbContext? db, ICustomerScopeService? customerScope)
+        : this(deviceService, db, customerScope, null)
+    {
+    }
 
     /// <summary>
-    /// 唯一构造函数：注入 DbContext（area 归属点查）与范围服务（越权判定）。
-    /// 必须保持唯一可自动装配的构造——ASP.NET Core activator 在多个可满足构造并存时会抛
-    /// InvalidOperationException，导致全部设备端点 500。单元测试亦须走本构造（可显式传 null）。
+    /// 生产构造：注入 DbContext（area 归属点查）、范围服务与 B4 详情归属守卫。
+    /// 用 [ActivatorUtilitiesConstructor] 消除多构造歧义，避免设备端点 500。
     /// </summary>
-    public DevicesController(IDeviceService deviceService, AppDbContext? db, ICustomerScopeService? customerScope)
+    [ActivatorUtilitiesConstructor]
+    public DevicesController(
+        IDeviceService deviceService,
+        AppDbContext? db,
+        ICustomerScopeService? customerScope,
+        IDetailScopeGuard? detailGuard)
     {
         _deviceService = deviceService;
         _db = db;
         _customerScope = customerScope;
+        _detailGuard = detailGuard;
     }
 
     /// <summary>
@@ -49,8 +63,10 @@ public class DevicesController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _deviceService.GetDevicesAsync(page, pageSize, keyword, status, appCode, allowedAreaIds);
+            var result = await _deviceService.GetDevicesAsync(
+                page, pageSize, keyword, status, appCode, allowedAreaIds, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<DeviceDto>>.Success(result);
         }
         catch (Exception ex)
@@ -67,6 +83,11 @@ public class DevicesController : ControllerBase
     {
         try
         {
+            if (_detailGuard != null && !await _detailGuard.CanReadAsync<IoTPlatform.Models.Device>(User, id))
+            {
+                return Ok(ApiResponse<DeviceDto>.Fail(403, "无权访问该设备"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 
@@ -94,6 +115,11 @@ public class DevicesController : ControllerBase
     {
         try
         {
+            if (_detailGuard != null && !await _detailGuard.CanReadAsync<IoTPlatform.Models.Device>(User, id))
+            {
+                return Ok(ApiResponse<DeviceDetailDto>.Fail(403, "无权访问该设备"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var allowedAreaIds = GetAllowedAreaIds();
 

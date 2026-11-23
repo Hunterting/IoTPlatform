@@ -1,6 +1,7 @@
 using IoTPlatform.Data;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -36,18 +37,25 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
 
     // ── 列表 ──────────────────────────────────────────────────────────────────
 
-    public async Task<List<DeviceAuthorizationDto>> GetListAsync(string? appCode, CancellationToken ct = default)
+    /// <summary>旧签名保留：委托到范围下推重载。</summary>
+    public Task<List<DeviceAuthorizationDto>> GetListAsync(string? appCode, CancellationToken ct = default)
+        => GetListAsync(appCode, ct, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<List<DeviceAuthorizationDto>> GetListAsync(
+        string? appCode, CancellationToken ct,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         // 真实设备列表（租户级由全局查询过滤器处理；appCode 非空时再显式收窄）
         var deviceQuery = _db.Devices.AsNoTracking().Include(d => d.Area).AsQueryable();
         if (!string.IsNullOrEmpty(appCode))
             deviceQuery = deviceQuery.Where(d => d.AppCode == appCode);
+        deviceQuery = deviceQuery.ApplyQueryScope(appCode, customerIds, appCodes);
         var devices = await deviceQuery.OrderBy(d => d.Id).ToListAsync(ct);
 
         // 授权记录（跨租户场景用 IgnoreQueryFilters，避免 HostedService 无上下文时漏数据）
         var authzQuery = _db.DeviceAuthorizations.AsNoTracking().IgnoreQueryFilters().AsQueryable();
-        if (!string.IsNullOrEmpty(appCode))
-            authzQuery = authzQuery.Where(a => a.AppCode == appCode);
+        authzQuery = authzQuery.ApplyQueryScope(appCode, customerIds, appCodes);
         var authzList = await authzQuery.ToListAsync(ct);
         var byDevice = new Dictionary<long, DeviceAuthorization>();
         foreach (var a in authzList)
@@ -123,9 +131,16 @@ public class DeviceAuthorizationService : IDeviceAuthorizationService
 
     // ── 统计 ──────────────────────────────────────────────────────────────────
 
-    public async Task<DeviceAuthorizationSummaryDto> GetSummaryAsync(string? appCode, CancellationToken ct = default)
+    /// <summary>旧签名保留。</summary>
+    public Task<DeviceAuthorizationSummaryDto> GetSummaryAsync(string? appCode, CancellationToken ct = default)
+        => GetSummaryAsync(appCode, ct, null, null);
+
+    /// <summary>B4/M5：统计走与列表完全相同的范围。</summary>
+    public async Task<DeviceAuthorizationSummaryDto> GetSummaryAsync(
+        string? appCode, CancellationToken ct,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var list = await GetListAsync(appCode, ct);
+        var list = await GetListAsync(appCode, ct, customerIds, appCodes);
         return new DeviceAuthorizationSummaryDto
         {
             Total = list.Count,

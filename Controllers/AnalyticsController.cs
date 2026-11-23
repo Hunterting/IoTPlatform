@@ -3,7 +3,9 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace IoTPlatform.Controllers;
 
@@ -17,10 +19,20 @@ namespace IoTPlatform.Controllers;
 public class AnalyticsController : ControllerBase
 {
     private readonly IAnalyticsService _analyticsService;
+    private readonly ICustomerScopeService? _customerScope;
 
+    /// <summary>兼容构造：存量单测零改动。</summary>
     public AnalyticsController(IAnalyticsService analyticsService)
+        : this(analyticsService, null)
+    {
+    }
+
+    /// <summary>生产构造：显式注入范围服务。</summary>
+    [ActivatorUtilitiesConstructor]
+    public AnalyticsController(IAnalyticsService analyticsService, ICustomerScopeService? customerScope)
     {
         _analyticsService = analyticsService;
+        _customerScope = customerScope;
     }
 
     /// <summary>
@@ -46,7 +58,9 @@ public class AnalyticsController : ControllerBase
             if (y < 2000 || y > 2100) y = now.Year;
 
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _analyticsService.GetEnergyAnalysisAsync(energyType, y, m, areaId, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _analyticsService.GetEnergyAnalysisAsync(
+                energyType, y, m, areaId, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<EnergyAnalysisDto>.Success(result);
         }
         catch (Exception ex)
@@ -64,7 +78,8 @@ public class AnalyticsController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _analyticsService.GetSummaryAsync(appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _analyticsService.GetSummaryAsync(appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<AnalyticsSummaryDto>.Success(result);
         }
         catch (Exception ex)
@@ -87,7 +102,9 @@ public class AnalyticsController : ControllerBase
             var start = startTime ?? now.AddDays(-30);
             var end = endTime ?? now;
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _analyticsService.GetEnergyConsumptionAsync(start, end, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _analyticsService.GetEnergyConsumptionAsync(
+                start, end, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<EnergyConsumptionDto>.Success(result);
         }
         catch (Exception ex)

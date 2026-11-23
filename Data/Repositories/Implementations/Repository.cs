@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Data.Repositories.Implementations;
@@ -78,9 +79,24 @@ public class Repository<T> : IRepository<T> where T : class
         return (items, totalCount, totalPages);
     }
 
+    /// <summary>旧签名逐字保留；内部/下级路径零回归。</summary>
     public IQueryable<T> GetQueryable(string? appCode = null, List<long>? allowedAreaIds = null)
     {
         return ApplyFilters(_dbSet.AsQueryable(), appCode, allowedAreaIds);
+    }
+
+    /// <summary>
+    /// B4/M5：携带 Multi 授权客户集合的查询入口。
+    /// <b>不把它当兜底</b>——appCode 为空而 customerIds 也为空时保持零过滤（超管语义），
+    /// admin 的范围必须由 Controller 每次请求显式下推。
+    /// </summary>
+    public IQueryable<T> GetQueryable(
+        string? appCode,
+        List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds,
+        IReadOnlyCollection<string>? appCodes = null)
+    {
+        return ApplyFilters(_dbSet.AsQueryable(), appCode, allowedAreaIds, customerIds, appCodes);
     }
 
     public async Task<T> AddAsync(T entity)
@@ -226,5 +242,24 @@ public class Repository<T> : IRepository<T> where T : class
         }
         
         return query;
+    }
+
+    /// <summary>
+    /// B4/M5：在既有 AppCode / 区域过滤之上叠加授权客户集合过滤（CustomerId IN 或 AppCode IN）。
+    /// 旧重载委托本方法并传 null customerIds，行为逐字不变。
+    /// </summary>
+    protected virtual IQueryable<T> ApplyFilters(
+        IQueryable<T> query,
+        string? appCode,
+        List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds,
+        IReadOnlyCollection<string>? appCodes = null)
+    {
+        // 先沿用原有 AppCode / 区域过滤（下级 claim 单值路径零回归）。
+        query = ApplyFilters(query, appCode, allowedAreaIds);
+
+        // Multi：customerIds 来自 DB 授权集合，必须真正下推；
+        // All：customerIds=null 且 appCode=null → ApplyQueryScope 不加任何 Where。
+        return query.ApplyQueryScope(appCode, customerIds, appCodes);
     }
 }

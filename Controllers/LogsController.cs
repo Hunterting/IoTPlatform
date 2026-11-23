@@ -3,8 +3,10 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using System.Security.Claims;
 
 namespace IoTPlatform.Controllers;
@@ -18,10 +20,25 @@ namespace IoTPlatform.Controllers;
 public class LogsController : ControllerBase
 {
     private readonly ILogService _logService;
+    private readonly ICustomerScopeService? _customerScope;
+    private readonly IDetailScopeGuard? _detailGuard;
 
+    /// <summary>兼容构造：存量单测零改动。</summary>
     public LogsController(ILogService logService)
+        : this(logService, null, null)
+    {
+    }
+
+    /// <summary>生产构造：显式注入范围服务与详情归属守卫。</summary>
+    [ActivatorUtilitiesConstructor]
+    public LogsController(
+        ILogService logService,
+        ICustomerScopeService? customerScope,
+        IDetailScopeGuard? detailGuard)
     {
         _logService = logService;
+        _customerScope = customerScope;
+        _detailGuard = detailGuard;
     }
 
     /// <summary>
@@ -41,8 +58,11 @@ public class LogsController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _logService.GetOperationLogsAsync(page, pageSize, module, action, userId, startTime, endTime, appCode, role);
+            var result = await _logService.GetOperationLogsAsync(
+                page, pageSize, module, action, userId, startTime, endTime, appCode, role,
+                listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<OperationLogDto>>.Success(result);
         }
         catch (Exception ex)
@@ -59,6 +79,11 @@ public class LogsController : ControllerBase
     {
         try
         {
+            if (_detailGuard != null && !await _detailGuard.CanReadAsync<IoTPlatform.Models.OperationLog>(User, id))
+            {
+                return Ok(ApiResponse<OperationLogDto>.Fail(403, "无权访问该操作日志"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
@@ -94,8 +119,11 @@ public class LogsController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
-            var result = await _logService.GetLoginLogsAsync(page, pageSize, userId, status, startTime, endTime, appCode, role);
+            var result = await _logService.GetLoginLogsAsync(
+                page, pageSize, userId, status, startTime, endTime, appCode, role,
+                listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<LoginLogDto>>.Success(result);
         }
         catch (Exception ex)
@@ -112,6 +140,11 @@ public class LogsController : ControllerBase
     {
         try
         {
+            if (_detailGuard != null && !await _detailGuard.CanReadAsync<IoTPlatform.Models.LoginLog>(User, id))
+            {
+                return Ok(ApiResponse<LoginLogDto>.Fail(403, "无权访问该登录日志"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
 

@@ -1,6 +1,7 @@
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Data.Repositories.Implementations;
@@ -256,9 +257,17 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
             .ToListAsync();
     }
 
-    public async Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null)
+    /// <summary>旧签名保留：委托到范围下推重载。</summary>
+    public Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime = null, DateTime? endTime = null, string? appCode = null)
+        => GetAlertSummaryAsync(startTime, endTime, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到告警汇总。</summary>
+    public async Task<AlertSummaryDto> GetAlertSummaryAsync(
+        DateTime? startTime, DateTime? endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null);
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, null)
+            .ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (startTime.HasValue)
         {
@@ -294,9 +303,19 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
         return summary;
     }
 
-    public async Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(string? status = null, string? level = null, string? alertType = null, string? appCode = null, List<long>? allowedAreaIds = null, int page = 1, int pageSize = 20)
+    /// <summary>旧签名保留：委托到范围下推重载。</summary>
+    public Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(
+        string? status = null, string? level = null, string? alertType = null, string? appCode = null,
+        List<long>? allowedAreaIds = null, int page = 1, int pageSize = 20)
+        => GetAlertsWithDetailsAsync(status, level, alertType, appCode, allowedAreaIds, page, pageSize, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到告警列表。</summary>
+    public async Task<PagedResult<AlertRecord>> GetAlertsWithDetailsAsync(
+        string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds,
+        int page, int pageSize, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds);
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds)
+            .ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (!string.IsNullOrEmpty(status))
         {
@@ -332,9 +351,17 @@ public class AlertRecordRepository : Repository<AlertRecord>, IAlertRecordReposi
         };
     }
 
-    public async Task<AlertRecord?> GetAlertWithDetailsAsync(long id, string? appCode = null, List<long>? allowedAreaIds = null)
+    /// <summary>旧签名保留：委托到范围下推重载。</summary>
+    public Task<AlertRecord?> GetAlertWithDetailsAsync(long id, string? appCode = null, List<long>? allowedAreaIds = null)
+        => GetAlertWithDetailsAsync(id, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到告警详情。</summary>
+    public async Task<AlertRecord?> GetAlertWithDetailsAsync(
+        long id, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds);
+        var query = ApplyFilters(_context.AlertRecords.AsQueryable(), appCode, allowedAreaIds)
+            .ApplyQueryScope(appCode, customerIds, appCodes);
         return await query
             .Include(a => a.Device)
                 .ThenInclude(d => d.Area)

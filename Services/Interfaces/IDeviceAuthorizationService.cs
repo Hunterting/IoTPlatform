@@ -11,10 +11,18 @@ public interface IDeviceAuthorizationService
     int ExpiringSoonDays { get; }
 
     /// <summary>授权状态列表（联表真实设备；未授权设备也列出为 pending）。appCode=null 表示超管看全部。</summary>
+    /// <summary>旧签名保留：超管全量/下级 claim 单值零回归。</summary>
     Task<List<DeviceAuthorizationDto>> GetListAsync(string? appCode, CancellationToken ct = default);
 
+    /// <summary>B4/M5：Multi 授权客户集合下推；appCodes 用于只有 AppCode 列的设备/授权表。</summary>
+    Task<List<DeviceAuthorizationDto>> GetListAsync(string? appCode, CancellationToken ct, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null) => GetListAsync(appCode, ct);
+
     /// <summary>统计</summary>
+    /// <summary>旧签名保留。</summary>
     Task<DeviceAuthorizationSummaryDto> GetSummaryAsync(string? appCode, CancellationToken ct = default);
+
+    /// <summary>B4/M5：Multi 授权客户集合下推。</summary>
+    Task<DeviceAuthorizationSummaryDto> GetSummaryAsync(string? appCode, CancellationToken ct, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null) => GetSummaryAsync(appCode, ct);
 
     /// <summary>授权/续期（仅超管可调用，由 Controller 强校验）</summary>
     Task<DeviceAuthorizationDto> GrantAsync(GrantDeviceAuthorizationRequest request, long? operatorId, string? operatorName, string? callerAppCode, CancellationToken ct = default);

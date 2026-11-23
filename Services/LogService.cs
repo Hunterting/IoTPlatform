@@ -2,6 +2,7 @@ using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -18,12 +19,19 @@ public class LogService : ILogService
         _logRepository = logRepository;
     }
 
-    /// <summary>
-    /// 获取操作日志列表
-    /// </summary>
-    public async Task<PagedResponse<OperationLogDto>> GetOperationLogsAsync(int page, int pageSize, string? module, string? action, long? userId, DateTime? startTime, DateTime? endTime, string? appCode, string? currentUserRole)
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
+    public Task<PagedResponse<OperationLogDto>> GetOperationLogsAsync(
+        int page, int pageSize, string? module, string? action, long? userId, DateTime? startTime, DateTime? endTime,
+        string? appCode, string? currentUserRole)
+        => GetOperationLogsAsync(page, pageSize, module, action, userId, startTime, endTime, appCode, currentUserRole, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到日志查询。</summary>
+    public async Task<PagedResponse<OperationLogDto>> GetOperationLogsAsync(
+        int page, int pageSize, string? module, string? action, long? userId, DateTime? startTime, DateTime? endTime,
+        string? appCode, string? currentUserRole, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = _logRepository.GetOperationLogsQuery(appCode, currentUserRole);
+        var query = _logRepository.GetOperationLogsQuery(appCode, currentUserRole)
+            .ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 模块筛选
         if (!string.IsNullOrEmpty(module))
@@ -81,12 +89,19 @@ public class LogService : ILogService
         return PagedResponse<OperationLogDto>.Create(logs, totalCount, page, pageSize);
     }
 
-    /// <summary>
-    /// 获取登录日志列表
-    /// </summary>
-    public async Task<PagedResponse<LoginLogDto>> GetLoginLogsAsync(int page, int pageSize, long? userId, string? status, DateTime? startTime, DateTime? endTime, string? appCode, string? currentUserRole)
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
+    public Task<PagedResponse<LoginLogDto>> GetLoginLogsAsync(
+        int page, int pageSize, long? userId, string? status, DateTime? startTime, DateTime? endTime,
+        string? appCode, string? currentUserRole)
+        => GetLoginLogsAsync(page, pageSize, userId, status, startTime, endTime, appCode, currentUserRole, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推到登录日志查询。</summary>
+    public async Task<PagedResponse<LoginLogDto>> GetLoginLogsAsync(
+        int page, int pageSize, long? userId, string? status, DateTime? startTime, DateTime? endTime,
+        string? appCode, string? currentUserRole, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var query = _logRepository.GetLoginLogsQuery(appCode, currentUserRole);
+        var query = _logRepository.GetLoginLogsQuery(appCode, currentUserRole)
+            .ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 用户筛选
         if (userId.HasValue)
