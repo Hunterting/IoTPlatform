@@ -452,7 +452,6 @@ public class DeviceService : IDeviceService
         }
 
         // 使用一个全新的实体实例来插入，避免任何已跟踪的导航属性或影子属性导致的异常（例如 ProjectId1）
-        Device device;
         var newDevice = new Device
         {
             // Ensure Id is zero so the database assigns the identity value
@@ -482,6 +481,10 @@ public class DeviceService : IDeviceService
             Area = null
         };
 
+        // 建档赋值发生在 CreateExecutionStrategy 的 lambda 内，C# 明确赋值分析不将其计入
+        // 外层作用域，故此处先用 newDevice 初始化（异常路径一律 rethrow，不会返回此默认值）。
+        Device device = newDevice;
+
         // 清除 ChangeTracker，确保没有遗留的跟踪实体或影子属性（例如 ProjectId1）
         try
         {
@@ -491,10 +494,58 @@ public class DeviceService : IDeviceService
 
         try
         {
-            // 使用 EF Core 正常插入（若此前有跟踪冲突，之前已尝试分离相关实体并将导航置 null）
-            _dbContext.Devices.Add(newDevice);
-            await _dbContext.SaveChangesAsync();
-            device = newDevice;
+            // ── 配额需求 R02/R08：目标租户 count → insert 同事务（MySQL 行锁串行化同租户并发）──
+            // 必须包在 CreateExecutionStrategy 内：项目启用了 EnableRetryOnFailure，
+            // 否则 BeginTransactionAsync 抛 "does not support user-initiated transactions"。
+            await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync();
+                try
+                {
+                    // 行锁查询放在上方 ChangeTracker.Clear() 之后，避免锁定实体被清空后脱离跟踪。
+                    var quota = await DeviceQuotaGuard.ReadLockedAsync(_dbContext, effectiveAppCode);
+                    if (quota.ConfigMissing)
+                    {
+                        // 决策 8 fail-closed：配置缺失绝不按「0=不限」静默放行。
+                        _logger.LogError(
+                            "目标租户配额配置缺失，已拒绝建档: AppCode={AppCode}, Imei={Imei}",
+                            effectiveAppCode, request.SerialNumber);
+                        throw new DeviceRegistrationException(
+                            400, "目标租户配额配置缺失，已拒绝建档");
+                    }
+                    if (quota.ShouldReject)
+                    {
+                        throw new DeviceRegistrationException(
+                            409,
+                            DeviceQuotaGuard.BuildExceededMessage(quota.Current, quota.Limit),
+                            DeviceRegistrationGuard.Conflict.QuotaExceeded);
+                    }
+
+                    // 使用 EF Core 正常插入（若此前有跟踪冲突，之前已尝试分离相关实体并将导航置 null）
+                    _dbContext.Devices.Add(newDevice);
+                    await _dbContext.SaveChangesAsync();
+                    device = newDevice;
+                    await transaction.CommitAsync();
+                }
+                catch
+                {
+                    // 回滚本身也可能抛（连接已断），吞掉回滚异常，原异常交给外层记录与映射。
+                    try
+                    {
+                        await transaction.RollbackAsync();
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        _logger.LogError(rollbackEx, "配额事务回滚失败: AppCode={AppCode}", effectiveAppCode);
+                    }
+                    throw;
+                }
+            });
+        }
+        catch (DeviceRegistrationException)
+        {
+            // 配额/配置缺失等业务拒绝：原样抛出，由 DevicesController 按 StatusCode 映射 400/409。
+            throw;
         }
         catch (Exception ex)
         {

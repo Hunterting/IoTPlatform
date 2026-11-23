@@ -625,6 +625,27 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
                 $"IMEI {imei} 已存在对应设备（DeviceId={conflict.ExistingDeviceId}）。");
         }
 
+        // ── 步骤 4.5：配额早检（插入点 B，探测之前；R03 / 约束 8）──
+        // 超限/配置缺失一律在解析协议与 5~10s 探测之前返回：不置 Probing、待认领池不变、不建档。
+        var quotaEarly = await DeviceQuotaGuard.ReadAsync(db, appCode, ct);
+        if (quotaEarly.ConfigMissing)
+        {
+            // 决策 8 fail-closed：找不到目标租户配置，绝不按「0=不限」放行。
+            _logger.LogError("{Tag} 目标租户配额配置缺失，已拒绝认领: AppCode={AppCode}, IMEI={Imei}",
+                ClaimLogTag, appCode, imei);
+            return AnShengClaimResult.Fail(
+                AnShengClaimErrorCodes.DEVICE_QUOTA_CONFIG_MISSING,
+                "目标租户配额配置缺失，已拒绝认领");
+        }
+        if (quotaEarly.ShouldReject)
+        {
+            var earlyMessage = DeviceQuotaGuard.BuildExceededMessage(quotaEarly.Current, quotaEarly.Limit);
+            _logger.LogWarning("{Tag} 配额早检未通过: AppCode={AppCode}, IMEI={Imei}, Message={Message}",
+                ClaimLogTag, appCode, imei, earlyMessage);
+            return AnShengClaimResult.Fail(
+                AnShengClaimErrorCodes.DEVICE_QUOTA_EXCEEDED, earlyMessage);
+        }
+
         // ── 步骤 5：解析协议配置 ──
         var protocolConfigId = await ResolveProtocolConfigIdAsync(db, command, discovered, ct);
         if (protocolConfigId == null)
@@ -686,6 +707,10 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
         // 这里用策略包裹整段事务：由策略负责在瞬时故障时整体重试。
         Device? device = null;
         AnShengDeviceConfig? autoReportConfig = null;
+        // 配额复核结果用局部标志位带出事务：步骤 11 的 catch 会把所有异常统一映射成
+        // PersistFailed(500)，直接抛会盖掉正确的 400/409（设计 §5.5）。
+        string? quotaFailCode = null;
+        string? quotaFailMessage = null;
 
         try
         {
@@ -694,6 +719,33 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
                 await using var transaction = await db.Database.BeginTransactionAsync(ct);
                 try
                 {
+                    // ★ 插入点 C：事务内配额复核。早检通过后的 5~10s 探测期间并发可能占满配额，
+                    // 故必须在本事务内对目标租户 customer 行加 FOR UPDATE 再 count，闭合并发窗口。
+                    var quotaRecheck = await DeviceQuotaGuard.ReadLockedAsync(db, appCode, ct);
+                    if (quotaRecheck.ShouldReject)
+                    {
+                        quotaFailCode = quotaRecheck.ConfigMissing
+                            ? AnShengClaimErrorCodes.DEVICE_QUOTA_CONFIG_MISSING
+                            : AnShengClaimErrorCodes.DEVICE_QUOTA_EXCEEDED;
+                        quotaFailMessage = quotaRecheck.ConfigMissing
+                            ? "目标租户配额配置缺失，已拒绝认领"
+                            : DeviceQuotaGuard.BuildExceededMessage(quotaRecheck.Current, quotaRecheck.Limit);
+                        if (quotaRecheck.ConfigMissing)
+                        {
+                            _logger.LogError("{Tag} 目标租户配额配置缺失，已拒绝认领: AppCode={AppCode}, IMEI={Imei}",
+                                ClaimLogTag, appCode, imei);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "{Tag} 事务内配额复核未通过: AppCode={AppCode}, IMEI={Imei}, Message={Message}",
+                                ClaimLogTag, appCode, imei, quotaFailMessage);
+                        }
+                        // 提前结束事务体：不建 Device、不回写待认领池；
+                        // await using 退出时自动回滚并释放行锁，绝不在此抛异常（会被外层 catch 吞成 500）。
+                        return;
+                    }
+
                     // ① 建 Device —— Category 由品类派生，不再写死任何产品名（决策 Q8）
                     device = new Device
                     {
@@ -762,6 +814,12 @@ public class AnShengDiscoveryService : BackgroundService, IAnShengDiscoveryServi
                 AnShengClaimErrorCodes.PersistFailed,
                 $"设备 {imei} 认领落库失败：{ex.Message}",
                 AnShengProbeStatus.Probed);
+        }
+
+        // 事务已回滚：在事务块外按局部标志位转成正确的业务失败码（400 / 409），而非 PersistFailed 500。
+        if (quotaFailCode != null)
+        {
+            return AnShengClaimResult.Fail(quotaFailCode, quotaFailMessage!);
         }
 
         // ── 步骤 12：同步静态品类缓存 ──

@@ -40,6 +40,9 @@ public static class DeviceRegistrationGuard
 
         /// <summary>提供了 IMEI 但平台无任何可识别该设备的在线证据（无待认领记录且无活跃协议配置）。</summary>
         NoOnlinePresence,
+
+        /// <summary>目标租户设备数已达/超过配额上限（租户设备数量配额需求，详见 DeviceQuotaGuard）。</summary>
+        QuotaExceeded,
     }
 
     /// <summary>冲突裁决结果。</summary>

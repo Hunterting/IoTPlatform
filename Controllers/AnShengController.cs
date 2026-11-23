@@ -318,6 +318,14 @@ public class AnShengController : ControllerBase
             AnShengClaimErrorCodes.ProbeConflict =>
                 ApiResponse<ClaimAnShengDeviceResponse>.Fail(409, message, payload),
 
+            // 设备数量配额超限 → 409（HTTP 恒 200，业务看 Code）。
+            AnShengClaimErrorCodes.DEVICE_QUOTA_EXCEEDED =>
+                ApiResponse<ClaimAnShengDeviceResponse>.Fail(409, message, payload),
+
+            // 目标租户配额配置缺失 → 400（fail-closed，探测前即拒）。
+            AnShengClaimErrorCodes.DEVICE_QUOTA_CONFIG_MISSING =>
+                ApiResponse<ClaimAnShengDeviceResponse>.Fail(400, message, payload),
+
             _ => ApiResponse<ClaimAnShengDeviceResponse>.BadRequest(message, payload)
         };
     }

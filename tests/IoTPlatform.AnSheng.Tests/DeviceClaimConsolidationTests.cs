@@ -260,6 +260,16 @@ public sealed class DeviceClaimConsolidationTests
         using (var seedScope = provider.CreateScope())
         {
             var db = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            // 配额 fail-closed：先为目标租户落一条 Customer 配置（0=不限），
+            // 否则新守卫会在探测前以 DEVICE_QUOTA_CONFIG_MISSING 拒绝，走不到本用例要验的跨租户门禁。
+            db.Customers.Add(new Customer
+            {
+                Name = "租户A",
+                Code = "TENANT_A",
+                AppCode = "TENANT_A",
+                Status = "active",
+                MaxDeviceCount = 0
+            });
             db.Set<DiscoveredAnShengDevice>().Add(new DiscoveredAnShengDevice
             {
                 Imei = "IMEI_Y",

@@ -39,6 +39,12 @@ public static class AnShengClaimErrorCodes
 
     /// <summary>跨租户认领被拒（非超级管理员试图认领归属其他租户的记录，T3）。</summary>
     public const string CrossTenant = "CROSS_TENANT";
+
+    /// <summary>目标租户设备数已达/超过配额上限（拒绝认领，映射业务码 409）。</summary>
+    public const string DEVICE_QUOTA_EXCEEDED = "DEVICE_QUOTA_EXCEEDED";
+
+    /// <summary>目标租户配额配置缺失，fail-closed 拒绝认领（映射业务码 400）。</summary>
+    public const string DEVICE_QUOTA_CONFIG_MISSING = "DEVICE_QUOTA_CONFIG_MISSING";
 }
 
 /// <summary>
