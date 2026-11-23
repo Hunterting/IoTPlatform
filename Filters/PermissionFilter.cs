@@ -112,6 +112,26 @@ public class TenantFilterAttribute : ActionFilterAttribute
             return;
         }
 
+        // 【多客户授权 T03】admin 的 CustomerId/AppCode 按设计留空，跳过 AppCode 校验。
+        // 这里只用 claim 快照做「快速拒绝」：集合为空直接 403，真正的授权判定在 ICustomerScopeService（DB 权威，T04 收口）。
+        if (roleClaim?.Value == Roles.ADMIN)
+        {
+            var managedCustomerIdsClaim = user.FindFirst(CustomerScopeConstants.ClaimManagedCustomerIds)?.Value;
+            var hasAnyManagedCustomer = !string.IsNullOrEmpty(managedCustomerIdsClaim)
+                && managedCustomerIdsClaim!
+                    .Split(CustomerScopeConstants.ManagedCustomerIdsSeparator, StringSplitOptions.RemoveEmptyEntries)
+                    .Any(id => long.TryParse(id.Trim(), out _));
+
+            if (!hasAnyManagedCustomer)
+            {
+                context.Result = new JsonResult(ApiResponse.Forbidden("该管理员未获授权任何客户"));
+                return;
+            }
+
+            base.OnActionExecuting(context);
+            return;
+        }
+
         // 从 Claims 中获取 AppCode
         var appCode = user.FindFirst("AppCode")?.Value;
         if (string.IsNullOrEmpty(appCode))

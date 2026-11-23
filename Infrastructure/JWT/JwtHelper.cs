@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using IoTPlatform.Configuration;
 using Microsoft.IdentityModel.Tokens;
 
 namespace IoTPlatform.Infrastructure.JWT;
@@ -26,6 +27,7 @@ public class JwtHelper
     /// <param name="customerId">客户ID（可选）</param>
     /// <param name="appCode">应用代码（可选）</param>
     /// <param name="allowedAreaIds">允许访问的区域ID（可选）</param>
+    /// <param name="managedCustomerIds">授权客户ID逗号串（可选，仅 admin 集合分支签发；旧 6 参调用点零改动）</param>
     /// <returns>JWT令牌</returns>
     public string GenerateToken(
         long userId,
@@ -33,7 +35,8 @@ public class JwtHelper
         string role,
         long? customerId = null,
         string? appCode = null,
-        string? allowedAreaIds = null)
+        string? allowedAreaIds = null,
+        string? managedCustomerIds = null)
     {
         var jwtSettings = _configuration.GetSection("Jwt");
         var secretKey = jwtSettings["SecretKey"];
@@ -66,6 +69,12 @@ public class JwtHelper
         if (!string.IsNullOrEmpty(allowedAreaIds))
         {
             claims.Add(new Claim("AllowedAreaIds", allowedAreaIds));
+        }
+
+        // 多客户授权快照：只有 admin 集合分支传值；下级/超管传 null 时该 claim 完全不出现。
+        if (!string.IsNullOrEmpty(managedCustomerIds))
+        {
+            claims.Add(new Claim(CustomerScopeConstants.ClaimManagedCustomerIds, managedCustomerIds));
         }
 
         var token = new JwtSecurityToken(
@@ -180,6 +189,33 @@ public class JwtHelper
         try
         {
             return allowedAreaIdsClaim.Value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(id => long.Parse(id.Trim()))
+                .ToList();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从 JWT 中提取授权客户ID集合（admin 集合分支的 claim 快照）。
+    /// 仅供展示与租户上下文识别使用；授权判定必须以 ICustomerScopeService 读 DB 为准（设计 §5.2）。
+    /// </summary>
+    /// <param name="token">JWT令牌</param>
+    /// <returns>客户ID列表；无该 claim 或解析失败返回 null</returns>
+    public List<long>? GetManagedCustomerIdsFromToken(string token)
+    {
+        var principal = ValidateToken(token);
+        if (principal == null) return null;
+
+        var managedCustomerIdsClaim = principal.FindFirst(CustomerScopeConstants.ClaimManagedCustomerIds);
+        if (string.IsNullOrEmpty(managedCustomerIdsClaim?.Value)) return null;
+
+        try
+        {
+            return managedCustomerIdsClaim.Value
+                .Split(CustomerScopeConstants.ManagedCustomerIdsSeparator, StringSplitOptions.RemoveEmptyEntries)
                 .Select(id => long.Parse(id.Trim()))
                 .ToList();
         }

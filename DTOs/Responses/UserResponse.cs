@@ -14,6 +14,12 @@ public class UserDto
     public string? AppCode { get; set; }
     public string? Avatar { get; set; }
     public List<long>? AllowedAreaIds { get; set; }
+
+    /// <summary>
+    /// admin 被授权的客户ID集合（多客户授权模型；下级/超管为 null）。
+    /// 保留原 CustomerId / AppCode 字段供 M09 UI 阶段使用，本轮不下发 UI 改造。
+    /// </summary>
+    public List<long>? ManagedCustomerIds { get; set; }
     public bool IsActive { get; set; }
     public bool IsSuperAdmin { get; set; }
     public List<string> Permissions { get; set; } = new List<string>();

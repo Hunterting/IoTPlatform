@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using IoTPlatform.Configuration;
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
@@ -31,6 +32,7 @@ public class AuthService : IAuthService
     private readonly JwtHelper _jwtHelper;
     private readonly IRedisCacheService _cache;
     private readonly IPermissionService _permissionService;
+    private readonly ICustomerScopeService? _customerScopeService;
 
     public AuthService(
         IUserRepository userRepository,
@@ -40,7 +42,8 @@ public class AuthService : IAuthService
         IUnitOfWork unitOfWork,
         JwtHelper jwtHelper,
         IRedisCacheService cache,
-        IPermissionService permissionService)
+        IPermissionService permissionService,
+        ICustomerScopeService? customerScopeService = null)
     {
         _userRepository = userRepository;
         _customerRepository = customerRepository;
@@ -50,6 +53,30 @@ public class AuthService : IAuthService
         _jwtHelper = jwtHelper;
         _cache = cache;
         _permissionService = permissionService;
+        _customerScopeService = customerScopeService;
+    }
+
+    /// <summary>
+    /// admin 分支读取授权客户集合：经 ICustomerScopeService 每次从 user_customers 读取（DB 权威），
+    /// 与 claim 快照解耦，超管调整授权后旧 token 立即生效。
+    /// 未注册范围服务时（旧单测直接 new AuthService）返回空集合，绝不伪造授权。
+    /// </summary>
+    private async Task<List<long>> ResolveManagedCustomerIdsAsync(User user, CancellationToken ct = default)
+    {
+        if (_customerScopeService == null || user.IsSuperAdmin || user.Role != Roles.ADMIN)
+        {
+            return new List<long>();
+        }
+
+        // 范围服务按 ClaimsPrincipal 分叉；此处只构造身份信号（userId + role），不带任何租户单值 claim。
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new Claim(ClaimTypes.Role, user.Role)
+        }, "JwtLoginIdentity"));
+
+        var scope = await _customerScopeService.ResolveAsync(principal, ct).ConfigureAwait(false);
+        return scope.CustomerIds.Distinct().OrderBy(id => id).ToList();
     }
 
     /// <summary>
@@ -72,9 +99,16 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("邮箱或密码错误");
         }
 
+        // 【多客户授权 T03】admin 走集合分支：即使库里残留旧单值 CustomerId/AppCode 也不采信。
+        // 集合从 DB 读取（DB 为准）；超管与下级不进入该分支，路径逐字不变。
+        var isTenantAdmin = user.Role == Roles.ADMIN && !user.IsSuperAdmin;
+        var managedCustomerIds = isTenantAdmin
+            ? await ResolveManagedCustomerIdsAsync(user)
+            : new List<long>();
+
         // 获取客户信息：CustomerId 优先（新库 / 刷新种子后的快速路径），AppCode 兜底反查（存量库 CustomerId 全 NULL）
         Customer? customer = null;
-        if (user.CustomerId.HasValue)
+        if (!isTenantAdmin && user.CustomerId.HasValue)
         {
             customer = await _customerRepository.GetByIdAsync(user.CustomerId.Value);
         }
@@ -101,27 +135,33 @@ public class AuthService : IAuthService
         // P-5【零写库】不改表结构、不刷数据、不执行任何 UPDATE/INSERT；两套数据形态都在代码层兼容。
         // 【存量库兜底】customer 为 null 时用 AppCode 反查 Customer；
         //     ICustomerRepository.GetByAppCodeAsync 已存在，零新增仓储方法 / 零 migration / 零写库。
-        if (customer == null && !user.IsSuperAdmin && !string.IsNullOrEmpty(effectiveAppCode))
+        if (!isTenantAdmin && customer == null && !user.IsSuperAdmin && !string.IsNullOrEmpty(effectiveAppCode))
         {
             customer = await _customerRepository.GetByAppCodeAsync(effectiveAppCode!);
         }
 
         // 获取设备数量（customer 已被兜底解析到，存量库也能算出本租户设备数）
+        // admin 无单客户语义，跳过聚合（CurrentCustomer 恒 null）。
         int deviceCount = 0;
-        if (customer != null)
+        if (!isTenantAdmin && customer != null)
         {
             deviceCount = await _deviceRepository.CountAsync(d => d.AppCode == customer.AppCode);
         }
 
-        // 生成JWT Token（GenerateToken 的 6 个参数值与修复前逐字一致，JWT claim 零变更）
+        // 生成JWT Token：admin 强制不签发单 CustomerId/AppCode，改签 ManagedCustomerIds 逗号串；
+        // 下级与超管第 7 参为 null，原有 claim 逐字段不变（GenerateToken 新参为可选尾参）。
         var allowedAreaIdsStr = user.AllowedAreaIds;
+        var managedCustomerIdsStr = isTenantAdmin && managedCustomerIds.Count > 0
+            ? string.Join(CustomerScopeConstants.ManagedCustomerIdsSeparator, managedCustomerIds)
+            : null;
         var token = _jwtHelper.GenerateToken(
             user.Id,
             user.Email,
             user.Role,
-            user.CustomerId,
-            effectiveAppCode,
-            allowedAreaIdsStr);
+            isTenantAdmin ? null : user.CustomerId,
+            isTenantAdmin ? null : effectiveAppCode,
+            allowedAreaIdsStr,
+            managedCustomerIdsStr);
 
         // 解析允许的区域ID
         List<long>? allowedAreaIds = null;
@@ -133,17 +173,17 @@ public class AuthService : IAuthService
         }
 
         // 构建用户DTO（三处登录链路统一组装，见 BuildUserDto）
-        var userDto = BuildUserDto(user, effectiveAppCode, customer, allowedAreaIds);
+        var userDto = BuildUserDto(user, effectiveAppCode, customer, allowedAreaIds, managedCustomerIds: managedCustomerIds);
 
         // 计算并下发当前用户的有效权限（单一事实来源 = DB Role.Permissions）
         userDto.Permissions = await _permissionService.GetEffectivePermissionsAsync(user.Role);
 
-        // 构建当前客户DTO
-        CustomerDto? currentCustomer = customer != null
+        // 构建当前客户DTO（admin 无单客户，恒 null）
+        CustomerDto? currentCustomer = !isTenantAdmin && customer != null
             ? BuildCustomerDto(customer, deviceCount)
             : null;
 
-        // 记录登录日志（透传 effectiveAppCode，确保登录日志按租户归属，查询侧才能按 AppCode 命中）
+        // 记录登录日志（admin 的 effectiveAppCode 为 null，与超管一致，不伪造租户归属）
         await RecordLoginLogAsync(user, true, effectiveAppCode);
 
         return new LoginResponse
@@ -163,6 +203,12 @@ public class AuthService : IAuthService
 
         if (user == null) return null;
 
+        // 【多客户授权 T03】/auth/me 与登录链路同形：admin 读 DB 集合、不反查单客户、CurrentCustomer=null。
+        var isTenantAdmin = user.Role == Roles.ADMIN && !user.IsSuperAdmin;
+        var managedCustomerIds = isTenantAdmin
+            ? await ResolveManagedCustomerIdsAsync(user)
+            : new List<long>();
+
         var allowedAreaIdsStr = user.AllowedAreaIds;
         List<long>? allowedAreaIds = null;
         if (!string.IsNullOrEmpty(allowedAreaIdsStr))
@@ -176,20 +222,21 @@ public class AuthService : IAuthService
         // 在存量库 CustomerId = NULL 时同样得到 user.Customer = null，故按 P-1 / P-5 用 AppCode 兜底反查。
         var effectiveAppCode = ComputeEffectiveAppCode(user, user.Customer);
 
-        // 局部 customer 变量：后续 :196-214 对 user.Customer 的引用全部改用它（兼容新旧两种库形态）
-        Customer? customer = user.Customer;
-        if (customer == null && !user.IsSuperAdmin && !string.IsNullOrEmpty(effectiveAppCode))
+        // 局部 customer 变量：后续对 user.Customer 的引用全部改用它（兼容新旧两种库形态）；
+        // admin 即使库里残留 Customer 导航属性也不采信。
+        Customer? customer = isTenantAdmin ? null : user.Customer;
+        if (!isTenantAdmin && customer == null && !user.IsSuperAdmin && !string.IsNullOrEmpty(effectiveAppCode))
         {
             customer = await _customerRepository.GetByAppCodeAsync(effectiveAppCode!);
         }
 
-        var userDto = BuildUserDto(user, effectiveAppCode, customer, allowedAreaIds);
+        var userDto = BuildUserDto(user, effectiveAppCode, customer, allowedAreaIds, managedCustomerIds: managedCustomerIds);
 
         // 计算并下发当前用户的有效权限（单一事实来源 = DB Role.Permissions）
         userDto.Permissions = await _permissionService.GetEffectivePermissionsAsync(user.Role);
 
         CustomerDto? currentCustomer = null;
-        if (customer != null)
+        if (!isTenantAdmin && customer != null)
         {
             var deviceCount = await _deviceRepository.CountAsync(d => d.AppCode == customer.AppCode);
             currentCustomer = BuildCustomerDto(customer, deviceCount);
@@ -263,9 +310,9 @@ public class AuthService : IAuthService
     /// </summary>
     /// <param name="user">登录用户</param>
     /// <param name="byId">按 CustomerId（或导航属性）解析到的客户，可为 null</param>
-    /// <returns>超管恒 null；租户优先 users.AppCode，其次客户的 AppCode</returns>
+    /// <returns>超管与 admin 恒 null（admin 走集合分支，不签发单值）；租户优先 users.AppCode，其次客户的 AppCode</returns>
     private static string? ComputeEffectiveAppCode(User user, Customer? byId) =>
-        user.IsSuperAdmin
+        user.IsSuperAdmin || user.Role == Roles.ADMIN
             ? null
             : (!string.IsNullOrEmpty(user.AppCode) ? user.AppCode : byId?.AppCode);
 
@@ -279,27 +326,36 @@ public class AuthService : IAuthService
     /// <param name="customer">已解析的客户（CustomerId 优先 + AppCode 兜底反查结果），可为 null</param>
     /// <param name="allowedAreaIds">解析后的允许区域 ID 列表</param>
     /// <param name="customerIdOverride">SwitchCustomerAsync 传入的显式 customerId；其余路径传 null</param>
+    /// <param name="managedCustomerIds">admin 授权客户集合；下级与超管为 null</param>
     private static UserDto BuildUserDto(
         User user,
         string? effectiveAppCode,
         Customer? customer,
         List<long>? allowedAreaIds,
-        long? customerIdOverride = null) => new()
+        long? customerIdOverride = null,
+        List<long>? managedCustomerIds = null)
     {
-        Id = user.Id,
-        Name = user.FullName,
-        Email = user.Email,
-        Role = user.Role,
-        CustomerId = customerIdOverride ?? customer?.Id ?? user.CustomerId,
-        CustomerName = customer?.Name,
-        AppCode = effectiveAppCode,
-        Avatar = user.Avatar,
-        AllowedAreaIds = allowedAreaIds,
-        IsActive = user.IsActive,
-        IsSuperAdmin = user.IsSuperAdmin,
-        CreatedAt = user.CreatedAt,
-        UpdatedAt = user.UpdatedAt
-    };
+        // 三分支：超管沿用原表达式（单值天然为 null）；admin 强制单值为空并下发集合；下级表达式逐字不动。
+        var isTenantAdmin = user.Role == Roles.ADMIN && !user.IsSuperAdmin;
+
+        return new()
+        {
+            Id = user.Id,
+            Name = user.FullName,
+            Email = user.Email,
+            Role = user.Role,
+            CustomerId = isTenantAdmin ? null : (customerIdOverride ?? customer?.Id ?? user.CustomerId),
+            CustomerName = isTenantAdmin ? null : customer?.Name,
+            AppCode = isTenantAdmin ? null : effectiveAppCode,
+            Avatar = user.Avatar,
+            AllowedAreaIds = allowedAreaIds,
+            ManagedCustomerIds = isTenantAdmin ? (managedCustomerIds ?? new List<long>()) : null,
+            IsActive = user.IsActive,
+            IsSuperAdmin = user.IsSuperAdmin,
+            CreatedAt = user.CreatedAt,
+            UpdatedAt = user.UpdatedAt
+        };
+    }
 
     /// <summary>
     /// 统一构建 LoginResponse.CurrentCustomer。
