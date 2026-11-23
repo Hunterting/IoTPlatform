@@ -1,9 +1,10 @@
-﻿using IoTPlatform.Configuration;
+using IoTPlatform.Configuration;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 
@@ -18,10 +19,12 @@ namespace IoTPlatform.Controllers;
 public class WorkOrdersController : ControllerBase
 {
     private readonly IWorkOrderService _workOrderService;
+    private readonly ICustomerScopeService _customerScope;
 
-    public WorkOrdersController(IWorkOrderService workOrderService)
+    public WorkOrdersController(IWorkOrderService workOrderService, ICustomerScopeService customerScope)
     {
         _workOrderService = workOrderService;
+        _customerScope = customerScope ?? throw new ArgumentNullException(nameof(customerScope));
     }
 
     /// <summary>
@@ -53,7 +56,8 @@ public class WorkOrdersController : ControllerBase
             var appCode = TenantAppCode;
             // 【租户隔离】只按 JWT AppCode 隔离，不叠加区域过滤。
             // 服务层 allowedAreaIds 语义为 AreaId.HasValue && Contains(...)，会把真实工单按区域白名单排除（与 AlertsController 同源问题）。
-            var result = await _workOrderService.GetWorkOrdersAsync(page, pageSize, status, type, priority, appCode, null);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _workOrderService.GetWorkOrdersAsync(page, pageSize, status, type, priority, appCode, null, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<WorkOrderDto>>.Success(result);
         }
         catch (Exception ex)
@@ -68,6 +72,12 @@ public class WorkOrdersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<WorkOrderDto>>> GetWorkOrder(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.WorkOrder>(id, false))
+            {
+                return Ok(ApiResponse<WorkOrderDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = TenantAppCode;
@@ -97,11 +107,43 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
+            // 【M1】admin 自身无 AppCode claim：必须在任何写库之前用 DB 权威授权集合判定目标客户。
+            if (Roles.ADMIN == User.FindFirst(ClaimTypes.Role)?.Value)
+            {
+                if (!request.CustomerId.HasValue)
+                {
+                    return Ok(ApiResponse<WorkOrderDto>.BadRequest("租户管理员必须在授权客户下创建工单。"));
+                }
+                if (!await _customerScope.CanAccessCustomerAsync(User, request.CustomerId.Value))
+                {
+                    return Ok(ApiResponse<WorkOrderDto>.Forbidden("无权在该客户下创建工单"));
+                }
+
+                var resolvedAppCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(request.CustomerId.Value);
+                if (string.IsNullOrWhiteSpace(resolvedAppCode))
+                {
+                    return Ok(ApiResponse<WorkOrderDto>.BadRequest("目标客户缺少 AppCode"));
+                }
+
+                var verifiedResult = await _workOrderService.CreateWorkOrderAsync(
+                    request, resolvedAppCode, customerScopeVerified: true);
+                return ApiResponse<WorkOrderDto>.Success(verifiedResult, "工单创建成功");
+            }
+
+            // 超管 / 下级：原路径逐字不改。
             // 租户传的 appCode 会被 JWT 的 TenantAppCode 覆盖（防越权）；
             // 超管 TenantAppCode=null 时允许 request.AppCode（代租户创建）。
             var effectiveAppCode = TenantAppCode ?? request.AppCode;
             var result = await _workOrderService.CreateWorkOrderAsync(request, effectiveAppCode);
             return ApiResponse<WorkOrderDto>.Success(result, "工单创建成功");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -124,8 +166,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.UpdateWorkOrderAsync(id, request, TenantAppCode);
+            var result = await _workOrderService.UpdateWorkOrderAsync(id, request, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -148,8 +194,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.AssignWorkOrderAsync(id, request.Assignee, TenantAppCode);
+            var result = await _workOrderService.AssignWorkOrderAsync(id, request.Assignee, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单分配成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -172,8 +222,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.StartWorkOrderAsync(id, TenantAppCode);
+            var result = await _workOrderService.StartWorkOrderAsync(id, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单开始处理");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -196,8 +250,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.ResolveWorkOrderAsync(id, request.ResolveDescription, TenantAppCode);
+            var result = await _workOrderService.ResolveWorkOrderAsync(id, request.ResolveDescription, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已解决");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -220,8 +278,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.CloseWorkOrderAsync(id, TenantAppCode);
+            var result = await _workOrderService.CloseWorkOrderAsync(id, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已关闭");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -244,8 +306,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.RejectWorkOrderAsync(id, request.Reason, TenantAppCode);
+            var result = await _workOrderService.RejectWorkOrderAsync(id, request.Reason, TenantAppCode, User);
             return ApiResponse<WorkOrderDto>.Success(result, "工单已拒绝");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -265,6 +331,12 @@ public class WorkOrdersController : ControllerBase
     [HttpGet("{id}/logs")]
     public async Task<ActionResult<ApiResponse<List<WorkOrderLogDto>>>> GetWorkOrderLogs(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.WorkOrder>(id, false))
+            {
+                return Ok(ApiResponse<List<WorkOrderLogDto>>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var result = await _workOrderService.GetWorkOrderLogsAsync(id, TenantAppCode);
@@ -286,6 +358,12 @@ public class WorkOrdersController : ControllerBase
     [HttpGet("{id}/attachments")]
     public async Task<ActionResult<ApiResponse<List<WorkOrderAttachmentDto>>>> GetWorkOrderAttachments(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.WorkOrder>(id, false))
+            {
+                return Ok(ApiResponse<List<WorkOrderAttachmentDto>>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var result = await _workOrderService.GetWorkOrderAttachmentsAsync(id, TenantAppCode);
@@ -312,8 +390,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            var result = await _workOrderService.AddAttachmentAsync(id, request.FileName, request.FileUrl, request.FileSize, request.FileType, TenantAppCode);
+            var result = await _workOrderService.AddAttachmentAsync(id, request.FileName, request.FileUrl, request.FileSize, request.FileType, TenantAppCode, User);
             return ApiResponse<WorkOrderAttachmentDto>.Success(result, "附件添加成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse<WorkOrderAttachmentDto>.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -336,8 +418,12 @@ public class WorkOrdersController : ControllerBase
     {
         try
         {
-            await _workOrderService.DeleteAttachmentAsync(attachmentId, TenantAppCode);
+            await _workOrderService.DeleteAttachmentAsync(attachmentId, TenantAppCode, User);
             return ApiResponse.Success("附件删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {

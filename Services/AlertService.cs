@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AutoMapper;
 using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs;
@@ -5,6 +6,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 
 namespace IoTPlatform.Services;
 
@@ -18,19 +20,22 @@ public class AlertService : IAlertService
     private readonly IAreaRepository _areaRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly ICustomerScopeGuard _scopeGuard;
 
     public AlertService(
         IAlertRecordRepository alertRecordRepository,
         IDeviceRepository deviceRepository,
         IAreaRepository areaRepository,
         IUnitOfWork unitOfWork,
-        IMapper mapper)
+        IMapper mapper,
+        ICustomerScopeGuard scopeGuard)
     {
         _alertRecordRepository = alertRecordRepository;
         _deviceRepository = deviceRepository;
         _areaRepository = areaRepository;
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _scopeGuard = scopeGuard ?? throw new ArgumentNullException(nameof(scopeGuard));
     }
 
     /// <summary>按 DeviceId 反查设备所属 AppCode（用于后端产生的告警归属租户）。</summary>
@@ -51,10 +56,18 @@ public class AlertService : IAlertService
     /// <summary>
     /// 获取告警列表
     /// </summary>
-    public async Task<PagedResponse<AlertDto>> GetAlertsAsync(int page, int pageSize, string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds)
+    /// <summary>旧签名保留：委托到范围下推重载。</summary>
+    public Task<PagedResponse<AlertDto>> GetAlertsAsync(
+        int page, int pageSize, string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds)
+        => GetAlertsAsync(page, pageSize, status, level, alertType, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推。</summary>
+    public async Task<PagedResponse<AlertDto>> GetAlertsAsync(
+        int page, int pageSize, string? status, string? level, string? alertType, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var result = await _alertRecordRepository.GetAlertsWithDetailsAsync(
-            status, level, alertType, appCode, allowedAreaIds, page, pageSize);
+            status, level, alertType, appCode, allowedAreaIds, page, pageSize, customerIds, appCodes);
         
         var alertDtos = _mapper.Map<List<AlertDto>>(result.Data);
         
@@ -64,17 +77,39 @@ public class AlertService : IAlertService
     /// <summary>
     /// 获取告警详情
     /// </summary>
-    public async Task<AlertDto?> GetAlertAsync(long id, string? appCode, List<long>? allowedAreaIds)
+    /// <summary>旧签名保留。</summary>
+    public Task<AlertDto?> GetAlertAsync(long id, string? appCode, List<long>? allowedAreaIds)
+        => GetAlertAsync(id, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推。</summary>
+    public async Task<AlertDto?> GetAlertAsync(
+        long id, string? appCode, List<long>? allowedAreaIds,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var alert = await _alertRecordRepository.GetAlertWithDetailsAsync(id, appCode, allowedAreaIds);
+        var alert = await _alertRecordRepository.GetAlertWithDetailsAsync(id, appCode, allowedAreaIds, customerIds, appCodes);
         return _mapper.Map<AlertDto?>(alert);
     }
 
     /// <summary>
-    /// 创建告警
+    /// 创建告警（旧签名保留：内部采集链路零回归）。
     /// </summary>
-    public async Task<AlertDto> CreateAlertAsync(CreateAlertRequest request, string? appCode = null)
+    public Task<AlertDto> CreateAlertAsync(CreateAlertRequest request, string? appCode = null)
+        => CreateAlertAsync(request, appCode, customerScopeVerified: true);
+
+    /// <summary>
+    /// M1 二次防御重载：Controller 已用 ICustomerScopeService 校验目标客户后传入 true。
+    /// </summary>
+    public async Task<AlertDto> CreateAlertAsync(
+        CreateAlertRequest request,
+        string? appCode,
+        bool customerScopeVerified)
     {
+        if (!customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("无权在该客户下创建告警");
+        }
+
+
         // 【BugFix】原先用 IUnitOfWork.BeginTransactionAsync 手动开启事务，
         // 但本库启用了 EnableRetryOnFailure（MySqlRetryingExecutionStrategy），
         // 该策略禁止用户发起事务，导致本端点恒抛 InvalidOperationException → HTTP 400。
@@ -224,9 +259,16 @@ public class AlertService : IAlertService
     /// <summary>
     /// 获取告警汇总
     /// </summary>
-    public async Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime, DateTime? endTime, string? appCode)
+    /// <summary>旧签名保留。</summary>
+    public Task<AlertSummaryDto> GetAlertSummaryAsync(DateTime? startTime, DateTime? endTime, string? appCode)
+        => GetAlertSummaryAsync(startTime, endTime, appCode, null, null);
+
+    /// <summary>B4/M5：admin 授权客户集合真正下推。</summary>
+    public async Task<AlertSummaryDto> GetAlertSummaryAsync(
+        DateTime? startTime, DateTime? endTime, string? appCode,
+        IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
-        var summary = await _alertRecordRepository.GetAlertSummaryAsync(startTime, endTime, appCode);
+        var summary = await _alertRecordRepository.GetAlertSummaryAsync(startTime, endTime, appCode, customerIds, appCodes);
         
         return new AlertSummaryDto
         {
@@ -240,6 +282,53 @@ public class AlertService : IAlertService
             InfoAlerts = summary.InfoAlerts,
             AlertsByType = summary.AlertsByType
         };
+    }
+
+    // ── M3 显式 principal 重载：归属校验在 UpdateAsync 之前 ──────────────────────
+
+    /// <inheritdoc />
+    public async Task<AlertDto> ProcessAlertAsync(long id, ProcessAlertRequest request, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await ProcessAlertAsync(id, request).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<AlertDto> AssignAlertAsync(long id, string assignee, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await AssignAlertAsync(id, assignee).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<AlertDto> ResolveAlertAsync(long id, string? remark, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await ResolveAlertAsync(id, remark).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<AlertDto> IgnoreAlertAsync(long id, string? remark, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await IgnoreAlertAsync(id, remark).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// M3 归属点查：告警表只有 AppCode 权威列，Multi 由统一判据按 1:1 映射反查 CustomerId。
+    /// </summary>
+    private async Task EnsureOwnedByPrincipalAsync(long alertId, ClaimsPrincipal principal)
+    {
+        var alert = await _alertRecordRepository.GetByIdAsync(alertId).ConfigureAwait(false);
+        if (alert == null)
+        {
+            throw new InvalidOperationException("告警不存在");
+        }
+
+        if (!await _scopeGuard.CanAccessOwnedEntityAsync(principal, null, alert.AppCode).ConfigureAwait(false))
+        {
+            throw new ForbiddenAccessException("无权操作该告警");
+        }
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -25,10 +26,16 @@ public interface IControlledDeviceService
     /// </summary>
     Task<bool> UnregisterDeviceAsync(long id, string? appCode);
 
+    /// <summary>M3 显式 principal 重载：越权时零删除、零缓存清理。</summary>
+    Task<bool> UnregisterDeviceAsync(long id, string? appCode, ClaimsPrincipal principal);
+
     /// <summary>
     /// 更新受控设备
     /// </summary>
     Task<ControlledDeviceDto?> UpdateDeviceAsync(long id, UpdateControlledDeviceRequest request, string? appCode);
+
+    /// <summary>M3 显式 principal 重载：越权时零写库。</summary>
+    Task<ControlledDeviceDto?> UpdateDeviceAsync(long id, UpdateControlledDeviceRequest request, string? appCode, ClaimsPrincipal principal);
 
     /// <summary>
     /// 获取受控设备详情
@@ -38,7 +45,11 @@ public interface IControlledDeviceService
     /// <summary>
     /// 获取受控设备列表
     /// </summary>
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
     Task<PagedResponse<ControlledDeviceDto>> GetDevicesAsync(string? appCode, int page, int pageSize, bool? isEnabled, bool? isFavorite);
+
+    /// <summary>B4/M5：Multi 授权客户集合范围下推。</summary>
+    Task<PagedResponse<ControlledDeviceDto>> GetDevicesAsync(string? appCode, int page, int pageSize, bool? isEnabled, bool? isFavorite, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null) => GetDevicesAsync(appCode, page, pageSize, isEnabled, isFavorite);
 
     /// <summary>
     /// 检查设备是否已注册
@@ -49,6 +60,9 @@ public interface IControlledDeviceService
     /// 切换收藏状态
     /// </summary>
     Task<bool> ToggleFavoriteAsync(long id, string? appCode);
+
+    /// <summary>M3 显式 principal 重载：越权时零写库。</summary>
+    Task<bool> ToggleFavoriteAsync(long id, string? appCode, ClaimsPrincipal principal);
 
     /// <summary>
     /// 记录指令发送

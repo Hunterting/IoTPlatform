@@ -4,6 +4,8 @@ using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services;
+using IoTPlatform.Services.Guards;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
@@ -20,11 +22,19 @@ public class ProjectsController : ControllerBase
 {
     private readonly Data.AppDbContext _context;
     private readonly AutoMapper.IMapper _mapper;
+    private readonly ICustomerScopeService _customerScope;
+    private readonly ICustomerScopeGuard _scopeGuard;
 
-    public ProjectsController(Data.AppDbContext context, AutoMapper.IMapper mapper)
+    public ProjectsController(
+        Data.AppDbContext context,
+        AutoMapper.IMapper mapper,
+        ICustomerScopeService customerScope,
+        ICustomerScopeGuard scopeGuard)
     {
         _context = context;
         _mapper = mapper;
+        _customerScope = customerScope ?? throw new ArgumentNullException(nameof(customerScope));
+        _scopeGuard = scopeGuard ?? throw new ArgumentNullException(nameof(scopeGuard));
     }
 
     /// <summary>
@@ -40,6 +50,7 @@ public class ProjectsController : ControllerBase
         {
             var appCode = User.FindFirst("AppCode")?.Value;
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
 
             var query = _context.Projects
                 .Include(p => p.WorkSummaries)
@@ -50,6 +61,9 @@ public class ProjectsController : ControllerBase
             {
                 query = query.Where(p => p.AppCode == appCode);
             }
+
+            // B4/M5：admin 授权客户集合（DB 权威）真正下推，替代原来 role==ADMIN 的全量放行。
+            query = query.ApplyQueryScope(appCode, listScope.CustomerIds, listScope.AppCodes);
 
             // 根据客户ID过滤
             if (customerId.HasValue)
@@ -100,10 +114,10 @@ public class ProjectsController : ControllerBase
                 return Ok(ApiResponse.NotFound("项目不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && project.AppCode != appCode)
+            // B4/M6：原 role==ADMIN 全量放行已移除，改走 DB 权威的 scope 判据。
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(User, project.CustomerId, project.AppCode))
             {
-                return Ok(ApiResponse.Forbidden("无权访问此项目"));
+                return Ok(ApiResponse<ProjectResponse>.Fail(403, "无权访问此项目"));
             }
 
             return ApiResponse<ProjectResponse>.Success(_mapper.Map<ProjectResponse>(project));
@@ -123,6 +137,28 @@ public class ProjectsController : ControllerBase
     {
         try
         {
+            // 【M1】admin 自身无 AppCode claim：先以 DB 授权集合判定目标客户，再做任何写库。
+            if (Roles.ADMIN == User.FindFirst(ClaimTypes.Role)?.Value)
+            {
+                if (request.CustomerId <= 0)
+                {
+                    return Ok(ApiResponse.BadRequest("租户管理员必须在授权客户下创建项目。"));
+                }
+                if (!await _customerScope.CanAccessCustomerAsync(User, request.CustomerId))
+                {
+                    return Ok(ApiResponse.Forbidden("无权在该客户下创建项目"));
+                }
+
+                var resolvedAppCode = await _customerScope.ResolveAppCodeByCustomerIdAsync(request.CustomerId);
+                if (string.IsNullOrWhiteSpace(resolvedAppCode))
+                {
+                    return Ok(ApiResponse.BadRequest("目标客户缺少 AppCode"));
+                }
+
+                // 归属由服务端派生，绝不采信请求体的 AppCode。
+                request.AppCode = resolvedAppCode;
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
 
             // 检查客户是否存在
@@ -175,6 +211,7 @@ public class ProjectsController : ControllerBase
             var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
             var project = await _context.Projects
+                .IgnoreQueryFilters()
                 .Include(p => p.WorkSummaries)
                 .FirstOrDefaultAsync(p => p.Id == id);
 
@@ -183,10 +220,17 @@ public class ProjectsController : ControllerBase
                 return Ok(ApiResponse.NotFound("项目不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && project.AppCode != appCode)
+            // 【M3】三分支判据：admin 以 DB 授权集合为准，admin 自身 AppCode=null 不再恒真跳过。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(User, project.CustomerId, project.AppCode))
             {
                 return Ok(ApiResponse.Forbidden("无权修改此项目"));
+            }
+
+            // M3c：非超管冻结归属，禁止通过 body 把项目迁到其它租户。
+            if (scope.Mode != CustomerScopeMode.All)
+            {
+                request.AppCode = project.AppCode;
             }
 
             _mapper.Map(request, project);
@@ -213,17 +257,16 @@ public class ProjectsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-
-            var project = await _context.Projects.FindAsync(id);
+            var project = await _context.Projects
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => p.Id == id);
             if (project == null)
             {
                 return Ok(ApiResponse.NotFound("项目不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && project.AppCode != appCode)
+            // 【M3】删除前完成归属判定，无写库、无副作用。
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(User, project.CustomerId, project.AppCode))
             {
                 return Ok(ApiResponse.Forbidden("无权删除此项目"));
             }
@@ -259,10 +302,10 @@ public class ProjectsController : ControllerBase
                 return Ok(ApiResponse.NotFound("项目不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && project.AppCode != appCode)
+            // B4/M6：工作纪要跟随项目归属，admin 集合外项目 403。
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(User, project.CustomerId, project.AppCode))
             {
-                return Ok(ApiResponse.Forbidden("无权访问此项目"));
+                return Ok(ApiResponse<List<WorkSummaryResponse>>.Fail(403, "无权访问此项目"));
             }
 
             var workSummaries = await _context.WorkSummaries
@@ -290,27 +333,26 @@ public class ProjectsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-
-            // 检查项目是否存在
-            var project = await _context.Projects.FindAsync(projectId);
+            // 检查项目是否存在（点查不被租户全局过滤器遮挡）
+            var project = await _context.Projects
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(p => p.Id == projectId);
             if (project == null)
             {
                 return Ok(ApiResponse.NotFound("项目不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && project.AppCode != appCode)
+            // 【M3】按项目归属判定，guard 在 WorkSummaries.Add 之前。
+            var scope = await _customerScope.ResolveAsync(User);
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(User, project.CustomerId, project.AppCode))
             {
                 return Ok(ApiResponse.Forbidden("无权在此项目下创建工作纪要"));
             }
 
-            // 如果没有提供appCode，使用项目的appCode
-            if (string.IsNullOrEmpty(request.AppCode))
-            {
-                request.AppCode = project.AppCode;
-            }
+            // 归属冻结：非超管无论请求体传什么 AppCode，一律用项目权威 AppCode。
+            request.AppCode = scope.Mode == CustomerScopeMode.All && !string.IsNullOrEmpty(request.AppCode)
+                ? request.AppCode
+                : project.AppCode;
 
             var workSummary = _mapper.Map<WorkSummary>(request);
             workSummary.ProjectId = projectId;
@@ -337,10 +379,8 @@ public class ProjectsController : ControllerBase
     {
         try
         {
-            var appCode = User.FindFirst("AppCode")?.Value;
-            var role = User.FindFirst(ClaimTypes.Role)?.Value;
-
             var workSummary = await _context.WorkSummaries
+                .IgnoreQueryFilters()
                 .Include(w => w.Project)
                 .FirstOrDefaultAsync(w => w.Id == id);
 
@@ -349,8 +389,9 @@ public class ProjectsController : ControllerBase
                 return Ok(ApiResponse.NotFound("工作纪要不存在"));
             }
 
-            // 权限检查
-            if (role != Roles.ADMIN && !string.IsNullOrEmpty(appCode) && workSummary.AppCode != appCode)
+            // 【M3】工作纪要无 CustomerId 列：用所属项目的 CustomerId + 自身 AppCode 判定。
+            if (!await _scopeGuard.CanAccessOwnedEntityAsync(
+                    User, workSummary.Project?.CustomerId, workSummary.AppCode))
             {
                 return Ok(ApiResponse.Forbidden("无权删除此工作纪要"));
             }

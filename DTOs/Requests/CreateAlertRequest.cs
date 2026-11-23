@@ -37,6 +37,12 @@ public class CreateAlertRequest
     public long? AreaId { get; set; }
 
     /// <summary>
+    /// 目标客户 ID。租户管理员（admin）创建告警时必填且必须在其 DB 授权集合内；
+    /// 该字段只用于服务端派生归属 AppCode，不接受客户端直接指定 AppCode 越权。
+    /// </summary>
+    public long? CustomerId { get; set; }
+
+    /// <summary>
     /// 目标租户 AppCode（仅超级管理员代其它租户创建时生效；普通租户传值会被服务端 JWT 的 AppCode 覆盖，防越权）。
     /// </summary>
     [MaxLength(50)]

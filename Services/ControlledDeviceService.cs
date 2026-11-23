@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using IoTPlatform.Data;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using IoTPlatform.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -16,11 +18,16 @@ public class ControlledDeviceService : IControlledDeviceService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<ControlledDeviceService> _logger;
+    private readonly ICustomerScopeGuard _scopeGuard;
 
-    public ControlledDeviceService(AppDbContext db, ILogger<ControlledDeviceService> logger)
+    public ControlledDeviceService(
+        AppDbContext db,
+        ILogger<ControlledDeviceService> logger,
+        ICustomerScopeGuard scopeGuard)
     {
         _db = db;
         _logger = logger;
+        _scopeGuard = scopeGuard ?? throw new ArgumentNullException(nameof(scopeGuard));
     }
 
     /// <inheritdoc />
@@ -49,9 +56,15 @@ public class ControlledDeviceService : IControlledDeviceService
         }
 
         // 3. 创建受控设备记录
+        // 【归属防污染】AppCode 一律取设备的真实归属（服务端点查所得），绝不能写客户端/调用方传入的 null。
+        if (string.IsNullOrWhiteSpace(device.AppCode))
+        {
+            throw new InvalidOperationException($"设备 {deviceId} 缺少 AppCode，拒绝注册到控制系统");
+        }
+
         var controlledDevice = new ControlledDevice
         {
-            AppCode = appCode,
+            AppCode = device.AppCode,
             DeviceId = deviceId,
             DeviceName = device.Name,
             SerialNumber = device.SerialNumber,
@@ -163,14 +176,19 @@ public class ControlledDeviceService : IControlledDeviceService
     }
 
     /// <inheritdoc />
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<ControlledDeviceDto>> GetDevicesAsync(string? appCode, int page, int pageSize, bool? isEnabled, bool? isFavorite) => GetDevicesAsync(appCode, page, pageSize, isEnabled, isFavorite, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
     public async Task<PagedResponse<ControlledDeviceDto>> GetDevicesAsync(
         string? appCode,
         int page,
         int pageSize,
         bool? isEnabled,
-        bool? isFavorite)
+        bool? isFavorite, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _db.ControlledDevices.Include(d => d.Device).AsQueryable();
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         if (!string.IsNullOrEmpty(appCode))
             query = query.Where(d => d.AppCode == appCode);
@@ -223,6 +241,70 @@ public class ControlledDeviceService : IControlledDeviceService
         _logger.LogInformation("受控设备 {Id} 收藏状态已切换为 {IsFavorite}", id, device.IsFavorite);
 
         return true;
+    }
+
+    // ── M3 显式 principal 重载：归属判定在 Remove/SaveChanges 之前，越权零副作用 ──────
+
+    /// <inheritdoc />
+    public async Task<bool> UnregisterDeviceAsync(long id, string? appCode, ClaimsPrincipal principal)
+    {
+        var device = await FindOwnedDeviceAsync(id, principal).ConfigureAwait(false);
+        if (device == null)
+        {
+            return false;
+        }
+
+        return await UnregisterDeviceAsync(id, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<ControlledDeviceDto?> UpdateDeviceAsync(
+        long id, UpdateControlledDeviceRequest request, string? appCode, ClaimsPrincipal principal)
+    {
+        var device = await FindOwnedDeviceAsync(id, principal).ConfigureAwait(false);
+        if (device == null)
+        {
+            return null;
+        }
+
+        return await UpdateDeviceAsync(id, request, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> ToggleFavoriteAsync(long id, string? appCode, ClaimsPrincipal principal)
+    {
+        var device = await FindOwnedDeviceAsync(id, principal).ConfigureAwait(false);
+        if (device == null)
+        {
+            return false;
+        }
+
+        return await ToggleFavoriteAsync(id, appCode).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// M3 归属点查：IgnoreQueryFilters 读权威 AppCode，统一三分支判据校验；
+    /// 越权直接抛 ForbiddenAccessException，绝不进入删除/更新/收藏与任何缓存清理路径。
+    /// </summary>
+    private async Task<ControlledDevice?> FindOwnedDeviceAsync(long id, ClaimsPrincipal principal)
+    {
+        // 跟踪查询即可：后续写方法按同一 id 查询会复用本实体，不产生重复实体或额外副作用。
+        var device = await _db.ControlledDevices
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(d => d.Id == id)
+            .ConfigureAwait(false);
+
+        if (device == null)
+        {
+            return null;
+        }
+
+        if (!await _scopeGuard.CanAccessOwnedEntityAsync(principal, null, device.AppCode).ConfigureAwait(false))
+        {
+            throw new ForbiddenAccessException("无权操作该受控设备");
+        }
+
+        return device;
     }
 
     /// <inheritdoc />

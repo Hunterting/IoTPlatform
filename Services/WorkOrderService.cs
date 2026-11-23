@@ -1,8 +1,10 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using System.Security.Claims;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -16,25 +18,33 @@ public class WorkOrderService : IWorkOrderService
     private readonly IDeviceRepository _deviceRepository;
     private readonly IAreaRepository _areaRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICustomerScopeGuard _scopeGuard;
 
     public WorkOrderService(
         IWorkOrderRepository workOrderRepository,
         IDeviceRepository deviceRepository,
         IAreaRepository areaRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ICustomerScopeGuard scopeGuard)
     {
         _workOrderRepository = workOrderRepository;
         _deviceRepository = deviceRepository;
         _areaRepository = areaRepository;
         _unitOfWork = unitOfWork;
+        _scopeGuard = scopeGuard ?? throw new ArgumentNullException(nameof(scopeGuard));
     }
 
     /// <summary>
     /// 获取工单列表
     /// </summary>
-    public async Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds) => GetWorkOrdersAsync(page, pageSize, status, type, priority, appCode, allowedAreaIds, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<WorkOrderDto>> GetWorkOrdersAsync(int page, int pageSize, string? status, string? type, string? priority, string? appCode, List<long>? allowedAreaIds, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var baseQuery = _workOrderRepository.GetQueryable();
+        baseQuery = baseQuery.ApplyQueryScope(appCode, customerIds, appCodes);
         
         // 租户过滤
         if (!string.IsNullOrEmpty(appCode))
@@ -165,10 +175,25 @@ public class WorkOrderService : IWorkOrderService
     }
 
     /// <summary>
-    /// 创建工单
+    /// 创建工单（旧签名保留：内部调用零回归）。
     /// </summary>
-    public async Task<WorkOrderDto> CreateWorkOrderAsync(CreateWorkOrderRequest request, string? appCode = null)
+    public Task<WorkOrderDto> CreateWorkOrderAsync(CreateWorkOrderRequest request, string? appCode = null)
+        => CreateWorkOrderAsync(request, appCode, customerScopeVerified: true);
+
+    /// <summary>
+    /// M1 二次防御重载：Controller 已用 ICustomerScopeService 校验目标客户后传入 true。
+    /// </summary>
+    public async Task<WorkOrderDto> CreateWorkOrderAsync(
+        CreateWorkOrderRequest request,
+        string? appCode,
+        bool customerScopeVerified)
     {
+        if (!customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("无权在该客户下创建工单");
+        }
+
+
         var orderNo = $"WO{DateTime.UtcNow:yyyyMMddHHmmss}";
 
         // 【租户隔离】AppCode 由服务端 JWT 决定（优先）；设备反查仅作兜底，
@@ -524,6 +549,89 @@ public class WorkOrderService : IWorkOrderService
             await EnsureWorkOrderOwnedAsync(workOrderId.Value, appCode);
         }
         await _workOrderRepository.DeleteAttachmentAsync(attachmentId);
+    }
+
+    // ── M3 显式 principal 重载：越权在写库/写日志之前 fail-closed ────────────────────
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> UpdateWorkOrderAsync(long id, UpdateWorkOrderRequest request, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await UpdateWorkOrderAsync(id, request, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> AssignWorkOrderAsync(long id, string assignee, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await AssignWorkOrderAsync(id, assignee, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> StartWorkOrderAsync(long id, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await StartWorkOrderAsync(id, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> ResolveWorkOrderAsync(long id, string resolveDescription, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await ResolveWorkOrderAsync(id, resolveDescription, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> CloseWorkOrderAsync(long id, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await CloseWorkOrderAsync(id, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderDto> RejectWorkOrderAsync(long id, string reason, string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(id, principal).ConfigureAwait(false);
+        return await RejectWorkOrderAsync(id, reason, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<WorkOrderAttachmentDto> AddAttachmentAsync(
+        long workOrderId, string fileName, string fileUrl, string fileSize, string fileType,
+        string? appCode, ClaimsPrincipal principal)
+    {
+        await EnsureOwnedByPrincipalAsync(workOrderId, principal).ConfigureAwait(false);
+        return await AddAttachmentAsync(workOrderId, fileName, fileUrl, fileSize, fileType, appCode).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteAttachmentAsync(long attachmentId, string? appCode, ClaimsPrincipal principal)
+    {
+        var workOrderId = await _workOrderRepository.GetAttachmentWorkOrderIdAsync(attachmentId).ConfigureAwait(false);
+        if (!workOrderId.HasValue)
+        {
+            throw new InvalidOperationException("附件不存在");
+        }
+        await EnsureOwnedByPrincipalAsync(workOrderId.Value, principal).ConfigureAwait(false);
+        await DeleteAttachmentAsync(attachmentId, appCode).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// M3 归属点查 + 统一判据：IgnoreQueryFilters 查真实归属，越权抛 ForbiddenAccessException；
+    /// 任何写库/日志动作之前完成，保证 403 零副作用。
+    /// </summary>
+    private async Task EnsureOwnedByPrincipalAsync(long workOrderId, ClaimsPrincipal principal)
+    {
+        var (exists, ownerAppCode) = await _workOrderRepository.GetWorkOrderOwnershipAsync(workOrderId).ConfigureAwait(false);
+        if (!exists)
+        {
+            throw new InvalidOperationException("工单不存在");
+        }
+
+        if (!await _scopeGuard.CanAccessOwnedEntityAsync(principal, null, ownerAppCode).ConfigureAwait(false))
+        {
+            throw new ForbiddenAccessException("无权操作该工单");
+        }
     }
 
     /// <summary>
