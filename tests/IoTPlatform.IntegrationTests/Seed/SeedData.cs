@@ -1,3 +1,4 @@
+using IoTPlatform.Configuration;
 using IoTPlatform.Data;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
@@ -160,6 +161,21 @@ public static class SeedData
         };
         db.DiscoveredAnShengDevices.Add(discovered);
 
+        await db.SaveChangesAsync(cancellationToken);
+
+        // ⑦ 多客户授权基线：admin 的授权集合 = 其原绑定客户（与生产 seed / 迁移回填同源）。
+        //    ICustomerScopeService 对 admin 每次请求读 user_customers（DB 为准），
+        //    若缺少该行，按 AsAdmin(userId, customerIds) 进入的客户类用例会看到空集合。
+        db.UserCustomers.Add(new UserCustomer
+        {
+            UserId = user.Id,
+            CustomerId = customer.Id,
+            GrantedByUserId = null,
+            Source = CustomerScopeConstants.SourceSeed,
+            CreatedAt = now,
+            UpdatedAt = now,
+            RevokedAt = null
+        });
         await db.SaveChangesAsync(cancellationToken);
 
         // 播种用的实体不应残留在 ChangeTracker 中，否则后续查询会命中缓存而非真实库

@@ -31,9 +31,33 @@ public static class AuthTestHelper
         return client;
     }
 
-    /// <summary>普通管理员（role=admin），带默认租户声明。</summary>
+    /// <summary>
+    /// 普通管理员（role=admin），保留原有 AppCode/CustomerId 声明以兼容下游取数用例，
+    /// 并额外注入 <c>ManagedCustomerIds</c> 快照——多客户模型下 TenantFilter 的 admin 分支
+    /// 要求该 claim 非空，否则用例在进控制器前就会拿到 Code 403。
+    /// </summary>
+    /// <remarks>
+    /// 需要验证「按授权集合过滤」的用例请改用
+    /// <see cref="AsAdmin(HttpClient,long,long[])"/>，并传入测试库中真实存在的 admin 用户 ID
+    /// 与 user_customers 授权客户 ID（claim 只是信号，授权判定以 DB 为准）。
+    /// </remarks>
     public static HttpClient AsAdmin(this HttpClient client) =>
-        client.AsRole(SharedTestConstants.RoleAdmin, SharedTestConstants.AppCode);
+        client.AsRole(
+            SharedTestConstants.RoleAdmin,
+            SharedTestConstants.AppCode,
+            managedCustomerIds: SharedTestConstants.DefaultCustomerId);
+
+    /// <summary>
+    /// 指定身份与授权快照的 admin。用于需要 ICustomerScopeService 从 user_customers 读集合的用例
+    /// （如客户可见性、建户越权）；userId 必须是测试库中真实存在的 admin，
+    /// customerIds 必须与 user_customers 中的授权行一致，否则 DB 为准的判定会覆盖 claim。
+    /// </summary>
+    public static HttpClient AsAdmin(this HttpClient client, long userId, params long[] managedCustomerIds) =>
+        client.AsRole(
+            SharedTestConstants.RoleAdmin,
+            SharedTestConstants.AppCode,
+            userId: userId.ToString(),
+            managedCustomerIds: string.Join(',', managedCustomerIds));
 
     /// <summary>
     /// 超级管理员（role=super_admin）。
@@ -53,12 +77,16 @@ public static class AuthTestHelper
     /// <param name="appCode">租户码；传 null 表示「不下发 AppCode claim」，用于负向分支。</param>
     /// <param name="userId">用户主键，默认 <see cref="SharedTestConstants.DefaultUserId"/>。</param>
     /// <param name="customerId">租户主键，默认 <see cref="SharedTestConstants.DefaultCustomerId"/>。</param>
+    /// <param name="managedCustomerIds">
+    /// admin 授权客户快照（逗号分隔）；仅 admin 身份需要，下级与超管保持原样不注入。
+    /// </param>
     public static HttpClient AsRole(
         this HttpClient client,
         string role,
         string? appCode = SharedTestConstants.AppCode,
         string? userId = null,
-        string? customerId = null)
+        string? customerId = null,
+        string? managedCustomerIds = null)
     {
         ArgumentNullException.ThrowIfNull(client);
         ArgumentException.ThrowIfNullOrWhiteSpace(role);
@@ -74,6 +102,12 @@ public static class AuthTestHelper
         if (!string.IsNullOrWhiteSpace(appCode))
         {
             client.DefaultRequestHeaders.Add(SharedTestConstants.Headers.AppCode, appCode);
+        }
+
+        if (!string.IsNullOrWhiteSpace(managedCustomerIds))
+        {
+            client.DefaultRequestHeaders.Add(
+                SharedTestConstants.Headers.ManagedCustomerIds, managedCustomerIds);
         }
 
         return client;

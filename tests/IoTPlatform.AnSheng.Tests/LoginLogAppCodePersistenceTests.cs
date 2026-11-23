@@ -21,8 +21,10 @@ namespace IoTPlatform.AnSheng.Tests;
 /// 随后我们直接断言该表里的 AppCode 落库值。
 ///
 /// 【覆盖】
-///   · 租户用户（admin）登录 → login_logs 出现 1 行，AppCode == 该租户 AppCode（修复前为 null）；
-///   · 超管登录 → login_logs 出现 1 行，AppCode 为 null（修复后 ComputeEffectiveAppCode 对超管恒 null）。
+///   · 下级租户用户（operator）登录 → login_logs 出现 1 行，AppCode == 该租户 AppCode（零回归）；
+///   · admin 登录 → login_logs 出现 1 行但 AppCode 为 null（多客户模型 D7：admin 无单租户归属，
+///     与超管同形，不伪造租户；原断言「AppCode=customer_001」已按新契约收口）；
+///   · 超管登录 → login_logs 出现 1 行，AppCode 为 null。
 ///
 /// 【无需 MySQL】：全程 InMemory，零外部依赖。
 /// </summary>
@@ -59,10 +61,10 @@ public sealed class LoginLogAppCodePersistenceTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    [Fact(DisplayName = "B-01 租户 admin 登录 → login_logs 落 1 行且 AppCode = 租户 AppCode")]
-    public async Task TenantAdminLogin_WritesLoginLog_WithTenantAppCode()
+    [Fact(DisplayName = "B-01 admin 登录 → login_logs 落 1 行且 AppCode 为 null（D7 不伪造租户归属）")]
+    public async Task TenantAdminLogin_WritesLoginLog_WithNullAppCode()
     {
-        // Arrange：租户 admin，AppCode=customer_001
+        // Arrange：租户 admin 即使库里残留 AppCode=customer_001，也不作为登录日志的租户归属。
         SeedCustomer(1, "customer_001", "租户A");
         var user = SeedUser(11, "admin@tenant-a.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: null, appCode: "customer_001");
@@ -71,10 +73,10 @@ public sealed class LoginLogAppCodePersistenceTests : IDisposable
         // Act
         await _sut.LoginAsync(new LoginRequest { Email = user.Email, Password = RawPassword });
 
-        // Assert：login_logs 恰好 1 行，且 AppCode 正确落库（修复前此处为 null，导致按 AppCode 查询 0 条）
+        // Assert：admin 走集合分支，effectiveAppCode=null，与超管同形；日志仍按 userId 可追溯。
         var logs = _db.LoginLogs.ToList();
         Assert.Single(logs);
-        Assert.Equal("customer_001", logs[0].AppCode);
+        Assert.Null(logs[0].AppCode);
         Assert.Equal("success", logs[0].Status);
         Assert.Equal(user.Id, logs[0].UserId);
     }

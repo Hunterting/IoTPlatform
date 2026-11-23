@@ -201,7 +201,7 @@ public sealed class DeviceClaimBoundaryTests
 
     private static DevicesController NewDevicesController(IDeviceService service, string role)
     {
-        var controller = new DevicesController(service);
+        var controller = new DevicesController(service, null, null);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

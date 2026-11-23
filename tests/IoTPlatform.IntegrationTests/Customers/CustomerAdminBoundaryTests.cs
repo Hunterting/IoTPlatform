@@ -18,12 +18,16 @@ namespace IoTPlatform.IntegrationTests.Customers;
 /// 「租户 admin 客户管理权限边界」增量修复的集成验收（AC-01 ~ AC-13）。
 ///
 /// 【被测改动】Controllers/CustomersController.cs
-///   · IsAdminLike() = role ∈ { super_admin, admin }，取代原先「仅 super_admin」的短路；
-///   · GetCustomers / GetAccessibleCustomers 的租户过滤改为 !IsAdminLike()；
-///   · GetCustomer / UpdateCustomer / DeleteCustomer 的归属校验改为 !IsAdminLike() &amp;&amp; AppCode 不等
-///     （DeleteCustomer 的归属校验是本次新增，修复了原越权删除漏洞）；
-///   · CreateCustomer 引入 effectiveAppCode：admin/超管采信 request.AppCode（每客户独立 AppCode），
-///     普通角色若伪造他租户 AppCode → 403，否则强制用自身 claim（不采信前端）。
+///   · 原始版本：IsAdminLike() = role ∈ { super_admin, admin }，admin 等同超管看全部（越权缺陷）；
+///   · 多客户授权模型（本轮收口）：拆为 IsSuperAdmin() + IsTenantAdmin()，五处入口走三分支——
+///     超管全量、admin 只看 user_customers 授权集合（空集合 ⇒ 空列表/403）、下级仍按单 AppCode；
+///   · CreateCustomer 仅超管可建（配额需求 R01），普通角色伪造他租户 AppCode → 403；
+///   · DeleteCustomer 额外拦截 user_customers 引用（FK ON DELETE RESTRICT）。
+///
+/// 【AC-02 / AC-14 / AC-04 / AC-06 / AC-08 的断言变更】
+///   这五条原本断言「admin 看全部 3 条 / 可跨租户增删改」，那是被本轮修复的越权面。
+///   新模型下 admin 只持有基线客户 1 条（SeedData 回填），他租户客户一律不可见/不可改/不可删。
+///   这是设计预期的行为收口（PRD 铁律 3），不是回归。
 ///
 /// 【本平台的响应口径】业务成败一律 HTTP 200 + ApiResponse.Code（见 IntegrationTestBase.ReadAsync 注释）。
 ///   因此 403 / 400 / 404 全部断言包体 Code，而不是 HTTP 状态码。
@@ -178,12 +182,12 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
             "超管不受 AppCode 过滤");
     }
 
-    [Fact(DisplayName = "AC-02 admin GET /customers → 看全部 3 条（本轮核心：admin 等同超管）")]
-    public async Task AC02_Admin_List_SeesAllCustomers()
+    [Fact(DisplayName = "AC-02 admin GET /customers → 只看授权集合 1 条（多客户模型行为收口）")]
+    public async Task AC02_Admin_List_SeesOnlyGrantedCustomers()
     {
-        // Arrange：admin 自身 claim 是 TEST，但新增的 IsAdminLike() 短路必须让它看到
-        //          AppCode=qa_ac_* 的独立租户客户（旧实现 role != SUPER_ADMIN 会只看 TEST 1 条）。
-        var client = Client.AsAdmin();
+        // Arrange：admin 的授权集合由 user_customers 决定（SeedData 回填基线客户）。
+        //          claim 快照与 DB 授权一致；他租户两条客户不在集合内。
+        var client = Client.AsAdmin(Seed.UserId, Seed.CustomerId);
 
         // Act
         var body = await ReadListAsync(await client.GetAsync($"{CustomersUrl}?pageSize=50"));
@@ -191,9 +195,11 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         // Assert
         body.Code.Should().Be(200, $"admin 读取客户列表应成功，实际：{body.Message}");
         body.Data.Should().NotBeNull();
-        body.Data!.TotalCount.Should().Be(3, "admin 等同超管，应看到全部 3 条而非仅自身 AppCode 的 1 条");
-        body.Data.Items.Select(c => c.AppCode).Should().Contain(OtherAppCodeA)
-            .And.Contain(OtherAppCodeB, "两个独立 AppCode 的他租户客户都必须可见");
+        body.Data!.TotalCount.Should().Be(1, "admin 只看授权集合，不再等同超管看全部");
+        body.Data.Items.Should().ContainSingle()
+            .Which.AppCode.Should().Be(SharedTestConstants.AppCode, "授权集合 = 基线租户");
+        body.Data.Items.Select(c => c.AppCode).Should().NotContain(OtherAppCodeA)
+            .And.NotContain(OtherAppCodeB, "他租户客户不得出现在授权集合外");
     }
 
     [Fact(DisplayName = "AC-03 staff GET /customers → 只看自身 AppCode 1 条")]
@@ -213,12 +219,12 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
             .Which.AppCode.Should().Be(SharedTestConstants.AppCode);
     }
 
-    [Fact(DisplayName = "AC-14 admin GET /customers/accessible → 看全部 3 条（第 2 处独立短路）")]
-    public async Task AC14_Admin_AccessibleList_SeesAllCustomers()
+    [Fact(DisplayName = "AC-14 admin GET /customers/accessible → 只返回授权集合 1 条（第 2 处独立分支）")]
+    public async Task AC14_Admin_AccessibleList_SeesOnlyGrantedCustomers()
     {
-        // Arrange：GetAccessibleCustomers 是本次改动的另一处独立短路（:115）。
+        // Arrange：GetAccessibleCustomers 与 GetCustomers 同语义，admin 返回授权客户集合（M09 据此渲染）。
         //          若只改了 GetCustomers 而漏改这里，AC-02 仍会绿、本用例会红。
-        var client = Client.AsAdmin();
+        var client = Client.AsAdmin(Seed.UserId, Seed.CustomerId);
 
         // Act
         var response = await client.GetAsync($"{CustomersUrl}/accessible");
@@ -229,9 +235,9 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         body.Should().NotBeNull();
         body!.Code.Should().Be(200, $"admin 读取可访问客户列表应成功，实际：{body.Message}");
         body.Data.Should().NotBeNull();
-        body.Data!.Should().HaveCount(3, "admin 等同超管，应可访问全部租户");
-        body.Data.Select(c => c.AppCode).Should().Contain(OtherAppCodeA)
-            .And.Contain(OtherAppCodeB, "独立 AppCode 的他租户客户必须出现在可访问列表");
+        body.Data!.Should().ContainSingle("admin 可访问列表 = 授权集合，而非全部租户");
+        body.Data.Should().NotContain(c => c.AppCode == OtherAppCodeA || c.AppCode == OtherAppCodeB,
+            "他租户客户不得出现在可访问列表");
     }
 
     [Fact(DisplayName = "AC-15 staff GET /customers/accessible → 只看自身 AppCode 1 条")]
@@ -255,17 +261,17 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 
     // ────────────────────────────── 详情归属 ──────────────────────────────
 
-    [Fact(DisplayName = "AC-04 admin GET /customers/{他租户id} → 200（等同超管）")]
-    public async Task AC04_Admin_Detail_OtherTenant_Returns200()
+    [Fact(DisplayName = "AC-04 admin GET /customers/{他租户id} → 403（不在授权集合）")]
+    public async Task AC04_Admin_Detail_OtherTenant_Returns403()
     {
-        // Arrange
-        var client = Client.AsAdmin();
+        // Arrange：他租户客户不在 admin 的 user_customers 授权集合内。
+        var client = Client.AsAdmin(Seed.UserId, Seed.CustomerId);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.GetAsync($"{CustomersUrl}/{_otherCustomerAId}"));
 
         // Assert
-        body.Code.Should().Be(200, $"admin 应可访问任意租户客户详情，实际：{body.Message}");
+        body.Code.Should().Be(403, "admin 不得访问授权集合外客户详情");
     }
 
     [Fact(DisplayName = "AC-05 staff GET /customers/{他租户id} → 403")]
@@ -284,30 +290,24 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 
     // ────────────────────────────── 更新归属 ──────────────────────────────
 
-    [Fact(DisplayName = "AC-06 admin PUT /customers/{他租户id} → 200 且真实落库")]
-    public async Task AC06_Admin_Update_OtherTenant_Returns200()
+    [Fact(DisplayName = "AC-06 admin PUT /customers/{他租户id} → 403 且未改动")]
+    public async Task AC06_Admin_Update_OtherTenant_Returns403()
     {
-        // Arrange
-        var client = Client.AsAdmin();
-        const string newName = "QA-admin-跨租户改名";
+        // Arrange：admin 对他租户客户无授权，更新必须在控制器分支被拒绝。
+        var client = Client.AsAdmin(Seed.UserId, Seed.CustomerId);
 
         // Act
-        var response = await client.PutAsJsonAsync(
-            $"{CustomersUrl}/{_otherCustomerAId}", NewUpdateBody(newName));
+        var body = await ReadEnvelopeAsync(await client.PutAsJsonAsync(
+            $"{CustomersUrl}/{_otherCustomerAId}", NewUpdateBody("QA-admin-越权改名")));
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await ReadAsync<ApiResponse<CustomerDto>>(response);
-        body.Should().NotBeNull();
-        body!.Code.Should().Be(200, $"admin 应可修改任意租户客户，实际：{body.Message}");
-        body.Data.Should().NotBeNull();
-        body.Data!.AppCode.Should().Be(OtherAppCodeA, "更新不得改变客户归属");
+        body.Code.Should().Be(403, "admin 不得修改授权集合外客户");
 
         var storedName = await QueryDbAsync(db => db.Customers
             .Where(c => c.Id == _otherCustomerAId)
             .Select(c => c.Name)
             .FirstOrDefaultAsync());
-        storedName.Should().Be(newName, "改名必须真实落库，而不是只回显成功");
+        storedName.Should().Be("QA-他租户客户A", "越权请求不得产生任何落库副作用");
     }
 
     [Fact(DisplayName = "AC-07 staff PUT /customers/{他租户id} → 403 且未改动")]
@@ -348,20 +348,20 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 
     // ────────────────────────────── 删除归属（本轮新增校验） ──────────────────────────────
 
-    [Fact(DisplayName = "AC-08 admin DELETE 他租户无关联客户 → 200 且真实删除")]
-    public async Task AC08_Admin_Delete_OtherTenant_Returns200()
+    [Fact(DisplayName = "AC-08 admin DELETE 他租户无关联客户 → 403 且客户仍在库")]
+    public async Task AC08_Admin_Delete_OtherTenant_Returns403()
     {
-        // Arrange：OtherCustomerB 无任何 Device(AppCode) / User(CustomerId) / Project(CustomerId) 关联
-        var client = Client.AsAdmin();
+        // Arrange：OtherCustomerB 虽无任何 Device/User/Project 关联，但不在 admin 授权集合内。
+        var client = Client.AsAdmin(Seed.UserId, Seed.CustomerId);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.DeleteAsync($"{CustomersUrl}/{_otherCustomerBId}"));
 
         // Assert
-        body.Code.Should().Be(200, $"admin 应可删除任意租户的无关联客户，实际：{body.Message}");
+        body.Code.Should().Be(403, "admin 不得删除授权集合外客户");
 
         var stillExists = await QueryDbAsync(db => db.Customers.AnyAsync(c => c.Id == _otherCustomerBId));
-        stillExists.Should().BeFalse("删除必须真实落库");
+        stillExists.Should().BeTrue("越权删除必须被拒绝，客户不得消失");
     }
 
     [Fact(DisplayName = "AC-09 staff DELETE 他租户客户 → 403 且客户仍在库")]

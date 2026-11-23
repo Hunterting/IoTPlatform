@@ -82,10 +82,17 @@ public static class SharedTestConstants
         /// <summary>用户名 → <c>ClaimTypes.Name</c>。</summary>
         public const string UserName = "X-Test-UserName";
 
+        /// <summary>
+        /// admin 授权客户集合快照 → <c>ManagedCustomerIds</c> claim（逗号分隔的客户 ID）。
+        /// 多客户授权模型下 TenantFilter 的 admin 分支要求该 claim 非空，否则在进控制器前就 403。
+        /// 注意：它只是身份信号，真正的授权判定由 ICustomerScopeService 从 user_customers 读取（DB 为准）。
+        /// </summary>
+        public const string ManagedCustomerIds = "X-Test-ManagedCustomerIds";
+
         /// <summary>全部测试头，供 <c>AuthTestHelper.AsAnonymous()</c> 一次性清除。</summary>
         public static readonly string[] All =
         {
-            UserId, Role, AppCode, CustomerId, UserName
+            UserId, Role, AppCode, CustomerId, UserName, ManagedCustomerIds
         };
     }
 

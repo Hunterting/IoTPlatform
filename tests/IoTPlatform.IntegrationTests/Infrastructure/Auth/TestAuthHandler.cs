@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using IoTPlatform.Configuration;
 
 namespace IoTPlatform.IntegrationTests.Infrastructure.Auth;
 
@@ -36,6 +37,7 @@ namespace IoTPlatform.IntegrationTests.Infrastructure.Auth;
 ///   · <see cref="ClaimTypes.NameIdentifier"/> ← X-Test-UserId     （TenantContextAccessor）
 ///   · "AppCode"                                ← X-Test-AppCode    （AnShengController / TenantContextAccessor）
 ///   · "CustomerId"                             ← X-Test-CustomerId （TenantContextAccessor）
+///   · "ManagedCustomerIds"                      ← X-Test-ManagedCustomerIds （TenantFilter admin 分支 / 租户上下文快照）
 ///   · <see cref="ClaimTypes.Name"/>            ← X-Test-UserName
 /// </summary>
 public sealed class TestAuthHandler : AuthenticationHandler<AuthenticationSchemeOptions>
@@ -66,6 +68,7 @@ public sealed class TestAuthHandler : AuthenticationHandler<AuthenticationScheme
         var role = ReadHeader(SharedTestConstants.Headers.Role) ?? SharedTestConstants.RoleAdmin;
         var appCode = ReadHeader(SharedTestConstants.Headers.AppCode);
         var customerId = ReadHeader(SharedTestConstants.Headers.CustomerId);
+        var managedCustomerIds = ReadHeader(SharedTestConstants.Headers.ManagedCustomerIds);
         var userName = ReadHeader(SharedTestConstants.Headers.UserName) ?? $"test-user-{userId}";
 
         var claims = new List<Claim>
@@ -84,6 +87,13 @@ public sealed class TestAuthHandler : AuthenticationHandler<AuthenticationScheme
         if (!string.IsNullOrWhiteSpace(customerId))
         {
             claims.Add(new Claim("CustomerId", customerId));
+        }
+
+        // 多客户授权：admin 身份必须带集合 claim 才能穿过 TenantFilter 的 admin 分支。
+        // 这里只注入「快照」，真正的授权判定仍由 ICustomerScopeService 读 user_customers。
+        if (!string.IsNullOrWhiteSpace(managedCustomerIds))
+        {
+            claims.Add(new Claim(CustomerScopeConstants.ClaimManagedCustomerIds, managedCustomerIds));
         }
 
         var identity = new ClaimsIdentity(claims, SchemeName);

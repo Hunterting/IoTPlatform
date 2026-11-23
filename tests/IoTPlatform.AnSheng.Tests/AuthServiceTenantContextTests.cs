@@ -33,6 +33,11 @@ namespace IoTPlatform.AnSheng.Tests;
 ///   S2 新库   User.CustomerId 指向 Customer
 ///   S3 超管   IsSuperAdmin=true（零回归）
 ///   S4 兜底   AppCode 在 customers 表无对应行 / CustomerId 悬空
+///
+/// 【多客户授权模型 T03 收口】role=admin 的账号不再走单值回填：CustomerId / AppCode /
+/// CustomerName / CurrentCustomer 恒为 null，ManagedCustomerIds 来自 user_customers（DB 为准），
+/// JWT 不签发单值 claim。下级（staff/chef/operator）与超管链路逐字不变（零回归）。
+/// 因此 S1/S2/S4-01 中原本断言 admin 单值回填的用例已按新契约改写。
 /// </summary>
 public sealed class AuthServiceTenantContextTests : IDisposable
 {
@@ -64,7 +69,10 @@ public sealed class AuthServiceTenantContextTests : IDisposable
             unitOfWork: null!,       // LoginAsync / GetCurrentUserAsync / SwitchCustomerAsync 三条链路均未解引用
             jwtHelper: new JwtHelper(CreateJwtConfiguration()),
             cache: null!,            // 同上；两个依赖仅在构造时保存，不在被测方法中使用
-            permissionService: _permissions);
+            permissionService: _permissions,
+            // admin 分支从 user_customers 读集合（DB 为准），与生产 DI 装配一致。
+            customerScopeService: new CustomerScopeService(
+                new UserCustomerRepository(_db), _customers));
     }
 
     public void Dispose()
@@ -77,27 +85,26 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     // 一、S1 存量库形态（CustomerId 全 NULL，AppCode 为身份主源）
     // ─────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "TC-S1-01 存量库登录 → 回填 appCode/customerId/customerName 且 currentCustomer 非空")]
-    public async Task S1_LegacyDb_Login_BackfillsAllTenantFields()
+    [Fact(DisplayName = "TC-S1-01 admin 存量库登录 → 单值全 null、集合来自 user_customers、CurrentCustomer=null")]
+    public async Task S1_LegacyDb_Login_AdminUsesManagedSet()
     {
         // Arrange
         var customer = SeedCustomer(1, "customer_001", "海底捞智慧工厂有限公司");
         var user = SeedUser(11, "manager@haidilao.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: null, appCode: "customer_001");
+        SeedGrant(user.Id, customer.Id);
         await CommitAsync();
 
         // Act
         var response = await LoginAsync(user.Email);
 
-        // Assert：登录响应体字段（修复前此处四项全为 null）
-        Assert.Equal("customer_001", response.User.AppCode);
-        Assert.Equal<long?>(customer.Id, response.User.CustomerId);
-        Assert.False(string.IsNullOrWhiteSpace(response.User.CustomerName));
-        Assert.Equal(customer.Name, response.User.CustomerName);
-        Assert.NotNull(response.CurrentCustomer);
-        Assert.Equal("customer_001", response.CurrentCustomer!.AppCode);
-        Assert.Equal(customer.Id, response.CurrentCustomer.Id);
-        Assert.Equal(customer.Name, response.CurrentCustomer.Name);
+        // Assert：D7 admin 即使库里残留旧单值也不采信，集合由授权表决定。
+        Assert.Null(response.User.AppCode);
+        Assert.Null(response.User.CustomerId);
+        Assert.Null(response.User.CustomerName);
+        Assert.Null(response.CurrentCustomer);
+        Assert.NotNull(response.User.ManagedCustomerIds);
+        Assert.Equal(new[] { customer.Id }, response.User.ManagedCustomerIds);
 
         // 纯追加字段也应被补齐（§3.1.1 改动 2）
         Assert.Equal(user.FullName, response.User.Name);
@@ -111,53 +118,55 @@ public sealed class AuthServiceTenantContextTests : IDisposable
         Assert.Equal(Roles.GetAdminPermissions(), response.User.Permissions);
     }
 
-    [Fact(DisplayName = "TC-S1-02 存量库登录 → 走 GetByAppCodeAsync 兜底、不触发 GetById，JWT 与 DTO 的 AppCode 一致")]
-    public async Task S1_LegacyDb_Login_UsesAppCodeFallbackAndJwtStaysAligned()
+    [Fact(DisplayName = "TC-S1-02 admin 登录 → 不反查单客户；JWT 签集合快照且不签单值 claim")]
+    public async Task S1_LegacyDb_AdminLogin_JwtCarriesOnlyManagedSet()
     {
         // Arrange
         SeedCustomer(1, "customer_001", "海底捞");
         var user = SeedUser(11, "manager@haidilao.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: null, appCode: "customer_001");
+        SeedGrant(user.Id, 1);
         await CommitAsync();
 
         // Act
         var response = await LoginAsync(user.Email);
 
-        // Assert：CustomerId 为 NULL ⇒ 跳过 GetByIdAsync，仅反查一次 AppCode
+        // Assert：admin 走集合分支，CustomerId / AppCode 两条反查路径都不走。
         Assert.Empty(_customers.IdQueries);
-        Assert.Equal(new[] { "customer_001" }, _customers.AppCodeQueries);
+        Assert.Empty(_customers.AppCodeQueries);
 
-        // P-2：effectiveAppCode 单点喂给 JWT claim 与 UserDto.AppCode，二者不得漂移
         var token = DecodeToken(response.Token);
-        Assert.Equal("customer_001", GetClaim(token, "AppCode"));
-        Assert.Equal(response.User.AppCode, GetClaim(token, "AppCode"));
+        Assert.Null(GetClaim(token, "AppCode"));
+        Assert.Null(GetClaim(token, "CustomerId"));
+        Assert.Equal("1", GetClaim(token, CustomerScopeConstants.ClaimManagedCustomerIds));
         Assert.Equal(Roles.ADMIN, GetClaim(token, ClaimTypes.Role));
     }
 
-    [Fact(DisplayName = "TC-S1-03 存量库 /auth/me → 与登录响应同样回填（含 currentCustomer 与 permissions）")]
-    public async Task S1_LegacyDb_GetCurrentUser_BackfillsIdenticalFields()
+    [Fact(DisplayName = "TC-S1-03 admin /auth/me → 与登录响应同形（单值 null、集合一致、permissions 保留）")]
+    public async Task S1_LegacyDb_GetCurrentUser_AdminMatchesLogin()
     {
         // Arrange
         var customer = SeedCustomer(1, "customer_001", "海底捞");
         var user = SeedUser(11, "manager@haidilao.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: null, appCode: "customer_001");
+        SeedGrant(user.Id, customer.Id);
         await CommitAsync();
         var login = await LoginAsync(user.Email);
         _customers.AppCodeQueries.Clear(); // 隔离本次 /auth/me 的调用记录
 
-        // Act：GetUserDetailsAsync 的 Include(u => u.Customer) 在存量库下同样为 null
+        // Act
         var me = await _sut.GetCurrentUserAsync(user.Id);
 
         // Assert
         Assert.NotNull(me);
-        Assert.Equal(login.User.AppCode, me!.User.AppCode);
-        Assert.Equal(login.User.CustomerId, me.User.CustomerId);
-        Assert.Equal(login.User.CustomerName, me.User.CustomerName);
-        Assert.NotNull(me.CurrentCustomer);
-        Assert.Equal("customer_001", me.CurrentCustomer!.AppCode);
-        Assert.Equal(customer.Id, me.CurrentCustomer.Id);
+        Assert.Null(me!.User.AppCode);
+        Assert.Null(me.User.CustomerId);
+        Assert.Null(me.User.CustomerName);
+        Assert.Null(me.CurrentCustomer);
+        Assert.Equal(login.User.ManagedCustomerIds, me.User.ManagedCustomerIds);
+        Assert.Equal(new[] { customer.Id }, me.User.ManagedCustomerIds);
         Assert.Equal(login.User.Permissions, me.User.Permissions);
-        Assert.Equal(new[] { "customer_001" }, _customers.AppCodeQueries);
+        Assert.Empty(_customers.AppCodeQueries);
         Assert.Equal(new[] { Roles.ADMIN, Roles.ADMIN }, _permissions.RolesAsked);
     }
 
@@ -165,36 +174,38 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     // 二、S2 新库形态（CustomerId 有值，快速路径）
     // ─────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "TC-S2-01 新库登录 → CustomerId 命中且不重复反查 AppCode")]
-    public async Task S2_NewDb_Login_UsesCustomerIdFastPath()
+    [Fact(DisplayName = "TC-S2-01 admin 新库登录 → 旧单值被忽略，集合来自授权表且零反查")]
+    public async Task S2_NewDb_AdminLogin_IgnoresLegacySingleValues()
     {
         // Arrange
         var customer = SeedCustomer(1, "customer_001", "海底捞");
         var user = SeedUser(11, "manager@haidilao.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: customer.Id, appCode: "customer_001");
+        SeedGrant(user.Id, customer.Id);
         await CommitAsync();
 
         // Act
         var response = await LoginAsync(user.Email);
 
-        // Assert
-        Assert.Equal("customer_001", response.User.AppCode);
-        Assert.Equal<long?>(customer.Id, response.User.CustomerId);
-        Assert.Equal(customer.Name, response.User.CustomerName);
-        Assert.NotNull(response.CurrentCustomer);
-        Assert.Equal("customer_001", response.CurrentCustomer!.AppCode);
-        Assert.Equal(new[] { customer.Id }, _customers.IdQueries);
+        // Assert：防御性收口——即使库里残留 CustomerId/AppCode 也不采信。
+        Assert.Null(response.User.AppCode);
+        Assert.Null(response.User.CustomerId);
+        Assert.Null(response.User.CustomerName);
+        Assert.Null(response.CurrentCustomer);
+        Assert.Equal(new[] { customer.Id }, response.User.ManagedCustomerIds);
+        Assert.Empty(_customers.IdQueries);
         Assert.Empty(_customers.AppCodeQueries);
         Assert.NotEmpty(response.User.Permissions);
     }
 
-    [Fact(DisplayName = "TC-S2-02 新库 /auth/me → 导航属性命中，字段与登录响应一致")]
-    public async Task S2_NewDb_GetCurrentUser_UsesNavigationAndMatchesLogin()
+    [Fact(DisplayName = "TC-S2-02 admin 新库 /auth/me → 导航属性不被采信，字段与登录响应一致")]
+    public async Task S2_NewDb_GetCurrentUser_AdminMatchesLogin()
     {
         // Arrange
         var customer = SeedCustomer(1, "customer_001", "海底捞");
         var user = SeedUser(11, "manager@haidilao.com", Roles.ADMIN,
             isSuperAdmin: false, customerId: customer.Id, appCode: "customer_001");
+        SeedGrant(user.Id, customer.Id);
         await CommitAsync();
         var login = await LoginAsync(user.Email);
 
@@ -203,13 +214,13 @@ public sealed class AuthServiceTenantContextTests : IDisposable
 
         // Assert
         Assert.NotNull(me);
-        Assert.Equal(login.User.AppCode, me!.User.AppCode);
-        Assert.Equal(login.User.CustomerId, me.User.CustomerId);
-        Assert.Equal(login.User.CustomerName, me.User.CustomerName);
-        Assert.NotNull(me.CurrentCustomer);
-        Assert.Equal(login.CurrentCustomer!.AppCode, me.CurrentCustomer.AppCode);
+        Assert.Null(me!.User.AppCode);
+        Assert.Null(me.User.CustomerId);
+        Assert.Null(me.User.CustomerName);
+        Assert.Null(me.CurrentCustomer);
+        Assert.Equal(login.User.ManagedCustomerIds, me.User.ManagedCustomerIds);
         Assert.Equal(login.User.Permissions, me.User.Permissions);
-        Assert.Empty(_customers.AppCodeQueries); // user.Customer 已由 Include 加载，无需兜底
+        Assert.Empty(_customers.AppCodeQueries);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -279,25 +290,27 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     // 四、S4 兜底与边界（§5 S4 / S5）
     // ─────────────────────────────────────────────────────────────
 
-    [Fact(DisplayName = "TC-S4-01 AppCode 在 customers 表无对应行 → 不抛异常、字段按 P-2 回落")]
-    public async Task S4_UnmatchedAppCode_DoesNotThrowAndFallsBackGracefully()
+    [Fact(DisplayName = "TC-S4-01 admin 残留无效 AppCode → 不抛异常，单值仍全 null、集合按授权表回填")]
+    public async Task S4_AdminWithUnmatchedLegacyAppCode_FallsBackToManagedSet()
     {
         // Arrange
         SeedCustomer(1, "customer_001", "租户A"); // 与用户 AppCode 不匹配
         var user = SeedUser(12, "orphan@tenant.local", Roles.ADMIN,
             isSuperAdmin: false, customerId: null, appCode: "customer_999");
+        SeedGrant(user.Id, 1);
         await CommitAsync();
 
         // Act
         var response = await LoginAsync(user.Email);
 
-        // Assert：不抛异常，AppCode 仍来自 user.AppCode（与 JWT 保持一致）
-        Assert.Equal("customer_999", response.User.AppCode);
+        // Assert：admin 不再反查无效 AppCode，也不伪造租户身份。
+        Assert.Null(response.User.AppCode);
         Assert.Null(response.User.CustomerId);
         Assert.Null(response.User.CustomerName);
         Assert.Null(response.CurrentCustomer);
-        Assert.Equal(new[] { "customer_999" }, _customers.AppCodeQueries);
-        Assert.Equal("customer_999", GetClaim(DecodeToken(response.Token), "AppCode"));
+        Assert.Equal(new[] { 1L }, response.User.ManagedCustomerIds);
+        Assert.Empty(_customers.AppCodeQueries);
+        Assert.Null(GetClaim(DecodeToken(response.Token), "AppCode"));
         Assert.NotEmpty(response.User.Permissions);
     }
 
@@ -446,6 +459,18 @@ public sealed class AuthServiceTenantContextTests : IDisposable
         _db.Customers.Add(customer);
         return customer;
     }
+
+    /// <summary>为 admin 写入 user_customers 授权行（DB 权威），模拟生产 seed / 迁移回填结果。</summary>
+    private void SeedGrant(long userId, long customerId) => _db.UserCustomers.Add(new UserCustomer
+    {
+        UserId = userId,
+        CustomerId = customerId,
+        GrantedByUserId = null,
+        Source = CustomerScopeConstants.SourceSeed,
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        RevokedAt = null
+    });
 
     private User SeedUser(long id, string email, string role, bool isSuperAdmin,
         long? customerId, string? appCode)
