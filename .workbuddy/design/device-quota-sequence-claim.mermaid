@@ -1,0 +1,69 @@
+sequenceDiagram
+    autonumber
+    actor U as 租户/普通用户（AnShengManagementPage）
+    participant AC as AnShengController.Claim
+    participant DS as AnShengDiscoveryService.ClaimAsync
+    participant G as DeviceRegistrationGuard
+    participant Q as DeviceQuotaGuard
+    participant DB as AppDbContext / MySQL
+    participant P as IAnShengProbeService
+    participant MAP as MapClaimFailure
+    participant R as ApiResponse~ClaimAnShengDeviceResponse~
+
+    U->>AC: POST /ansheng/claim（AppCode=A 或超管指定目标租户）
+    AC->>AC: 解析 effectiveAppCode（:240-247，超管取 request.AppCode；否则 JWT）
+    AC->>DS: ClaimAsync(command{AppCode=effectiveAppCode, IsSuperAdmin})
+    DS->>DS: 步骤1-3.5 品类/标识/待认领/已认领/跨租户校验
+    DS->>G: 步骤4 CheckAsync(imei, includePendingPool:false)（:620）
+    G-->>DS: Conflict（ExistingDevice → ALREADY_CLAIMED）
+
+    rect rgb(255, 243, 224)
+    Note over DS,DB: ★ 配额早检插入点（:626 之后、:628 解析协议配置之前）<br/>在 5~10s 强制探测之前拦截，保护探测资源（R03/约束8）
+    DS->>Q: ReadAsync(db, appCode=A, ct)
+    Q->>DB: 读 Customer.MaxDeviceCount（显式 Where AppCode=A）
+    DB-->>Q: 命中 → limit；未命中 → ConfigMissing=true（决策8：不放行）
+    Q->>DB: COUNT devices WHERE AppCode=A（显式 Where）
+    DB-->>Q: current
+    Q-->>DS: QuotaSnapshot(current, limit, ConfigMissing)
+    end
+
+    alt ConfigMissing == true（找不到 Customer 配置，决策8 fail-closed）
+        DS-->>AC: Fail(DEVICE_QUOTA_CONFIG_MISSING, "目标租户配额配置缺失，已拒绝认领")
+        AC->>MAP: MapClaimFailure(payload)
+        MAP->>R: Fail(400, message, payload)
+        R-->>U: HTTP 200 + Code=400 + ErrorCode=DEVICE_QUOTA_CONFIG_MISSING；不探测
+        Note over DS: Error 日志含 AppCode=A，便于排查配置缺失
+    else limit>0 且 current>=limit（超限）
+        DS-->>AC: Fail(DEVICE_QUOTA_EXCEEDED, "已超出设备数量上限（当前 {current}/上限 {limit}）")
+        AC->>MAP: MapClaimFailure(payload)
+        MAP->>R: Fail(409, message, payload)（仿 ProbeConflict :318-319）
+        R-->>U: HTTP 200 + Code=409；不探测/不置 Probing/不建档/待认领池不变
+        Note over U: catch 已从业务响应体取文案（R09），认领弹窗红色错误条
+    else limit==0 或 current<limit 且配置存在（放行）
+        DS->>DB: 步骤5 解析协议配置（:628）
+        DS->>DB: 步骤6 置 Probing（:640-642）
+        DS->>P: 步骤7 强制探测 5~10s（:650，事务之外）
+        P-->>DS: probe 结果
+        DS->>DB: 步骤8-10 档案/能力字段；探测失败即终止（不建 Device）
+
+        rect rgb(232, 245, 233)
+        Note over DS,DB: 步骤11 事务内四步写入（:692-739，包在 CreateExecutionStrategy 内）
+        DS->>Q: ReadLockedAsync(db, appCode=A, ct)（★ 事务内复核，闭合 count→insert 并发窗口）
+        Q->>DB: SELECT MaxDeviceCount FOR UPDATE（行锁）+ COUNT WHERE AppCode=A
+        DB-->>Q: QuotaSnapshot(current2, limit2, ConfigMissing2)
+        Q-->>DS: snapshot2
+        end
+
+        alt 复核 ShouldReject（并发窗口内超限/配置缺失）
+            DS->>DB: Rollback（:741-754）
+            DS-->>AC: Fail(failCode, 文案) — failCode = ConfigMissing2 ? DEVICE_QUOTA_CONFIG_MISSING : DEVICE_QUOTA_EXCEEDED（局部标志位，§5.5）
+            AC->>MAP: → Code=400（配置缺失）/ 409（超限）
+            MAP-->>U: HTTP 200 + 400 或 409 + 红色错误条；不建档
+        else 复核通过
+            DS->>DB: ① Devices.Add(device) ② 回写待认领池 ③ 挂档案 ④ 建自动上报配置
+            DS->>DB: Commit（:739）
+            DS-->>AC: Ok(deviceId, ...)
+            AC->>R: Success(payload, "设备认领成功")
+            R-->>U: HTTP 200 + Code=200
+        end
+    end

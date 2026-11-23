@@ -1,0 +1,48 @@
+sequenceDiagram
+    autonumber
+    actor U as 超级管理员（前端 DevicesPage）
+    participant C as DevicesController.CreateDevice
+    participant S as DeviceService.CreateDeviceAsync
+    participant G as DeviceRegistrationGuard
+    participant Q as DeviceQuotaGuard
+    participant DB as AppDbContext / MySQL
+    participant R as ApiResponse~DeviceDto~
+
+    U->>C: POST 建档（TargetAppCode=T）
+    C->>C: 超管硬校验（ClaimTypes.Role == super_admin）
+    Note over C: 非超管 → Fail(403) 直接返回（既有逻辑）
+    C->>S: CreateDeviceAsync(request)
+    S->>S: 解析 effectiveAppCode = request.TargetAppCode（:263-265）
+    S->>G: CheckAsync(imei) + ApplyOnlinePresenceGate（:275-286）
+    G-->>S: Conflict（PendingPool/Existing/NoOnlinePresence → 既有 409）
+
+    rect rgb(232, 245, 233)
+    Note over S,DB: ★ 配额校验插入点（Guard 之后 :286、建档 :495 之前）<br/>count 与 insert 必须同一事务（原子性 R08）
+    S->>DB: BeginTransaction（包裹在 CreateExecutionStrategy().ExecuteAsync 内）
+    S->>Q: ReadLockedAsync(db, effectiveAppCode=T, ct)
+    Q->>DB: SELECT MaxDeviceCount FROM customers WHERE AppCode=T FOR UPDATE（行锁，防并发超卖）
+    DB-->>Q: 命中 → limit（0=不限 / >0=硬上限）；未命中 → ConfigMissing=true（决策8：不放行）
+    Q->>DB: SELECT COUNT(*) FROM devices WHERE AppCode=T（显式 Where，绕过全局过滤器冻结坑）
+    DB-->>Q: current
+    Q-->>S: QuotaSnapshot(current, limit, ConfigMissing)
+    end
+
+    alt ConfigMissing == true（找不到 Customer 配置，决策8 fail-closed）
+        S->>DB: Rollback（释放行锁）
+        S-->>C: throw DeviceRegistrationException(400, "目标租户配额配置缺失，已拒绝建档")
+        C->>R: Fail(400, ex.Message)
+        R-->>U: HTTP 200 + Code=400 + 文案；不建档、无 Device 行
+        Note over S: Error 日志含 AppCode=T，便于排查配置缺失
+    else limit>0 且 current>=limit（超限）
+        S->>DB: Rollback（释放行锁）
+        S-->>C: throw DeviceRegistrationException(409, "已超出设备数量上限（当前 {current}/上限 {limit}）")
+        C->>R: Fail(409, ex.Message)
+        R-->>U: HTTP 200 + Code=409 + 文案；弹窗保持打开，红色错误条显示文案
+        Note over U: 不建档、不产生 Device 行
+    else limit==0 或 current<limit 且配置存在（放行）
+        S->>DB: Devices.Add(newDevice) + SaveChangesAsync（:495-497，事务内）
+        S->>DB: Commit
+        S-->>C: DeviceDto
+        C->>R: Success(dto, "设备创建成功")
+        R-->>U: HTTP 200 + Code=200
+    end

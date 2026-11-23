@@ -1,0 +1,144 @@
+classDiagram
+    %% ===== 新增：设备配额守卫（纯静态、无状态，与 DeviceRegistrationGuard 同范式）=====
+    class DeviceQuotaGuard {
+        <<static>>
+        +ReadAsync(db: AppDbContext, effectiveAppCode: string, ct: CancellationToken) Task~QuotaSnapshot~
+        +ReadLockedAsync(db: AppDbContext, effectiveAppCode: string, ct: CancellationToken) Task~QuotaSnapshot~
+        +BuildExceededMessage(current: int, limit: int) string
+    }
+
+    class QuotaSnapshot {
+        +Current: int
+        +Limit: int
+        +IsUnlimited: bool
+        +Exceeded: bool
+    }
+
+    %% ===== 既有：注册冲突闸门（复用范式，本轮仅新增 Conflict.QuotaExceeded 可选）=====
+    class DeviceRegistrationGuard {
+        <<static>>
+        +CheckAsync(db, imei, includePendingPool, ct) Task~ConflictResult~
+        +ApplyOnlinePresenceGate(preliminary) ConflictResult
+    }
+    class DeviceRegistrationException {
+        +StatusCode: int
+        +Conflict: Conflict
+    }
+
+    %% ===== 数据模型 =====
+    class Customer {
+        +Id: long
+        +Name: string
+        +Code: string
+        +AppCode: string
+        +MaxDeviceCount: int
+        +MaxUserCount: int
+        +MaxAreaCount: int
+    }
+    class Device {
+        +Id: long
+        +AppCode: string
+        +SerialNumber: string
+    }
+
+    %% ===== DTO（新增 int? MaxDeviceCount + JsonIgnore WhenWritingNull）=====
+    class CustomerDto {
+        +Id: long
+        +Name: string
+        +AppCode: string
+        +DeviceCount: int
+        +ProjectCount: int
+        +MaxDeviceCount: int?  «仅超管赋值»
+    }
+    class CreateCustomerRequest {
+        +Name: string
+        +Code: string
+        +AppCode: string
+        +MaxDeviceCount: int?
+    }
+    class UpdateCustomerRequest {
+        +Name: string
+        +Status: string
+        +MaxDeviceCount: int?  «非超管静默忽略»
+    }
+
+    %% ===== 权限（常量保留，从角色权限集移除）=====
+    class Permissions {
+        <<static>>
+        +CREATE_CUSTOMERS: string
+        +All: List~string~  «唯一派生源，保持不变»
+    }
+    class Roles {
+        <<static>>
+        +SUPER_ADMIN: string
+        +IsSuperAdmin(role: string) bool
+        +GetRolePermissions(role: string) List~string~
+        +GetAdminPermissions() List~string~  «新增：移除 CREATE_CUSTOMERS»
+        +GetCustomerAdminPermissions() List~string~  «复用 GetAdminPermissions»
+    }
+
+    %% ===== 入口一：直接新增 =====
+    class DeviceService {
+        -_dbContext: AppDbContext
+        +CreateDeviceAsync(request: CreateDeviceRequest) Task~DeviceDto~
+    }
+    class DevicesController {
+        +CreateDevice(request) Task~ActionResult~  «超管硬校验 → 409 映射»
+    }
+
+    %% ===== 入口二：安圣认领 =====
+    class AnShengDiscoveryService {
+        +ClaimAsync(command: AnShengClaimCommand, ct) Task~AnShengClaimResult~
+        -步骤4.5: 配额早检（:626 后）
+        -步骤11: 事务内配额复核
+    }
+    class AnShengClaimResult {
+        +Success: bool
+        +ErrorCode: string
+        +ErrorMessage: string
+        +Fail(code, message) AnShengClaimResult
+    }
+    class AnShengClaimErrorCodes {
+        <<static>>
+        +DEVICE_QUOTA_EXCEEDED: string  «新增»
+        +ProbeConflict: string
+        +CrossTenant: string
+    }
+    class AnShengController {
+        +Claim(request, ct) Task~ActionResult~
+        -MapClaimFailure(payload) ActionResult  «新增 409 映射»
+    }
+
+    %% ===== 响应封装（HTTP 恒 200，业务看 Code）=====
+    class ApiResponse~T~ {
+        +Code: int
+        +Message: string
+        +Data: T
+        +Success(data, message) ApiResponse~T~
+        +Fail(code, message, data) ApiResponse~T~
+    }
+
+    %% ===== 关系 =====
+    DeviceService ..> DeviceQuotaGuard : 直接新增事务内 ReadLockedAsync
+    DeviceService ..> DeviceRegistrationGuard : 复用去重闸门
+    DeviceService ..> DeviceRegistrationException : 超限/冲突抛出
+    AnShengDiscoveryService ..> DeviceQuotaGuard : 早检 ReadAsync + 事务内复核 ReadLockedAsync
+    AnShengDiscoveryService ..> DeviceRegistrationGuard : 复用 IMEI 闸门
+    AnShengDiscoveryService --> AnShengClaimResult : 返回 Fail(DEVICE_QUOTA_EXCEEDED)
+    AnShengClaimResult ..> AnShengClaimErrorCodes : 错误码
+    DevicesController --> DeviceService : 调用
+    DevicesController ..> DeviceRegistrationException : catch → Code=409
+    AnShengController --> AnShengDiscoveryService : 调用
+    AnShengController ..> AnShengClaimErrorCodes : MapClaimFailure → Code=409
+    DeviceQuotaGuard ..> QuotaSnapshot : 产出
+    DeviceQuotaGuard ..> AppDbContext : 显式 Where(AppCode) + FOR UPDATE
+    DeviceQuotaGuard ..> Customer : 读 MaxDeviceCount
+    DeviceQuotaGuard ..> Device : Count(Where AppCode)
+    CustomersController ..> CustomerDto : 仅超管填充 MaxDeviceCount
+    CustomersController ..> CreateCustomerRequest : 默认 0
+    CustomersController ..> UpdateCustomerRequest : 非超管忽略配额字段
+    Roles ..> Permissions : All 为派生源
+    Roles ..> DeviceService : IsSuperAdmin 硬校验
+    Roles ..> CustomersController : IsSuperAdmin 创建硬校验
+    ApiResponse~T~ <.. DevicesController : 200 + Code
+    ApiResponse~T~ <.. AnShengController : 200 + Code
