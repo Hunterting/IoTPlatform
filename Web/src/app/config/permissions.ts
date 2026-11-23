@@ -341,7 +341,8 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
       PERMISSIONS.VIEW_DASHBOARD,
       // 客户
       PERMISSIONS.VIEW_CUSTOMERS,
-      PERMISSIONS.CREATE_CUSTOMERS,
+      // 配额需求 R01：仅超级管理员可创建客户/租户，admin 不再持有 CREATE_CUSTOMERS
+      // （常量与权限清单条目保留，超管经 Object.values(PERMISSIONS) 仍持有）。
       PERMISSIONS.UPDATE_CUSTOMERS,
       PERMISSIONS.DELETE_CUSTOMERS,
       // 项目

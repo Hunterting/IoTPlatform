@@ -401,12 +401,13 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 
     // ────────────────────────────── 创建：每客户独立 AppCode ──────────────────────────────
 
-    [Fact(DisplayName = "AC-10 admin POST 两个全新 AppCode → 均 200 且各自独立落库")]
+    [Fact(DisplayName = "AC-10 超管 POST 两个全新 AppCode → 均 200 且各自独立落库")]
     public async Task AC10_Admin_Create_TwoDistinctAppCodes_PersistedIndependently()
     {
-        // Arrange：admin 自身 claim 是 TEST；若实现把 effectiveAppCode 强制成自身 claim，
-        //          两次都会撞「TEST 已存在」返回 400 → 用例变红。
-        var client = Client.AsAdmin();
+        // Arrange：配额需求 R01 后创建客户仅 super_admin 可达（admin 直调返回 403），
+        //          故改用超管验证「AppCode 采信请求体、每客户独立」这一原有意图。
+        //          若实现把 effectiveAppCode 强制成自身 claim，撞「system 已存在」→ 用例变红。
+        var client = Client.AsSuperAdmin();
 
         // Act
         var first = await client.PostAsJsonAsync(
@@ -437,11 +438,11 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
             "两个全新 AppCode 必须真实落库，互不相同");
     }
 
-    [Fact(DisplayName = "AC-11 重复 AppCode → 400「客户代码或应用代码已存在」")]
+    [Fact(DisplayName = "AC-11 超管重复 AppCode → 400「客户代码或应用代码已存在」")]
     public async Task AC11_Admin_Create_DuplicateAppCode_Returns400()
     {
-        // Arrange
-        var client = Client.AsAdmin();
+        // Arrange：R01 后仅超管可创建客户，改用超管验证唯一性分支。
+        var client = Client.AsSuperAdmin();
         var first = await client.PostAsJsonAsync(
             CustomersUrl, NewCreateBody("QA-首次", FreshCode, FreshAppCode));
         var firstBody = await ReadAsync<ApiResponse<CustomerDto>>(first);
@@ -458,11 +459,11 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         body.Message.Should().Contain("已存在");
     }
 
-    [Fact(DisplayName = "AC-12 空 AppCode → 400「应用代码不能为空」")]
+    [Fact(DisplayName = "AC-12 超管空 AppCode → 400「应用代码不能为空」")]
     public async Task AC12_Admin_Create_EmptyAppCode_Returns400()
     {
-        // Arrange
-        var client = Client.AsAdmin();
+        // Arrange：R01 后仅超管可创建客户，改用超管验证空 AppCode 分支。
+        var client = Client.AsSuperAdmin();
 
         // Act
         var body = await ReadEnvelopeAsync(await client.PostAsJsonAsync(
@@ -487,46 +488,44 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         body.Code.Should().Be(403, "普通角色不得为他租户创建客户");
     }
 
-    [Fact(DisplayName = "AC-13b 普通写角色带他租户 AppCode 创建 → 403「无权为该租户创建客户」")]
+    [Fact(DisplayName = "AC-13b 普通写角色带他租户 AppCode 创建 → 403（R01 超管硬校验）")]
     public async Task AC13b_TenantWriter_Create_WithForeignAppCode_HitsGuard()
     {
-        // Arrange：该角色有 create_customers，能穿过过滤器直达控制器 :222；
-        //          若 effectiveAppCode 直接采信前端，这里会 200 且落库成他租户归属。
+        // Arrange：配额需求 R01 / 决策 1 后，即使该角色持有 create_customers，
+        //          CreateCustomer 顶部 Roles.IsSuperAdmin() 硬校验仍先行拒绝（403），
+        //          不得再期待命中旧的「无权为该租户创建客户」纵深防御分支。
         var client = Client.AsRole(TenantWriterRole, SharedTestConstants.AppCode);
 
         // Act
+        var createCode = $"{_prefix}_cwriter";
         var body = await ReadEnvelopeAsync(await client.PostAsJsonAsync(
-            CustomersUrl, NewCreateBody("QA-writer越权建", $"{_prefix}_cwriter", OtherAppCodeA)));
+            CustomersUrl, NewCreateBody("QA-writer越权建", createCode, OtherAppCodeA)));
 
         // Assert
-        body.Code.Should().Be(403);
-        body.Message.Should().Be("无权为该租户创建客户", "必须命中控制器的纵深防御分支");
+        body.Code.Should().Be(403, "R01：非超管不得创建客户，含绕过前端直调");
+        body.Message.Should().Be("仅超级管理员可创建客户/租户。");
+
+        var stored = await QueryDbAsync(db => db.Customers.AnyAsync(c => c.Code == createCode));
+        stored.Should().BeFalse("被拒请求不得入库");
     }
 
-    [Fact(DisplayName = "AC-13c 普通写角色空 AppCode 创建 → 200 且强制落库为自身 claim")]
+    [Fact(DisplayName = "AC-13c 普通写角色空 AppCode 创建 → 403 且无入库（R01 超管硬校验）")]
     public async Task AC13c_TenantWriter_Create_EmptyAppCode_ForcedToOwnClaim()
     {
-        // Arrange：把该角色的 claim 设成一个库中不存在的全新 AppCode，
-        //          请求体 AppCode 留空 ⇒ 控制器必须回落到自身 claim（不采信前端）。
+        // Arrange：R01 后普通写角色不再具备建客能力，即使请求体 AppCode 留空也不得建档。
         var client = Client.AsRole(TenantWriterRole, WriterAppCode);
 
         // Act
-        var response = await client.PostAsJsonAsync(
-            CustomersUrl, NewCreateBody("QA-writer自建", $"{_prefix}_cself", string.Empty));
+        var createCode = $"{_prefix}_cself";
+        var body = await ReadEnvelopeAsync(await client.PostAsJsonAsync(
+            CustomersUrl, NewCreateBody("QA-writer自建", createCode, string.Empty)));
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await ReadAsync<ApiResponse<CustomerDto>>(response);
-        body.Should().NotBeNull();
-        body!.Code.Should().Be(200, $"普通角色应能用自身 claim 创建客户，实际：{body.Message}");
-        body.Data.Should().NotBeNull();
-        body.Data!.AppCode.Should().Be(WriterAppCode, "effectiveAppCode 必须取自身 claim，而非前端空值");
+        body.Code.Should().Be(403, "R01：非超管即使空 AppCode 也不得创建客户");
+        body.Message.Should().Be("仅超级管理员可创建客户/租户。");
 
-        var stored = await QueryDbAsync(db => db.Customers
-            .Where(c => c.Code == $"{_prefix}_cself")
-            .Select(c => c.AppCode)
-            .FirstOrDefaultAsync());
-        stored.Should().Be(WriterAppCode, "落库归属同样必须是自身 claim");
+        var stored = await QueryDbAsync(db => db.Customers.AnyAsync(c => c.Code == createCode));
+        stored.Should().BeFalse("被拒请求不得入库");
     }
 
     // ────────────────────────────── 辅助 ──────────────────────────────

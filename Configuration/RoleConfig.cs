@@ -59,6 +59,10 @@ public static class Roles
         // 移除API配置权限
         permissions.Remove(Permissions.VIEW_API_CONFIG);
         permissions.Remove(Permissions.UPDATE_API_CONFIG);
+        // 租户设备配额需求 R01：仅超级管理员可创建客户/租户。
+        // customer_admin 复用本方法，故一并收权；Permissions.All 为形如 new List 的属性，
+        // 每次调用返回新实例，Remove 不会污染超管权限（常量本身亦保留）。
+        permissions.Remove(Permissions.CREATE_CUSTOMERS);
         return permissions;
     }
 

@@ -88,4 +88,22 @@ public sealed class RoleConfigViewLogsTests
         Assert.Empty(perms);
         Assert.False(perms.Contains(Permissions.VIEW_LOGS));
     }
+
+    [Fact(DisplayName = "A-05 建客权限仅超管持有（设备配额需求 R01，防权限漂移）")]
+    public void CreateCustomers_OnlySuperAdminHoldsIt()
+    {
+        // admin 与 customer_admin 必须被收权；超管的 Permissions.All 派生源必须保持完整。
+        Assert.DoesNotContain(Permissions.CREATE_CUSTOMERS, Roles.GetAdminPermissions());
+        Assert.DoesNotContain(Permissions.CREATE_CUSTOMERS, Roles.GetCustomerAdminPermissions());
+        Assert.DoesNotContain(Permissions.CREATE_CUSTOMERS, Roles.GetRolePermissions(Roles.ADMIN));
+        Assert.DoesNotContain(Permissions.CREATE_CUSTOMERS, Roles.GetRolePermissions(Roles.CUSTOMER_ADMIN));
+
+        Assert.Contains(Permissions.CREATE_CUSTOMERS, Permissions.All);
+        Assert.Contains(Permissions.CREATE_CUSTOMERS, Roles.GetSuperAdminPermissions());
+        Assert.Contains(Permissions.CREATE_CUSTOMERS, Roles.GetRolePermissions(Roles.SUPER_ADMIN));
+
+        // 额外守护：GetAdminPermissions 的 Remove 不得污染超管全量清单（All 每次返回新实例）。
+        _ = Roles.GetAdminPermissions();
+        Assert.Contains(Permissions.CREATE_CUSTOMERS, Permissions.All);
+    }
 }
