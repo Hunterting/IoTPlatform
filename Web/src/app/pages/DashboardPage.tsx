@@ -1,46 +1,25 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/app/contexts/AuthContext';
-import { useDevices } from '@/app/contexts/DeviceContext';
-import { useArea, Area } from '@/app/contexts/AreaContext';
+import { useDevices, type DeviceItem } from '@/app/contexts/DeviceContext';
+import { useArea, type Area } from '@/app/contexts/AreaContext';
+import { PieChart, Pie, Cell } from 'recharts';
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend, AreaChart, Area as RechartsArea
-} from 'recharts';
-import { Cloud, ChevronDown, User, LogOut } from 'lucide-react';
+  Cloud, ChevronDown, ChevronRight, User, LogOut, Building2, Folder, File, MapPin
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   dashboardApi,
   type AlertDto,
   type AlertSummaryDto,
-  type MonitoringDataDto,
 } from '@/app/services/api/dashboardApi';
+import { customerApi } from '@/app/services/api/customerApi';
+import { areaApi } from '@/app/services/api/areaApi';
+import { deviceApi } from '@/app/services/api/deviceApi';
+import {
+  adaptCustomerDtoToCustomer, adaptAreaDtoToArea, adaptDeviceDtoToDeviceItem
+} from '@/app/services/adapters';
 
-// ─── Real backend data helpers ───────────────────────────────────────────────
-// 解析设备原始上报里被序列化成 JSON 字符串的字段（tasks / EMdata / slots）。
-function tryParseJson(s: unknown): unknown | null {
-  if (typeof s !== 'string') return null;
-  const t = s.trim();
-  if (!(t.startsWith('[') || t.startsWith('{'))) return null;
-  try { return JSON.parse(t); } catch { return null; }
-}
-function firstArrayItem(s: unknown): Record<string, unknown> | null {
-  const parsed = tryParseJson(s);
-  if (Array.isArray(parsed) && parsed.length > 0 && parsed[0] && typeof parsed[0] === 'object') {
-    return parsed[0] as Record<string, unknown>;
-  }
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    return parsed as Record<string, unknown>;
-  }
-  return null;
-}
-function toNum(v: unknown): number | null {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string' && v.trim() !== '') {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
+// ─── Alert view helpers ──────────────────────────────────────────────────────
 function fmtHHmm(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '--:--';
@@ -82,34 +61,6 @@ function toAlertEventView(alert: AlertDto): AlertEventView {
   };
 }
 
-/** 把真实监控记录按时间升序排列，构造三条曲线的数据点 */
-interface ChartPoint {
-  t: string;
-  temperature: number | null;
-  signal: number | null;
-  power: number | null;
-  current: number | null;
-  emPower: number | null;
-}
-function buildChartPoints(records: MonitoringDataDto[], limit = 12): ChartPoint[] {
-  const sorted = [...records].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
-  return sorted.slice(-limit).map((r) => {
-    const sv = (r.sensorValues || {}) as Record<string, unknown>;
-    const task = firstArrayItem(sv.tasks);
-    const em = firstArrayItem(sv.EMdata);
-    return {
-      t: fmtHHmm(r.timestamp),
-      temperature: toNum(sv.temperature),
-      signal: toNum(sv.signal),
-      power: task ? toNum(task.power) : null,
-      current: task ? toNum(task.current) : null,
-      emPower: em ? toNum(em.p) : null,
-    };
-  });
-}
-
 // ─── Real-time clock ─────────────────────────────────────────────────────────
 function useClock() {
   const [now, setNow] = useState(new Date());
@@ -142,7 +93,7 @@ function Panel({ title, extra, children, className = '', style }: {
         </div>
         {extra}
       </div>
-      <div className="flex-1 p-3">{children}</div>
+      <div className="flex-1 min-h-0 p-3">{children}</div>
     </div>
   );
 }
@@ -521,6 +472,90 @@ function DeviceDonut({ online, offline }: { online: number; offline: number }) {
   );
 }
 
+// ─── 右列区域管理树（复用 AreaManagementPage.TreeItem 的展开/选中交互）─────────
+function DashboardAreaTreeNode({
+  area, level, selectedId, onSelect,
+}: {
+  area: Area;
+  level: number;
+  selectedId: string | null;
+  onSelect: (area: Area) => void;
+}) {
+  const hasChildren = (area.children?.length ?? 0) > 0;
+  const [expanded, setExpanded] = useState(level < 2);
+  const active = selectedId !== null && String(selectedId) === String(area.id);
+  const icon = area.type === 'level1'
+    ? <Building2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#ffcc66' }} />
+    : area.type === 'level3'
+      ? <File className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#00c3ff' }} />
+      : <Folder className="w-3.5 h-3.5 flex-shrink-0" style={{ color: '#7dd3fc' }} />;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          if (hasChildren) setExpanded(v => !v);
+          onSelect(area);
+        }}
+        className="w-full flex items-center gap-1.5 py-1 pr-1.5 rounded text-left transition-colors"
+        style={{
+          paddingLeft: `${level * 14 + 4}px`,
+          background: active ? 'rgba(0,195,255,0.16)' : 'transparent',
+          color: active ? '#8ee9ff' : '#a8c8e0',
+        }}
+        title={area.name}
+      >
+        <span className="w-3 h-3 flex items-center justify-center flex-shrink-0">
+          {hasChildren
+            ? (expanded
+                ? <ChevronDown className="w-3 h-3" />
+                : <ChevronRight className="w-3 h-3" />)
+            : null}
+        </span>
+        {icon}
+        <span className="text-xs truncate flex-1">{area.name}</span>
+        {(area.deviceCount ?? 0) > 0 && (
+          <span className="text-xs flex-shrink-0" style={{ color: active ? '#8ee9ff' : '#5a8ab0' }}>
+            {area.deviceCount}台
+          </span>
+        )}
+      </button>
+      {hasChildren && expanded && (
+        <div>
+          {area.children!.map(child => (
+            <DashboardAreaTreeNode
+              key={child.id}
+              area={child}
+              level={level + 1}
+              selectedId={selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 把后端扁平区域列表构建为层级树（与 AreaContext.buildAreaTree 同语义，模块级纯函数避免 effect 依赖抖动）。 */
+function buildDashboardAreaTree(list: Area[]): Area[] {
+  const map = new Map<string, Area>();
+  list.forEach(a => map.set(String(a.id), { ...a, children: [] }));
+  const roots: Area[] = [];
+  list.forEach(a => {
+    const node = map.get(String(a.id))!;
+    const parent = a.parentId != null ? map.get(String(a.parentId)) : undefined;
+    if (parent && parent !== node) {
+      parent.children = parent.children ?? [];
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+  return roots;
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaName: string) => void }) {
   const { currentCustomer, customers, user, logout, switchCustomer } = useAuth();
@@ -535,8 +570,24 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
   const [alertSummary, setAlertSummary] = useState<AlertSummaryDto | null>(null);
   const [alertEvents, setAlertEvents] = useState<AlertEventView[]>([]);
   const [workOrderCount, setWorkOrderCount] = useState(0);
-  const [chartPoints, setChartPoints] = useState<ChartPoint[]>([]);
   const [panelError, setPanelError] = useState<Record<string, string>>({});
+
+  // ── M09 三角色工作台联动状态 ──────────────────────────────────────────────
+  // 超管 / admin：右侧客户列表点选客户；下级：客户唯一，自动解析为自己的客户。
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  // admin 的权威客户集合来自 GET /customers/accessible（DB 为准），失败时回退 token 快照。
+  const [accessibleCustomers, setAccessibleCustomers] = useState<any[] | null>(null);
+  const [areaTree, setAreaTree] = useState<Area[]>([]);
+  const [areaError, setAreaError] = useState('');
+  const [areaLoading, setAreaLoading] = useState(false);
+  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
+  const [selectedAreaName, setSelectedAreaName] = useState('');
+  const [areaDevices, setAreaDevices] = useState<DeviceItem[]>([]);
+  const [deviceError, setDeviceError] = useState('');
+  const [deviceLoading, setDeviceLoading] = useState(false);
+
+  const isSuperAdmin = user?.role === 'super_admin';
+  const isTenantAdmin = user?.role === 'admin';
 
   useEffect(() => {
     let cancelled = false;
@@ -561,14 +612,14 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
         })
         .catch(() => markError('summary', '无权限或网络错误'));
 
-      // 预警事件列表（优先待处理，空则取最近）
-      dashboardApi.getAlerts({ page: 1, pageSize: 6, status: 'pending' })
+      // 预警事件列表（优先待处理，空则取最近）；预警事件铺满左列后适当增大每页条数
+      dashboardApi.getAlerts({ page: 1, pageSize: 16, status: 'pending' })
         .then(async (res) => {
           if (cancelled) return;
           let items = res.code === 200 && res.data ? (res.data.items || []) : [];
           if (items.length === 0) {
             try {
-              const fallback = await dashboardApi.getAlerts({ page: 1, pageSize: 6 });
+              const fallback = await dashboardApi.getAlerts({ page: 1, pageSize: 16 });
               items = fallback.code === 200 && fallback.data ? (fallback.data.items || []) : [];
             } catch { /* 保持空 */ }
           }
@@ -584,15 +635,6 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
           else markError('workorders', res.message || '工单数据不可用');
         })
         .catch(() => markError('workorders', '无权限或网络错误'));
-
-      // 环境/变频排风/能耗曲线：真实监控记录
-      dashboardApi.getRecentMonitoringData(50)
-        .then((res) => {
-          if (cancelled) return;
-          if (res.code === 200) { setChartPoints(buildChartPoints(res.data || [])); clearError('monitor'); }
-          else markError('monitor', res.message || '监控数据不可用');
-        })
-        .catch(() => markError('monitor', '无权限或网络错误'));
     };
 
     load();
@@ -601,19 +643,95 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
   }, []);
 
   // Stats（真实设备列表，无任何假兜底）
-  const totalDevices   = devices.length;
   const onlineDevices  = devices.filter(d => d.status === 'online' || d.status === 'warning').length;
   const offlineDevices = devices.filter(d => d.status === 'offline').length;
-  const warningDevices = devices.filter(d => d.status === 'warning').length;
 
-  // 超级管理员合计所有客户项目数；租户账号只合计本客户项目数
-  const isSuperAdmin = user?.role === 'super_admin';
+  // 选中区域的设备统计（中列「设备情况」直接消费）
+  const areaOnline  = areaDevices.filter(d => d.status === 'online' || d.status === 'warning').length;
+  const areaOffline = areaDevices.filter(d => d.status === 'offline').length;
+  const areaWarning = areaDevices.filter(d => d.status === 'warning').length;
 
-  // 可见客户列表
-  const visibleCustomers = isSuperAdmin
+  // ── admin 授权客户：权威接口优先，token 快照仅作二次防御 ──────────────────
+  // 后端 GET /customers/accessible 以 DB 授权为准，超管追加客户后 admin 刷新即可看到；
+  // 接口失败/无权限时退回登录快照 managedCustomerIds，绝不越权放大范围。
+  useEffect(() => {
+    if (!isTenantAdmin) { setAccessibleCustomers(null); return; }
+    let cancelled = false;
+    customerApi.getAccessibleCustomers()
+      .then((res) => {
+        if (cancelled) return;
+        setAccessibleCustomers(res.data.code === 200
+          ? (res.data.data ?? []).map(adaptCustomerDtoToCustomer)
+          : null);
+      })
+      .catch(() => { if (!cancelled) setAccessibleCustomers(null); });
+    return () => { cancelled = true; };
+  }, [isTenantAdmin]);
+
+  // 可见客户列表：超管全部 / admin 授权集合 / 下级单客户（下级分支逐字保留）
+  const visibleCustomers: any[] = isSuperAdmin
     ? customers
+    : isTenantAdmin
+      ? (accessibleCustomers ?? customers.filter(c => (user?.managedCustomerIds ?? []).map(String).includes(String(c.id))))
     // F4：c.id / customerId 运行时是 number 而 TS 声明为 string，统一 String() 归一避免静默失配
     : customers.filter(c => String(c.id) === String(user?.customerId ?? currentCustomer?.id));
+
+  // 当前聚焦客户：超管/admin 由右侧列表点选；下级客户唯一，直接取自身 customerId。
+  const focusedCustomerId = isSuperAdmin || isTenantAdmin
+    ? selectedCustomerId
+    : String(user?.customerId ?? currentCustomer?.id ?? visibleCustomers[0]?.id ?? '');
+  const focusedCustomer = visibleCustomers.find(c => String(c.id) === String(focusedCustomerId)) ?? null;
+
+  // 点客户 → 拉取该客户区域树（后端按身份过滤；admin 无 currentCustomer 亦可取授权客户区域）
+  useEffect(() => {
+    setSelectedAreaId(null);
+    setSelectedAreaName('');
+    setAreaTree([]);
+    setAreaDevices([]);
+    setAreaError('');
+    setDeviceError('');
+    if (!focusedCustomerId) return;
+    let cancelled = false;
+    setAreaLoading(true);
+    // 后端 GET /areas 只按身份做范围收敛（超管全量/admin 授权集/下级单租户），
+    // 并不接受 customerId 查询参数；因此在服务端已鉴权的列表上按 customerId 前端收窄。
+    areaApi.getAreas(1, 200)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data.code === 200) {
+          const all = (res.data.data?.items ?? []).map(adaptAreaDtoToArea);
+          let scoped = all.filter(a => a.customerId != null && String(a.customerId) === String(focusedCustomerId));
+          // 兼容历史未写 CustomerId、但有 AppCode 的区域记录
+          if (scoped.length === 0 && focusedCustomer?.appCode) {
+            scoped = all.filter(a => a.appCode === focusedCustomer.appCode);
+          }
+          setAreaTree(buildDashboardAreaTree(scoped));
+        } else {
+          setAreaError(res.data.message || '区域数据不可用');
+        }
+      })
+      .catch(() => { if (!cancelled) setAreaError('区域数据不可用或无权限'); })
+      .finally(() => { if (!cancelled) setAreaLoading(false); });
+    return () => { cancelled = true; };
+  }, [focusedCustomerId]);
+
+  // 点区域 → 拉取该区域设备（真实端点 GET /devices/area/{areaId}）
+  useEffect(() => {
+    setAreaDevices([]);
+    setDeviceError('');
+    if (!selectedAreaId) return;
+    let cancelled = false;
+    setDeviceLoading(true);
+    deviceApi.getDevicesByArea(selectedAreaId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data.code === 200) setAreaDevices((res.data.data ?? []).map(adaptDeviceDtoToDeviceItem));
+        else setDeviceError(res.data.message || '区域设备不可用');
+      })
+      .catch(() => { if (!cancelled) setDeviceError('区域设备不可用或无权限'); })
+      .finally(() => { if (!cancelled) setDeviceLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedAreaId]);
 
   const totalCustomers = visibleCustomers.length;
 
@@ -637,44 +755,14 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
     return lvl2.slice(0, 8);
   }, [areas]);
 
-  // ── 真实曲线数据（全部来自 /monitoring/data 的设备上报，绝不编造数值） ──
-  // 环境监测：温度 / 信号强度（当前设备上报的真实指标）
-  const envData = chartPoints.map((p) => ({
-    t: p.t,
-    temperature: p.temperature,
-    signal: p.signal,
-  }));
-  const hasEnvData = envData.some(d => d.temperature !== null || d.signal !== null);
-
-  // 变频排风：tasks[].power（功率）/ tasks[].current（电流）
-  const fanData = chartPoints.map((p) => ({ t: p.t, power: p.power, current: p.current }));
-  const hasFanData = fanData.some(d => d.power !== null || d.current !== null);
-
-  // 能耗统计：EMdata[].p（瞬时功率），按采样时刻展示
-  const energyData = chartPoints
-    .filter((p) => p.emPower !== null)
-    .map((p) => ({ d: p.t, v: p.emPower as number }));
-  const hasEnergyData = energyData.length > 0;
-
   // 运营情况三圈（真实告警汇总，空即为 0）
   const alarmCount = alertSummary?.pendingAlerts ?? 0;
   const faultCount = alertSummary?.criticalAlerts ?? 0;
   const workOrderStat = workOrderCount;
 
-  const [envTab, setEnvTab] = useState<'today' | '7days' | 'month'>('today');
-  const [projectFilter] = useState('项目筛选');
-
   const dateStr = `${now.getFullYear()}年${pad(now.getMonth() + 1)}月${pad(now.getDate())}日`;
   const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   const weekStr = WEEK_DAYS[now.getDay()];
-
-  const chartTooltipStyle = {
-    backgroundColor: '#021428',
-    border: '1px solid rgba(0,195,255,0.3)',
-    borderRadius: '4px',
-    color: '#8ecfff',
-    fontSize: '11px',
-  };
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ background: '#030d1f', color: '#c8e6f8' }}>
@@ -834,68 +922,31 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
             )}
           </Panel>
 
-          {/* 预警事件 */}
-          <Panel title="预警事件" className="flex-1">
-            <div className="space-y-1">
-              <div className="grid grid-cols-3 gap-1 mb-1 px-1">
+          {/* 预警事件：删除「变频排风」后铺满左列剩余高度，列表自身滚动 */}
+          <Panel title="预警事件" className="flex-1 h-full flex flex-col"
+            extra={<span className="text-xs" style={{ color: '#5a8ab0' }}>{alertEvents.length} 条</span>}>
+            <div className="flex flex-col h-full min-h-0">
+              <div className="grid grid-cols-3 gap-1 mb-1 px-1 flex-shrink-0">
                 <span className="text-xs text-gray-500">时间</span>
                 <span className="text-xs text-gray-500">内容</span>
                 <span className="text-xs text-gray-500">处理进度</span>
               </div>
-              {alertEvents.length > 0 ? (
-                alertEvents.map((ev, i) => (
-                  <div key={i} className="grid grid-cols-3 gap-1 px-1 py-0.5 rounded"
-                    style={{ background: 'rgba(0,195,255,0.05)', borderLeft: `2px solid ${ev.color}` }}>
-                    <span className="text-xs text-gray-400">{ev.time}</span>
-                    <span className="text-xs text-gray-300 truncate">{ev.content}</span>
-                    <span className="text-xs" style={{ color: ev.color }}>{ev.status}</span>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-0.5">
+                {alertEvents.length > 0 ? (
+                  alertEvents.map((ev, i) => (
+                    <div key={i} className="grid grid-cols-3 gap-1 px-1 py-0.5 rounded"
+                      style={{ background: 'rgba(0,195,255,0.05)', borderLeft: `2px solid ${ev.color}` }}>
+                      <span className="text-xs text-gray-400">{ev.time}</span>
+                      <span className="text-xs text-gray-300 truncate">{ev.content}</span>
+                      <span className="text-xs" style={{ color: ev.color }}>{ev.status}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-4 text-xs" style={{ color: panelError.alerts ? '#ffaa00' : '#556' }}>
+                    {panelError.alerts || '暂无待处理预警'}
                   </div>
-                ))
-              ) : (
-                <div className="text-center py-4 text-xs" style={{ color: panelError.alerts ? '#ffaa00' : '#556' }}>
-                  {panelError.alerts || '暂无待处理预警'}
-                </div>
-              )}
-            </div>
-          </Panel>
-
-          {/* 变频排风 */}
-          <Panel title="变频排风"
-            extra={
-              <button className="flex items-center gap-1 text-xs px-2 py-0.5 rounded"
-                style={{ color: '#8ecfff', border: '1px solid rgba(0,195,255,0.3)', background: 'rgba(0,195,255,0.05)' }}>
-                {projectFilter} <ChevronDown className="w-3 h-3" />
-              </button>
-            }
-            className="flex-1">
-            <div style={{ height: 110 }}>
-              {hasFanData ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={fanData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="fanPower" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#ffaa00" stopOpacity="0.4" />
-                        <stop offset="95%" stopColor="#ffaa00" stopOpacity="0.0" />
-                      </linearGradient>
-                      <linearGradient id="fanWind" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%"  stopColor="#00c3ff" stopOpacity="0.4" />
-                        <stop offset="95%" stopColor="#00c3ff" stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
-                    <XAxis dataKey="t" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                    <YAxis yAxisId="l" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                    <YAxis yAxisId="r" orientation="right" stroke="#445" tick={{ fill: '#556', fontSize: 9 }} />
-                    <Tooltip contentStyle={chartTooltipStyle} />
-                    <RechartsArea key="fan-power" yAxisId="l" type="monotone" dataKey="power" stroke="#ffaa00" strokeWidth={1.5} fill="url(#fanPower)" name="功率(kW)" connectNulls />
-                    <RechartsArea key="fan-current" yAxisId="r" type="monotone" dataKey="current" stroke="#00c3ff" strokeWidth={1.5} fill="url(#fanWind)" name="电流(A)" connectNulls />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
-                  {panelError.monitor || '暂无设备功率/电流上报数据'}
-                </div>
-              )}
+                )}
+              </div>
             </div>
           </Panel>
         </div>
@@ -932,120 +983,165 @@ export function DashboardPage({ onNavigateToArea }: { onNavigateToArea?: (areaNa
               devices={devices}
               areas={areas}
               onZoneClick={(area) => {
+                // 内嵌联动：点 3D 区域同样驱动中列「设备情况」；保留原有跳转钩子。
+                setSelectedAreaId(String(area.id));
+                setSelectedAreaName(area.name);
                 if (onNavigateToArea) onNavigateToArea(area.name);
               }}
             />
           </Panel>
 
-          {/* 环境监 */}
-          <Panel title="环境监测"
+          {/* 设备情况：点右列区域后显示该区域设备；未选中时显示全局统计 */}
+          <Panel title="设备情况" className="flex-none"
             extra={
-              <div className="flex items-center gap-1">
-                {(['today', '7days', 'month'] as const).map((tab, i) => (
-                  <button key={tab} onClick={() => setEnvTab(tab)}
-                    className="text-xs px-2 py-0.5 rounded transition-colors"
-                    style={{
-                      background: envTab === tab ? 'rgba(0,195,255,0.2)' : 'transparent',
-                      color: envTab === tab ? '#00c3ff' : '#556',
-                      border: envTab === tab ? '1px solid rgba(0,195,255,0.4)' : '1px solid transparent',
-                    }}>
-                    {['今日', '近7天', '本月'][i]}
-                  </button>
-                ))}
-                <button className="flex items-center gap-1 text-xs px-2 py-0.5 rounded ml-2"
-                  style={{ color: '#8ecfff', border: '1px solid rgba(0,195,255,0.3)', background: 'rgba(0,195,255,0.05)' }}>
-                  项目筛选 <ChevronDown className="w-3 h-3" />
-                </button>
-              </div>
-            }
-            className="flex-none">
-            <div style={{ height: 120 }}>
-              {hasEnvData ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={envData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" />
-                    <XAxis dataKey="t" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                    <YAxis yAxisId="l" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                    <YAxis yAxisId="r" orientation="right" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                    <Tooltip contentStyle={chartTooltipStyle} />
-                    <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '2px' }} />
-                    <Line key="env-temp" yAxisId="l" type="monotone" dataKey="temperature" stroke="#ffaa00" strokeWidth={1.5} dot={false} name="温度(°C)" connectNulls />
-                    <Line key="env-signal" yAxisId="r" type="monotone" dataKey="signal" stroke="#00c3ff" strokeWidth={1.5} dot={false} name="信号强度" connectNulls />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
-                  {panelError.monitor || '暂无设备温度/信号上报数据'}
+              <span className="text-xs truncate max-w-[150px]" style={{ color: '#5a8ab0' }} title={selectedAreaName}>
+                {selectedAreaId ? `区域 · ${selectedAreaName}` : '全局统计'}
+              </span>
+            }>
+            {selectedAreaId ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <DeviceDonut online={areaOnline} offline={areaOffline} />
+                  <div className="text-xs space-y-1" style={{ color: '#7fb4d6' }}>
+                    <div>告警设备 <span style={{ color: '#ffaa00' }}>{areaWarning}</span> 台</div>
+                    <div>客户 {focusedCustomer?.name ?? '—'}</div>
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className="flex gap-4 mt-1 px-1">
-              <span className="text-xs" style={{ color: '#ffaa00' }}>温度(°C)</span>
-              <span className="text-xs" style={{ color: '#00c3ff' }}>信号强度</span>
-              <span className="text-xs text-gray-500">数据来自设备真实上报</span>
-            </div>
+                {deviceError && (
+                  <div className="text-xs text-center" style={{ color: '#ffaa00' }}>{deviceError}</div>
+                )}
+                <div className="max-h-[110px] overflow-y-auto space-y-1 pr-0.5">
+                  {deviceLoading ? (
+                    <div className="text-center py-2 text-xs" style={{ color: '#5a8ab0' }}>设备加载中…</div>
+                  ) : areaDevices.length > 0 ? (
+                    areaDevices.map(d => {
+                      const statusColor = d.status === 'online' ? '#00ff9f'
+                        : d.status === 'warning' ? '#ffaa00'
+                          : d.status === 'offline' ? '#ff6666' : '#7dd3fc';
+                      const statusLabel = d.status === 'online' ? '在线'
+                        : d.status === 'warning' ? '告警'
+                          : d.status === 'offline' ? '离线'
+                            : d.status === 'error' ? '故障' : '维护中';
+                      return (
+                        <div key={d.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded"
+                          style={{ background: 'rgba(0,195,255,0.05)', borderLeft: `2px solid ${statusColor}` }}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <MapPin className="w-3 h-3 flex-shrink-0" style={{ color: statusColor }} />
+                            <span className="text-xs truncate" style={{ color: '#c8e6f8' }}>{d.name}</span>
+                          </div>
+                          <span className="text-xs flex-shrink-0" style={{ color: statusColor }}>{statusLabel}</span>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-2 text-xs" style={{ color: '#556' }}>
+                      {deviceError || '该区域暂无设备'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : isTenantAdmin ? (
+              <div className="h-[88px] flex items-center justify-center text-center text-xs px-2"
+                style={{ color: '#5a8ab0' }}>
+                请在右侧选择客户，再点击区域查看设备
+              </div>
+            ) : (
+              <div>
+                <DeviceDonut online={onlineDevices} offline={offlineDevices} />
+                <div className="mt-1 text-center text-xs" style={{ color: '#5a8ab0' }}>
+                  点击右侧区域可查看对应区域设备
+                </div>
+              </div>
+            )}
           </Panel>
         </div>
 
         {/* ══ RIGHT COLUMN ══ */}
         <div className="flex flex-col gap-2 min-h-0 overflow-hidden">
 
-          {/* 实时视频监控（后端暂无摄像头/视频流接口，诚实占位，不伪造事件） */}
-          <Panel title="实时视频监控" className="flex-none">
-            <div className="grid grid-cols-2 gap-1.5">
-              {['画面 1', '画面 2'].map((label, i) => (
-                <div key={i} className="relative rounded overflow-hidden flex items-center justify-center"
-                  style={{ aspectRatio: '16/9', background: 'rgba(0,20,50,0.6)', border: '1px dashed rgba(0,195,255,0.25)' }}>
-                  <span className="text-xs" style={{ color: '#4a7a9f' }}>暂无视频源</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 text-center text-xs" style={{ color: '#5a8ab0' }}>
-              暂未接入摄像头 / 视频流服务
-            </div>
-          </Panel>
-
-          {/* 设备情况（真实设备统计，无假兜底） */}
-          <Panel title="设备情况">
-            <DeviceDonut
-              online={onlineDevices}
-              offline={offlineDevices}
-            />
-          </Panel>
-
-          {/* 能耗统计 */}
-          <Panel title="能耗统计"
-            extra={
-              <div className="flex gap-1">
-                {['日', '月', '年'].map(tab => (
-                  <button key={tab} className="text-xs px-2 py-0.5 rounded"
-                    style={{ color: '#8ecfff', border: '1px solid rgba(0,195,255,0.3)', background: 'rgba(0,195,255,0.05)' }}>
-                    {tab}
-                  </button>
-                ))}
-              </div>
-            }
-            className="flex-1">
-            <div style={{ height: 120 }}>
-              {hasEnergyData ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={energyData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="2 2" stroke="rgba(0,195,255,0.1)" vertical={false} />
-                    <XAxis dataKey="d" stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                    <YAxis stroke="#445" tick={{ fill: '#667', fontSize: 9 }} />
-                    <Tooltip contentStyle={chartTooltipStyle} formatter={(v: number) => [Number(v).toFixed(3), '瞬时功率(kW)']} />
-                    <Bar key="energy-bar" dataKey="v" radius={[2, 2, 0, 0]} maxBarSize={24}>
-                      {energyData.map((entry, i) => (
-                        <Cell key={`energy-cell-${entry.d}-${i}`} fill={i === energyData.length - 1 ? '#00c3ff' : '#0a4a7a'}
-                          style={i === energyData.length - 1 ? { filter: 'drop-shadow(0 0 4px #00c3ff)' } : {}} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+          {/* 上：客户列表（超管=全部 / admin=授权集合 / 下级=自己的单一客户） */}
+          <Panel title="客户列表" className="flex-none"
+            extra={<span className="text-xs" style={{ color: '#5a8ab0' }}>{visibleCustomers.length} 家</span>}>
+            <div className="max-h-[150px] overflow-y-auto space-y-1 pr-0.5">
+              {visibleCustomers.length > 0 ? (
+                visibleCustomers.map((customer) => {
+                  const selected = focusedCustomerId !== null && String(customer.id) === String(focusedCustomerId);
+                  return (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onClick={() => setSelectedCustomerId(String(customer.id))}
+                      className="w-full text-left px-2 py-1.5 rounded transition-colors"
+                      style={{
+                        background: selected ? 'rgba(0,195,255,0.16)' : 'rgba(0,195,255,0.04)',
+                        border: selected ? '1px solid rgba(0,195,255,0.45)' : '1px solid transparent',
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 flex-shrink-0"
+                          style={{ color: selected ? '#00e8ff' : '#4a8ab0' }} />
+                        <span className="text-xs truncate flex-1"
+                          style={{ color: selected ? '#8ee9ff' : '#a8c8e0' }}>{customer.name}</span>
+                      </div>
+                      <div className="pl-5 text-xs truncate" style={{ color: '#5a8ab0' }}>
+                        {customer.code}{customer.appCode ? ` · ${customer.appCode}` : ''}
+                      </div>
+                    </button>
+                  );
+                })
               ) : (
-                <div className="h-full flex items-center justify-center text-xs" style={{ color: panelError.monitor ? '#ffaa00' : '#556' }}>
-                  {panelError.monitor || '暂无设备功率上报数据'}
+                <div className="text-center py-3 text-xs" style={{ color: '#ffaa00' }}>
+                  {isTenantAdmin ? '当前无授权客户，请联系超级管理员分配' : '暂无客户数据'}
                 </div>
+              )}
+            </div>
+          </Panel>
+
+          {/* 下：所选客户的区域管理；点区域 → 中列「设备情况」刷新 */}
+          <Panel title="区域管理" className="flex-1 h-full flex flex-col"
+            extra={
+              <span className="text-xs truncate max-w-[110px]" style={{ color: '#5a8ab0' }}
+                title={focusedCustomer?.name ?? ''}>
+                {focusedCustomer?.name ?? '未选择客户'}
+              </span>
+            }>
+            <div className="flex flex-col h-full min-h-0">
+              <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
+                {!focusedCustomerId ? (
+                  <div className="h-full flex items-center justify-center text-center text-xs px-2"
+                    style={{ color: '#5a8ab0' }}>
+                    请先点击上方客户
+                  </div>
+                ) : areaLoading ? (
+                  <div className="text-center py-3 text-xs" style={{ color: '#5a8ab0' }}>区域加载中…</div>
+                ) : areaTree.length > 0 ? (
+                  areaTree.map(area => (
+                    <DashboardAreaTreeNode
+                      key={area.id}
+                      area={area}
+                      level={0}
+                      selectedId={selectedAreaId}
+                      onSelect={(a) => {
+                        setSelectedAreaId(String(a.id));
+                        setSelectedAreaName(a.name);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <div className="text-center py-3 text-xs"
+                    style={{ color: areaError ? '#ffaa00' : '#556' }}>
+                    {areaError || '该客户暂无区域数据'}
+                  </div>
+                )}
+              </div>
+              {selectedAreaId && (
+                <button
+                  type="button"
+                  onClick={() => { setSelectedAreaId(null); setSelectedAreaName(''); }}
+                  className="mt-1 w-full py-1 rounded text-xs flex-shrink-0"
+                  style={{ color: '#8ecfff', border: '1px solid rgba(0,195,255,0.25)', background: 'rgba(0,195,255,0.05)' }}>
+                  清除区域选择
+                </button>
               )}
             </div>
           </Panel>

@@ -266,6 +266,9 @@ export const adaptLoginResponseToUser = (loginResponse: LoginResponse): any => {
     appCode: loginResponse.user.appCode,
     avatar: loginResponse.user.avatar,
     allowedAreaIds: loginResponse.user.allowedAreaIds,
+    // 多客户授权模型（M09）：admin 把登录快照里的授权客户集合带进前端 User；
+    // 超管/下级后端下发 null ⇒ 空数组；旧 localStorage 会话由消费侧 `?? []` 兜底。
+    managedCustomerIds: loginResponse.user.managedCustomerIds ?? [],
     permissions: loginResponse.user.permissions ?? [],
     isActive: loginResponse.user.isActive
   };

@@ -462,18 +462,26 @@ function UserList() {
                             <option value="inactive">未激活</option>
                         </select>
                     </div>
-                    {user?.role === 'super_admin' && (
+                    {/* 多客户授权 M09：超管可选全部客户；admin 仅可选自己的授权客户集合；
+                        下级沿用"不指定（归属当前登录租户）"且不显示下拉。仍为单选（下级用户绑单客户）。
+                        服务端 UsersController.CreateUser 有强校验，前端下拉仅为体验优化。 */}
+                    {(user?.role === 'super_admin' || user?.role === 'admin') && (
                     <div>
-                        <label className="block text-sm font-medium text-gray-300 mb-2">目标客户（超管代租户建用户）</label>
+                        <label className="block text-sm font-medium text-gray-300 mb-2">
+                            {user?.role === 'super_admin' ? '目标客户（超管代租户建用户）' : '目标客户（仅限授权客户）'}
+                        </label>
                         <select
                             value={newUserForm.customerId ?? ''}
                             onChange={(e) => setNewUserForm({ ...newUserForm, customerId: e.target.value ? Number(e.target.value) : null })}
                             className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors [&>option]:bg-gray-800"
                         >
                             <option value="">不指定（归属当前登录租户）</option>
-                            {activeCustomers.map((c) => (
+                            {activeCustomers
+                              .filter(c => user?.role === 'super_admin'
+                                || (user?.managedCustomerIds ?? []).map(String).includes(String(c.id)))
+                              .map((c) => (
                                 <option key={c.id} value={c.id}>{c.name}（{c.appCode}）</option>
-                            ))}
+                              ))}
                         </select>
                     </div>
                     )}

@@ -37,6 +37,15 @@ export const customerApi = {
   },
 
   /**
+   * 获取可访问的客户列表（多客户授权模型的权威数据源）。
+   * 后端按身份收敛：超管=全部、admin=授权客户集合、下级=单 AppCode 客户。
+   * 与登录 token 中的 managedCustomerIds 快照相比，该接口即时反映 DB 授权变更。
+   */
+  getAccessibleCustomers: async (): Promise<AxiosResponse<ApiResponse<CustomerDto[]>>> => {
+    return httpClient.get<ApiResponse<CustomerDto[]>>('/customers/accessible');
+  },
+
+  /**
    * 获取单个客户详情
    */
   getCustomer: async (id: string): Promise<AxiosResponse<ApiResponse<CustomerDetailDto>>> => {

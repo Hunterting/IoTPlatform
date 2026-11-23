@@ -23,6 +23,9 @@ export interface UserDto {
   avatar?: string | null;
   allowedAreaIds?: string[] | null; // 后端是List<long>?，前端转为string[]
   permissions?: string[]; // 后端下发的有效权限（单一事实来源 = DB Role.Permissions）
+  // 多客户授权模型：后端 UserDto.ManagedCustomerIds；仅 admin 有值（下级/超管为 null）。
+  // 后端 List<long>? 序列化为 number[] | null，前端消费见 M09 衔接说明。
+  managedCustomerIds?: number[] | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

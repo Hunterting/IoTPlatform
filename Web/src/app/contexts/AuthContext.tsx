@@ -21,6 +21,9 @@ export interface User {
   avatar?: string;
   allowedAreaIds?: string[];
   permissions?: string[]; // 服务端下发的有效权限（单一事实来源 = DB Role.Permissions）
+  // 多客户授权模型：admin 被授权的客户 ID 集合（来自 LoginResponse.User.managedCustomerIds）。
+  // 仅类型预留；deriveTenantContext / DashboardPage / UserManagementPage 的消费逻辑属于 M09，本轮不改。
+  managedCustomerIds?: number[];
 }
 
 // 项目下的合同
