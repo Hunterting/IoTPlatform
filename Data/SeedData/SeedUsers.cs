@@ -112,6 +112,7 @@ namespace IoTPlatform.Data.SeedData
                         Phone = "13800138002",
                         Status = "active",
                         IsSuperAdmin = false,
+                        Role = "operator",
                         RoleId = 4, // 运维工程师角色
                         AppCode = "customer_001",
                         AllowedAreaIds = "1",
@@ -131,47 +132,10 @@ namespace IoTPlatform.Data.SeedData
                         Phone = "13800138003",
                         Status = "active",
                         IsSuperAdmin = false,
+                        Role = "user",
                         RoleId = 5, // 普通用户角色
                         AppCode = "customer_001",
                         AllowedAreaIds = "1,2",
-                        LastLoginTime = null,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    },
-                    // 厨师长 - 第二个租户
-                    new User
-                    {
-                        Id = 5,
-                        Username = "chef",
-                        Password = HashPassword("chef123"),
-                        FullName = "厨师长",
-                        Email = "chef@greenenergy.com",
-                        CustomerId = 2,
-                        Phone = "13800138004",
-                        Status = "active",
-                        IsSuperAdmin = false,
-                        RoleId = 6, // 厨师长角色
-                        AppCode = "customer_002",
-                        AllowedAreaIds = "1,2",
-                        LastLoginTime = null,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    },
-                    // 普通员工
-                    new User
-                    {
-                        Id = 6,
-                        Username = "staff",
-                        Password = HashPassword("staff123"),
-                        FullName = "普通员工",
-                        Email = "staff@greenenergy.com",
-                        CustomerId = 2,
-                        Phone = "13800138005",
-                        Status = "active",
-                        IsSuperAdmin = false,
-                        RoleId = 7, // 普通员工角色
-                        AppCode = "customer_002",
-                        AllowedAreaIds = "1",
                         LastLoginTime = null,
                         CreatedAt = DateTime.UtcNow,
                         UpdatedAt = DateTime.UtcNow

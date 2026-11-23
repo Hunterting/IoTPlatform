@@ -8,8 +8,6 @@ public static class Roles
     public const string SUPER_ADMIN = "super_admin";
     public const string ADMIN = "admin";
     public const string OPERATOR = "operator";
-    public const string CHEF = "chef";
-    public const string STAFF = "staff";
     public const string CUSTOMER_ADMIN = "customer_admin";
     public const string USER = "user";
 
@@ -33,8 +31,6 @@ public static class Roles
             ADMIN => GetAdminPermissions(),
             CUSTOMER_ADMIN => GetCustomerAdminPermissions(),
             OPERATOR => GetOperatorPermissions(),
-            CHEF => GetChefPermissions(),
-            STAFF => GetStaffPermissions(),
             USER => GetUserPermissions(),
             _ => new List<string>()
         };
@@ -91,64 +87,6 @@ public static class Roles
             Permissions.VIEW_DEVICE_COMMANDS,
             Permissions.SEND_DEVICE_COMMANDS,
             Permissions.CANCEL_DEVICE_COMMANDS,
-            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
-            Permissions.VIEW_LOGS
-        };
-    }
-
-    /// <summary>
-    /// 厨师长权限
-    /// </summary>
-    public static List<string> GetChefPermissions()
-    {
-        return new List<string>
-        {
-            Permissions.VIEW_DASHBOARD,
-            Permissions.VIEW_DEVICES,
-            Permissions.VIEW_MONITORING,
-            // 告警中心按 AppCode 区分租户；厨师长负责厨房设备监控，需能查看本租户告警。
-            Permissions.VIEW_ALERT_CENTER,
-            Permissions.VIEW_WORK_ORDERS,
-            Permissions.UPDATE_WORK_ORDERS,
-            // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
-            Permissions.MANAGE_PROTOCOLS,
-            Permissions.VIEW_PROTOCOL_CONFIG,
-            Permissions.MANAGE_PROTOCOL_CONFIG,
-            Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY,
-            // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
-            Permissions.VIEW_DICTIONARY,
-            Permissions.CREATE_DICTIONARY,
-            Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY,
-            // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
-            Permissions.VIEW_LOGS
-        };
-    }
-
-    /// <summary>
-    /// 普通员工权限
-    /// </summary>
-    public static List<string> GetStaffPermissions()
-    {
-        return new List<string>
-        {
-            Permissions.VIEW_DASHBOARD,
-            Permissions.VIEW_MONITORING,
-            // 告警/工单按 AppCode 区分租户，补只读查看权限，让第二租户（chef 等 staff 角色）能看到本租户数据。
-            Permissions.VIEW_ALERT_CENTER,
-            Permissions.VIEW_WORK_ORDERS,
-            // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
-            Permissions.MANAGE_PROTOCOLS,
-            Permissions.VIEW_PROTOCOL_CONFIG,
-            Permissions.MANAGE_PROTOCOL_CONFIG,
-            Permissions.VIEW_PROTOCOL_GATEWAY,
-            Permissions.MANAGE_PROTOCOL_GATEWAY,
-            // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
-            Permissions.VIEW_DICTIONARY,
-            Permissions.CREATE_DICTIONARY,
-            Permissions.UPDATE_DICTIONARY,
-            Permissions.DELETE_DICTIONARY,
             // 日志管理（登录/操作日志）按 AppCode 区分租户，补查看权限
             Permissions.VIEW_LOGS
         };

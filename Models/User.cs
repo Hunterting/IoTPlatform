@@ -20,7 +20,7 @@ public class User : IHasAppCode
     [MaxLength(20)] public string Status { get; set; } = "active";
     public bool IsSuperAdmin { get; set; } = false;
     public long? RoleId { get; set; }
-    [Required][MaxLength(50)] public string Role { get; set; } = "staff";
+    [Required][MaxLength(50)] public string Role { get; set; } = "user";
     public long? CustomerId { get; set; }
     public string? AppCode { get; set; }
     [MaxLength(200)] public string? Avatar { get; set; }

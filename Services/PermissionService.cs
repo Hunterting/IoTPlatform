@@ -70,9 +70,7 @@ public class PermissionService : IPermissionService
         {
             { Roles.SUPER_ADMIN, Roles.GetSuperAdminPermissions() },
             { Roles.ADMIN, Roles.GetAdminPermissions() },
-            { Roles.OPERATOR, Roles.GetOperatorPermissions() },
-            { Roles.CHEF, Roles.GetChefPermissions() },
-            { Roles.STAFF, Roles.GetStaffPermissions() }
+            { Roles.OPERATOR, Roles.GetOperatorPermissions() }
         };
     }
 

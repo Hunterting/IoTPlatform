@@ -28,7 +28,7 @@
 | F5 | 前端 `AuthContext.switchCustomer` 调的是 `customerApi.getCustomer`，**从不调用** `/auth/switch-customer`；`authApi.switchCurrentCustomer` 全项目无调用点 | `AuthContext.tsx:237-255`、`authApi.ts:74-83`、全量 grep | `SwitchCustomerAsync` 第三处 `new UserDto` 是"仅 API 可达"路径，仍须修复（契约一致性），但**不影响任何 UI 回归**，需单独用 API 用例验证 |
 | F6 | `authApi.login` 在返回前已 `tokenManager.setToken()`（`authApi.ts:40-42`），请求拦截器从 `localStorage` 取 token | `httpClient.ts:32-45` | 因此 `login()` 内**紧接着**调 `customerApi.getCustomers()` 一定带得上 token，这是修复 P0-B 的时序前提 |
 
-另外：`RoleConfig.GetAdminPermissions()` = 超管全量减去 2 个 API 配置权限（`Configuration/RoleConfig.cs:142-149`），即 **tenantA（role=admin）默认拥有 `CREATE/UPDATE/DELETE_CUSTOMERS`**；`GetStaffPermissions()` 静态表**不含 `VIEW_CUSTOMERS`**（`:210-230`），但真机 tenantB 拿到 200，说明 `view_customers` 来自 DB `Role.Permissions`（`GetEffectivePermissionsAsync` 刚改过，见第 7 节③）。
+另外：`RoleConfig.GetAdminPermissions()` = 超管全量减去 2 个 API 配置权限（`Configuration/RoleConfig.cs:142-149`），即 **tenantA（role=admin）默认拥有 `CREATE/UPDATE/DELETE_CUSTOMERS`**；`GetUserPermissions()` 静态表**不含 `VIEW_CUSTOMERS`**（见 `Configuration/RoleConfig.cs`），但真机租户普通用户拿到 200，说明 `view_customers` 来自 DB `Role.Permissions`（`GetEffectivePermissionsAsync` 刚改过，见第 7 节③）。
 
 ---
 
@@ -626,7 +626,7 @@ const filteredCustomers = customers
 | V6 | 同上 | JWT 解码 | 含 `AppCode=customer_001`（与修复前一致） |
 | V7 | 同上 | `GET /api/v1/customers` | 200 / **1 条 `customer_001`** |
 | V8 | 同上 | **全新登录后不刷新**直接进客户管理页 | **1 条 `customer_001`**（P0 验收点） |
-| V9 | `chef@greenenergy.com` (staff) | 同 V5-V8 | `customer_002` / `customerId=2` / 1 条 / 页面 1 条 |
+| V9 | `user1@haidilao.com` (user) | 同 V5-V8 | `customer_001` / `customerId=1` / 1 条 / 页面 1 条 |
 | V10 | 三身份 | `user.permissions` | 与修复前**逐项相同**（证明 7-③ 无交互） |
 | V11 | 三身份 | `GET /api/v1/auth/me` | `user.appCode/customerId/customerName/currentCustomer` 与登录响应一致 |
 | V12 | 超管 token | `POST /api/v1/auth/switch-customer {"customerId":2}` | 200；`user.appCode=customer_002`、`customerId=2`；token 含 `AppCode=customer_002`；随后 `GET /customers` 行为不变（超管短路） |
@@ -695,7 +695,7 @@ const filteredCustomers = customers
 - `PermissionService.cs:279-307` 的入参只有 `roleCode`，内部只读 `IRoleRepository.GetByCodeAsync(roleCode, null)` 与 DB `Role.Permissions` JSON，超管短路返回 `Permissions.All`；**完全不读 `User.AppCode` / `User.CustomerId` / `UserDto`**。
 - `PermissionFilter.cs:65-80` 从 JWT `ClaimTypes.Role` 取 `roleCode`；本方案不改 `user.Role`、不改 JWT role claim、不改 `GenerateToken` 的 role 参数。
 - `AuthService.cs:131/194/262` 三处调用入参仍是 `user.Role`，**一行不动**。
-- 真机 tenantB（staff）能 200 通过 `[PermissionAuthorize(VIEW_CUSTOMERS)]`，而静态 `GetStaffPermissions()` 不含 `view_customers` → 说明权限来自 DB `Role.Permissions`（提交 `6c760d1` 的效果）。本方案不触碰该表与该解析链。
+- 真机租户普通用户（user）能 200 通过 `[PermissionAuthorize(VIEW_CUSTOMERS)]`，而静态 `GetUserPermissions()` 不含 `view_customers` → 说明权限来自 DB `Role.Permissions`（提交 `6c760d1` 的效果）。本方案不触碰该表与该解析链。
 - **验收动作**：V10 明确要求三身份 `user.permissions` 与修复前逐项相同；集成测试加一条权限数组快照断言。
 
 ### 7.2 其余风险
