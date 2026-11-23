@@ -470,56 +470,17 @@ export const DEFAULT_ROLES: Record<string, RoleDefinition> = {
     dataScope: 'CUSTOM',
   },
 
-  chef: {
-    code: 'chef',
-    name: '厨师长',
-    description: '仅查看厨房相关设备与工单',
+  user: {
+    code: 'user',
+    name: '普通用户',
+    description: '基础查看权限，可查看工作台、监控、告警与工单',
     permissions: [
-      PERMISSIONS.VIEW_DASHBOARD,
-      PERMISSIONS.VIEW_DEVICES,
-      PERMISSIONS.VIEW_MONITORING,
-      // 与后端 RoleConfig.GetChefPermissions 对齐：告警中心/工单菜单依赖这两项前端权限，
-      // 否则第二租户登录后菜单不可见、但后端 API 已放行（#20~#26 阶段遗留差异）。
-      PERMISSIONS.VIEW_ALERT_CENTER,
-      PERMISSIONS.VIEW_WORK_ORDERS,
-      PERMISSIONS.UPDATE_WORK_ORDERS,
-      // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
-      PERMISSIONS.MANAGE_PROTOCOLS,
-      PERMISSIONS.VIEW_PROTOCOL_CONFIG,
-      PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
-      PERMISSIONS.VIEW_PROTOCOL_GATEWAY,
-      PERMISSIONS.MANAGE_PROTOCOL_GATEWAY,
-      // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
-      PERMISSIONS.VIEW_DICTIONARY,
-      PERMISSIONS.CREATE_DICTIONARY,
-      PERMISSIONS.UPDATE_DICTIONARY,
-      PERMISSIONS.DELETE_DICTIONARY,
-    ],
-    dataScope: 'CUSTOM',
-  },
-
-  staff: {
-    code: 'staff',
-    name: '普通员工',
-    description: '基础查看权限',
-    permissions: [
+      // 与后端 RoleConfig.GetUserPermissions 对齐
       PERMISSIONS.VIEW_DASHBOARD,
       PERMISSIONS.VIEW_MONITORING,
-      // 与后端 RoleConfig.GetStaffPermissions 对齐：告警中心/工单菜单依赖这两项前端权限，
-      // 否则第二租户登录后菜单不可见、但后端 API 已放行（#20~#26 阶段遗留差异）。
       PERMISSIONS.VIEW_ALERT_CENTER,
       PERMISSIONS.VIEW_WORK_ORDERS,
-      // 协议管理按 AppCode 区分租户；补完整管理权限让第二租户能管理本租户协议。
-      PERMISSIONS.MANAGE_PROTOCOLS,
-      PERMISSIONS.VIEW_PROTOCOL_CONFIG,
-      PERMISSIONS.MANAGE_PROTOCOL_CONFIG,
-      PERMISSIONS.VIEW_PROTOCOL_GATEWAY,
-      PERMISSIONS.MANAGE_PROTOCOL_GATEWAY,
-      // 字典管理按租户区分记录；补完整权限让第二租户能维护本租户字典。
-      PERMISSIONS.VIEW_DICTIONARY,
-      PERMISSIONS.CREATE_DICTIONARY,
-      PERMISSIONS.UPDATE_DICTIONARY,
-      PERMISSIONS.DELETE_DICTIONARY,
+      PERMISSIONS.VIEW_LOGS,
     ],
     dataScope: 'CUSTOM',
   },

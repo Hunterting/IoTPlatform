@@ -19,7 +19,7 @@ type WorkOrderStatus = 'pending' | 'assigned' | 'in_progress' | 'resolved' | 'cl
 type WorkOrderPriority = 'low' | 'normal' | 'high' | 'urgent';
 type WorkOrderType = 'fault' | 'maintenance' | 'inspection' | 'installation' | 'other';
 
-const STAFF_LIST = ['张工', '李工', '王工', '赵工', '刘工', '陈工'];
+const ASSIGNEE_LIST = ['张工', '李工', '王工', '赵工', '刘工', '陈工'];
 
 function rgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -398,7 +398,7 @@ export function WorkOrderPage() {
                       disabled={busy}
                       className="px-3 py-1.5 text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded hover:bg-blue-500/30 disabled:opacity-50">
                       <option value="" className="bg-gray-800 text-white">分配给…</option>
-                      {STAFF_LIST.map(s => <option key={s} value={s} className="bg-gray-800 text-white">{s}</option>)}
+                      {ASSIGNEE_LIST.map(s => <option key={s} value={s} className="bg-gray-800 text-white">{s}</option>)}
                     </select>
                   )}
                   {(selectedOrder.status === 'pending' || selectedOrder.status === 'assigned') && (

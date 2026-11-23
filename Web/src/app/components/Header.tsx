@@ -20,8 +20,8 @@ export function Header({ currentPage }: HeaderProps) {
     super_admin: '超级管理员',
     admin: '管理员',
     operator: '运维人员',
-    chef: '厨师长',
-    staff: '员工',
+    customer_admin: '客户管理员',
+    user: '普通用户',
   };
 
   // 页面标题映射

@@ -9,7 +9,7 @@ import {
   adaptUpdateCustomerRequest
 } from '../services/adapters';
 
-export type UserRole = 'super_admin' | 'admin' | 'operator' | 'chef' | 'staff';
+export type UserRole = 'super_admin' | 'admin' | 'operator' | 'customer_admin' | 'user';
 
 export interface User {
   id: string;

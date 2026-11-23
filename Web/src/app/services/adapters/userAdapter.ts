@@ -228,7 +228,8 @@ export const getUserRoleColor = (role: string): string => {
     'super_admin': 'from-purple-600 to-indigo-600',
     'admin': 'from-red-500 to-orange-500',
     'operator': 'from-blue-500 to-cyan-500',
-    'staff': 'from-gray-500 to-slate-500',
+    'customer_admin': 'from-green-500 to-emerald-500',
+    'user': 'from-gray-500 to-slate-500',
     'viewer': 'from-green-500 to-emerald-500',
   };
   return colors[role] || 'from-gray-500 to-slate-500';
@@ -246,7 +247,8 @@ export const getUserRoleName = (role: string, roleNames?: Record<string, string>
     'super_admin': '超级管理员',
     'admin': '管理员',
     'operator': '运维人员',
-    'staff': '员工',
+    'customer_admin': '客户管理员',
+    'user': '普通用户',
     'viewer': '查看者',
   };
   
@@ -290,7 +292,7 @@ export const createEmptyUserFormData = (): UserFormData => {
     name: '',
     email: '',
     password: '',
-    role: 'staff',
+    role: 'user',
     customerId: null,
     avatar: null,
     allowedAreaIds: [],

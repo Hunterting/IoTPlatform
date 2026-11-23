@@ -266,7 +266,7 @@ function UserManagement() {
     email: '',
     phone: '',
     department: '',
-    role: 'staff',
+    role: 'user',
     password: '',
   });
 
@@ -274,8 +274,8 @@ function UserManagement() {
     { id: '1', name: '超级管理员', role: 'super_admin', email: 'admin@system.com', status: 'active', phone: '138-0000-0000', department: '系统管理部' },
     { id: '2', name: '张三', role: 'admin', email: 'zhangsan@example.com', status: 'active', phone: '138-0000-1111', department: '管理部' },
     { id: '3', name: '李四', role: 'operator', email: 'lisi@example.com', status: 'active', phone: '138-0000-2222', department: '运维部' },
-    { id: '4', name: '王五', role: 'chef', email: 'wangwu@example.com', status: 'inactive', phone: '138-0000-3333', department: '厨房部' },
-    { id: '5', name: '赵六', role: 'staff', email: 'zhaoliu@example.com', status: 'active', phone: '138-0000-4444', department: '后勤部' },
+    { id: '4', name: '王五', role: 'customer_admin', email: 'wangwu@example.com', status: 'inactive', phone: '138-0000-3333', department: '客户管理部' },
+    { id: '5', name: '赵六', role: 'user', email: 'zhaoliu@example.com', status: 'active', phone: '138-0000-4444', department: '后勤部' },
   ]);
 
   const [roles, setRoles] = useState([
@@ -301,15 +301,15 @@ function UserManagement() {
       permissions: ['devices', 'monitoring', 'analytics', 'archives']
     },
     { 
-      id: 'chef', 
-      name: '厨师长', 
-      description: '负责厨房设备使用和日常管理',
+      id: 'customer_admin', 
+      name: '客户管理员', 
+      description: '负责本客户下的设备与工单管理',
       color: 'from-green-500 to-emerald-500',
       permissions: ['devices_view', 'monitoring_view', 'orders']
     },
     { 
-      id: 'staff', 
-      name: '普通员工', 
+      id: 'user', 
+      name: '普通用户', 
       description: '基础查看权限',
       color: 'from-gray-500 to-slate-500',
       permissions: ['monitoring_view']
@@ -1000,7 +1000,7 @@ function UserManagement() {
                   setUsers([...users, newUserData]);
                   alert('用户创建成功！');
                   setShowAddUserModal(false);
-                  setNewUser({ name: '', email: '', phone: '', department: '', role: 'staff', password: '' });
+                  setNewUser({ name: '', email: '', phone: '', department: '', role: 'user', password: '' });
                 }}
                 className="p-6 overflow-y-auto max-h-[calc(90vh-140px)] space-y-6"
               >

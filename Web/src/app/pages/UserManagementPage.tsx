@@ -114,7 +114,7 @@ function UserList() {
     name: '',
     email: '',
     password: '',
-    role: 'staff',
+    role: 'user',
     customerId: null,
     avatar: null,
     allowedAreaIds: [],
@@ -222,7 +222,7 @@ function UserList() {
                  name: '',
                  email: '',
                  password: '',
-                 role: 'staff',
+                 role: 'user',
                  customerId: null,
                  avatar: null,
                  allowedAreaIds: [],
@@ -885,7 +885,7 @@ function RoleManagement() {
                                     value={roleForm.code}
                                     onChange={(e) => setRoleForm({ ...roleForm, code: e.target.value })}
                                     className={`w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors ${editingRoleCode ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    placeholder="例如：finance_staff"
+                                    placeholder="例如：finance_team"
                                 />
                             </div>
                         </div>
