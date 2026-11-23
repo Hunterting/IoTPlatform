@@ -88,6 +88,8 @@ builder.Services.AddScoped<IMonitoringRepository, MonitoringRepository>();
 builder.Services.AddScoped<IDataRuleRepository, DataRuleRepository>();
 builder.Services.AddScoped<IProtocolConfigRepository, ProtocolConfigRepository>();
 builder.Services.AddScoped<IETLTaskRepository, ETLTaskRepository>();
+// 多客户授权：用户-客户授权仓储（DB 为授权事实来源，claim 仅为快照）
+builder.Services.AddScoped<IUserCustomerRepository, UserCustomerRepository>();
 
 // 注册种子数据服务
 builder.Services.AddScoped<DataSeeder>();
@@ -97,6 +99,8 @@ builder.Services.AddScoped<SeedCustomers>();
 builder.Services.AddScoped<SeedDictionaries>();
 
 // 注册服务
+// 多客户授权：越权判定唯一入口（All/Multi/Single 三分支）
+builder.Services.AddScoped<IoTPlatform.Services.ICustomerScopeService, IoTPlatform.Services.CustomerScopeService>();
 builder.Services.AddScoped<IoTPlatform.Services.IAuthService, IoTPlatform.Services.AuthService>();
 builder.Services.AddScoped<IoTPlatform.Services.IUserService, IoTPlatform.Services.UserService>();
 builder.Services.AddScoped<IoTPlatform.Services.IRoleService, IoTPlatform.Services.RoleService>();

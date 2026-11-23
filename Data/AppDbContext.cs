@@ -39,6 +39,8 @@ public class AppDbContext : DbContext
     // 用户和认证
     public DbSet<User> Users { get; set; }
     public DbSet<Role> Roles { get; set; }
+    // 多客户授权：admin ↔ 客户 N:N（不实现 IHasAppCode，不进全局过滤器）
+    public DbSet<UserCustomer> UserCustomers { get; set; }
 
     // 租户和项目
     public DbSet<Customer> Customers { get; set; }
@@ -114,6 +116,7 @@ public class AppDbContext : DbContext
         // 配置表名和索引
         ConfigureUsers(modelBuilder);
         ConfigureRoles(modelBuilder);
+        ConfigureUserCustomers(modelBuilder);
         ConfigureCustomers(modelBuilder);
         ConfigureProjects(modelBuilder);
         ConfigureAreas(modelBuilder);
@@ -226,6 +229,64 @@ public class AppDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Code).IsUnique();
             entity.HasIndex(e => e.AppCode);
+        });
+    }
+
+    /// <summary>
+    /// 多客户授权中间表配置（设计 §3.1）。
+    ///
+    /// 【索引设计】
+    ///   · <c>uk_user_customer (UserId, CustomerId)</c>：同一 admin 不重复持有同一客户；
+    ///     前缀 UserId 同时支撑「按 admin 查集合」的高频路径，且<b>刻意不加 customer_id 单列唯一</b>
+    ///     ——同一客户可授予多个 admin（D6）。
+    ///   · <c>idx_customer_id</c>：支撑「按客户反查 admin」（分配回显 / 删除前置校验）。
+    ///   · <c>idx_granted_by</c>：M10 审计预留。
+    ///
+    /// 【外键】UserId CASCADE（用户删除连带清理授权）；CustomerId RESTRICT（有授权的客户禁止直接删除，
+    /// 需在 CustomersController.DeleteCustomer 中先清理授权）；GrantedByUserId SET NULL。
+    ///
+    /// 【租户过滤器】UserCustomer 不实现 IHasAppCode，ConfigureGlobalQueryFilters 不会为它装过滤器；
+    /// 授权判定必须在业务层显式完成（设计 §5.5 / §7.2-8）。
+    /// </summary>
+    private void ConfigureUserCustomers(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<UserCustomer>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+
+            entity.HasIndex(e => new { e.UserId, e.CustomerId })
+                .IsUnique()
+                .HasDatabaseName("uk_user_customer");
+            entity.HasIndex(e => e.CustomerId)
+                .HasDatabaseName("idx_customer_id");
+            entity.HasIndex(e => e.GrantedByUserId)
+                .HasDatabaseName("idx_granted_by");
+
+            entity.Property(e => e.Source)
+                .HasMaxLength(20)
+                .IsRequired()
+                .HasDefaultValue("manual");
+            entity.Property(e => e.CreatedAt)
+                .HasColumnType("datetime(3)")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP(3)");
+            entity.Property(e => e.UpdatedAt)
+                .HasColumnType("datetime(3)")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP(3)");
+            entity.Property(e => e.RevokedAt)
+                .HasColumnType("datetime(3)");
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Customer)
+                .WithMany()
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.GrantedByUser)
+                .WithMany()
+                .HasForeignKey(e => e.GrantedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
     }
 

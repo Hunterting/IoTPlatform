@@ -4404,3 +4404,127 @@ DROP PROCEDURE MigrationsScript;
 
 COMMIT;
 
+-- ============================================================================
+-- 多客户授权模型 T01：admin ↔ 客户授权中间表 user_customers
+-- 迁移 ID 与 Migrations/20261123025525_AddUserCustomers.cs 保持一致。
+-- 沿用本文件既有风格：用一次性存储过程 + __EFMigrationsHistory 保证幂等。
+-- ============================================================================
+START TRANSACTION;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    CREATE TABLE IF NOT EXISTS `user_customers` (
+        `Id` bigint NOT NULL AUTO_INCREMENT,
+        `UserId` bigint NOT NULL,
+        `CustomerId` bigint NOT NULL,
+        `GrantedByUserId` bigint NULL,
+        `Source` varchar(20) CHARACTER SET utf8mb4 NOT NULL DEFAULT 'manual',
+        `CreatedAt` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        `UpdatedAt` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        `RevokedAt` datetime(3) NULL,
+        CONSTRAINT `PK_user_customers` PRIMARY KEY (`Id`),
+        CONSTRAINT `uk_user_customer` UNIQUE (`UserId`, `CustomerId`),
+        KEY `idx_customer_id` (`CustomerId`),
+        KEY `idx_granted_by` (`GrantedByUserId`),
+        CONSTRAINT `FK_user_customers_customers_CustomerId` FOREIGN KEY (`CustomerId`) REFERENCES `customers` (`Id`) ON DELETE RESTRICT,
+        CONSTRAINT `FK_user_customers_users_GrantedByUserId` FOREIGN KEY (`GrantedByUserId`) REFERENCES `users` (`Id`) ON DELETE SET NULL,
+        CONSTRAINT `FK_user_customers_users_UserId` FOREIGN KEY (`UserId`) REFERENCES `users` (`Id`) ON DELETE CASCADE
+    ) CHARACTER SET=utf8mb4;
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    -- 存量回填：CustomerId 优先、AppCode 兜底；仅 role='admin'。
+    -- NOT EXISTS 守卫保证重复执行不撞 uk_user_customer。
+    INSERT INTO user_customers
+        (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
+    SELECT u.Id, c.Id, NULL, 'migration', NOW(3), NOW(3)
+    FROM users u
+    JOIN customers c
+      ON (u.CustomerId IS NOT NULL AND u.CustomerId = c.Id)
+      OR (u.CustomerId IS NULL AND u.AppCode IS NOT NULL AND u.AppCode = c.AppCode)
+    WHERE u.Role = 'admin'
+      AND (u.CustomerId IS NOT NULL OR u.AppCode IS NOT NULL)
+      AND NOT EXISTS (
+          SELECT 1 FROM user_customers uc
+          WHERE uc.UserId = u.Id AND uc.CustomerId = c.Id);
+
+    -- 清空 admin 单值列；super_admin 与下级账号不动。
+    UPDATE users SET CustomerId = NULL, AppCode = NULL, UpdatedAt = NOW(3) WHERE Role = 'admin';
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    INSERT INTO `__EFMigrationsHistory` (`MigrationId`, `ProductVersion`)
+    VALUES ('20261123025525_AddUserCustomers', '8.0.11');
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+COMMIT;
+
+-- ----------------------------------------------------------------------------
+-- 幂等 seed 段：本脚本只建库结构，业务种子由应用启动时的 SeedUsers 写入。
+-- 若脚本执行时库内已有 admin 用户，则按原单值回填；
+-- 另按种子固定映射 manager(Id=2) → customer_001(Id=1) 兜底，
+-- 保证「全新空库按脚本建库 + 应用种子」后 manager 的授权集合恰为 [1]。
+-- 两段均带 NOT EXISTS 守卫，可重复执行。
+-- ----------------------------------------------------------------------------
+START TRANSACTION;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    INSERT INTO user_customers
+        (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
+    SELECT u.Id, c.Id, NULL, 'seed', NOW(3), NOW(3)
+    FROM users u
+    JOIN customers c
+      ON (u.CustomerId IS NOT NULL AND u.CustomerId = c.Id)
+      OR (u.CustomerId IS NULL AND u.AppCode IS NOT NULL AND u.AppCode = c.AppCode)
+    WHERE u.Role = 'admin'
+      AND (u.CustomerId IS NOT NULL OR u.AppCode IS NOT NULL)
+      AND NOT EXISTS (
+          SELECT 1 FROM user_customers uc
+          WHERE uc.UserId = u.Id AND uc.CustomerId = c.Id);
+
+    INSERT INTO user_customers
+        (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
+    SELECT 2, 1, NULL, 'seed', NOW(3), NOW(3)
+    FROM DUAL
+    WHERE EXISTS (SELECT 1 FROM users u WHERE u.Id = 2 AND u.Role = 'admin')
+      AND EXISTS (SELECT 1 FROM customers c WHERE c.Id = 1)
+      AND NOT EXISTS (SELECT 1 FROM user_customers uc WHERE uc.UserId = 2 AND uc.CustomerId = 1);
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+COMMIT;
+

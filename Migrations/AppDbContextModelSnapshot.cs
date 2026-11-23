@@ -1081,13 +1081,13 @@ namespace IoTPlatform.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime(6)");
 
-                    b.Property<string>("ImageUrl")
-                        .HasMaxLength(500)
-                        .HasColumnType("varchar(500)");
-
                     b.Property<string>("EncryptionCode")
                         .HasMaxLength(200)
                         .HasColumnType("varchar(200)");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("varchar(500)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -2982,6 +2982,58 @@ namespace IoTPlatform.Migrations
                     b.ToTable("users");
                 });
 
+            modelBuilder.Entity("IoTPlatform.Models.UserCustomer", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    MySqlPropertyBuilderExtensions.UseMySqlIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime(3)")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP(3)");
+
+                    b.Property<long>("CustomerId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("GrantedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime(3)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("varchar(20)")
+                        .HasDefaultValue("manual");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime(3)")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP(3)");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId")
+                        .HasDatabaseName("idx_customer_id");
+
+                    b.HasIndex("GrantedByUserId")
+                        .HasDatabaseName("idx_granted_by");
+
+                    b.HasIndex("UserId", "CustomerId")
+                        .IsUnique()
+                        .HasDatabaseName("uk_user_customer");
+
+                    b.ToTable("user_customers");
+                });
+
             modelBuilder.Entity("IoTPlatform.Models.WorkOrder", b =>
                 {
                     b.Property<long>("Id")
@@ -3534,6 +3586,32 @@ namespace IoTPlatform.Migrations
                     b.Navigation("Customer");
 
                     b.Navigation("UserRole");
+                });
+
+            modelBuilder.Entity("IoTPlatform.Models.UserCustomer", b =>
+                {
+                    b.HasOne("IoTPlatform.Models.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("IoTPlatform.Models.User", "GrantedByUser")
+                        .WithMany()
+                        .HasForeignKey("GrantedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("IoTPlatform.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("GrantedByUser");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("IoTPlatform.Models.WorkOrder", b =>
