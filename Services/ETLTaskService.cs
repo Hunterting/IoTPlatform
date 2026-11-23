@@ -1,8 +1,9 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -15,21 +16,41 @@ public class ETLTaskService : IETLTaskService
 {
     private readonly IETLTaskRepository _etlTaskRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICustomerScopeGuard? _scopeGuard;
+
+    /// <summary>守卫依赖缺失时 fail-closed，禁止静默降级为无校验写入。</summary>
+    private ICustomerScopeGuard RequireGuard() =>
+        _scopeGuard ?? throw new ForbiddenAccessException("缺少客户范围守卫，拒绝写入");
+
+    /// <summary>配置 AppCode="system" 属于平台共享行（设计 §3.5）。</summary>
+    private static bool IsSystemRow(string? appCode) =>
+        string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>写侧守卫：共享行仅超管可写；租户行按 Controller 下推的 scope 判定。</summary>
+    private Task AssertWriteAsync(CustomerScope? scope, string? appCode, CancellationToken ct = default) =>
+        RequireGuard().AssertWriteScopeByAppCodeAsync(scope, appCode, IsSystemRow(appCode), true, ct);
 
     public ETLTaskService(
         IETLTaskRepository etlTaskRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ICustomerScopeGuard? scopeGuard = null)
     {
         _etlTaskRepository = etlTaskRepository;
         _unitOfWork = unitOfWork;
+        _scopeGuard = scopeGuard;
     }
 
     /// <summary>
     /// 获取ETL任务列表
     /// </summary>
-    public async Task<PagedResponse<ETLTaskDto>> GetETLTasksAsync(int page, int pageSize, string? keyword, string? taskType, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<ETLTaskDto>> GetETLTasksAsync(int page, int pageSize, string? keyword, string? taskType, string? appCode) => GetETLTasksAsync(page, pageSize, keyword, taskType, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<ETLTaskDto>> GetETLTasksAsync(int page, int pageSize, string? keyword, string? taskType, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _etlTaskRepository.GetQueryable();
+        query = query.ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -117,7 +138,7 @@ public class ETLTaskService : IETLTaskService
     /// <summary>
     /// 创建ETL任务
     /// </summary>
-    public async Task<ETLTaskDto> CreateETLTaskAsync(CreateETLTaskRequest request)
+    public async Task<ETLTaskDto> CreateETLTaskAsync(CreateETLTaskRequest request, CustomerScope? scope = null)
     {
         var task = new ETLTask
         {
@@ -133,6 +154,11 @@ public class ETLTaskService : IETLTaskService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, task.AppCode);
+        }
 
         await _etlTaskRepository.AddAsync(task);
         await _unitOfWork.SaveChangesAsync();
@@ -159,7 +185,7 @@ public class ETLTaskService : IETLTaskService
     /// <summary>
     /// 更新ETL任务
     /// </summary>
-    public async Task<ETLTaskDto> UpdateETLTaskAsync(long id, UpdateETLTaskRequest request, string? appCode)
+    public async Task<ETLTaskDto> UpdateETLTaskAsync(long id, UpdateETLTaskRequest request, string? appCode, CustomerScope? scope = null)
     {
         var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
@@ -167,8 +193,12 @@ public class ETLTaskService : IETLTaskService
             throw new InvalidOperationException("ETL任务不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, task.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该ETL任务");
         }
@@ -207,7 +237,7 @@ public class ETLTaskService : IETLTaskService
     /// <summary>
     /// 删除ETL任务
     /// </summary>
-    public async Task DeleteETLTaskAsync(long id, string? appCode)
+    public async Task DeleteETLTaskAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
@@ -215,8 +245,12 @@ public class ETLTaskService : IETLTaskService
             throw new InvalidOperationException("ETL任务不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, task.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该ETL任务");
         }
@@ -234,7 +268,7 @@ public class ETLTaskService : IETLTaskService
     /// <summary>
     /// 启动ETL任务
     /// </summary>
-    public async Task StartETLTaskAsync(long id, string? appCode)
+    public async Task StartETLTaskAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
@@ -242,8 +276,12 @@ public class ETLTaskService : IETLTaskService
             throw new InvalidOperationException("ETL任务不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
+        // 权限检查：副作用（写状态/调度）之前 fail-closed。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, task.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权启动该ETL任务");
         }
@@ -261,7 +299,7 @@ public class ETLTaskService : IETLTaskService
     /// <summary>
     /// 停止ETL任务
     /// </summary>
-    public async Task StopETLTaskAsync(long id, string? appCode)
+    public async Task StopETLTaskAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var task = await _etlTaskRepository.GetByIdAsync(id);
         if (task == null)
@@ -269,8 +307,12 @@ public class ETLTaskService : IETLTaskService
             throw new InvalidOperationException("ETL任务不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
+        // 权限检查：副作用（写状态）之前 fail-closed。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, task.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && task.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权停止该ETL任务");
         }

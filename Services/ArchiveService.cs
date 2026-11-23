@@ -1,8 +1,9 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -16,11 +17,27 @@ public class ArchiveService : IArchiveService
     private readonly IDeviceRepository _deviceRepository;
     private readonly IUnitOfWork _unitOfWork;
 
+    private readonly ICustomerScopeGuard? _scopeGuard;
+
+    /// <summary>守卫依赖缺失时 fail-closed，禁止静默降级为无校验写入。</summary>
+    private ICustomerScopeGuard RequireGuard() =>
+        _scopeGuard ?? throw new ForbiddenAccessException("缺少客户范围守卫，拒绝写入");
+
+    /// <summary>配置 AppCode="system" 属于平台共享行（设计 §3.5）。</summary>
+    private static bool IsSystemRow(string? appCode) =>
+        string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>写侧守卫：共享行仅超管可写；租户行按 Controller 下推的 scope 判定。</summary>
+    private Task AssertWriteAsync(CustomerScope? scope, string? appCode, CancellationToken ct = default) =>
+        RequireGuard().AssertWriteScopeByAppCodeAsync(scope, appCode, IsSystemRow(appCode), false, ct);
+
     public ArchiveService(
         IArchiveRepository archiveRepository,
         IDeviceRepository deviceRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ICustomerScopeGuard? scopeGuard = null)
     {
+        _scopeGuard = scopeGuard;
         _archiveRepository = archiveRepository;
         _deviceRepository = deviceRepository;
         _unitOfWork = unitOfWork;
@@ -29,9 +46,14 @@ public class ArchiveService : IArchiveService
     /// <summary>
     /// 获取档案列表
     /// </summary>
-    public async Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode) => GetArchivesAsync(page, pageSize, keyword, type, areaId, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<ArchiveDto>> GetArchivesAsync(int page, int pageSize, string? keyword, string? type, long? areaId, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var baseQuery = _archiveRepository.GetQueryable();
+        baseQuery = baseQuery.ApplyQueryScope(appCode, customerIds, appCodes);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -130,7 +152,7 @@ public class ArchiveService : IArchiveService
     /// <summary>
     /// 创建档案
     /// </summary>
-    public async Task<ArchiveDto> CreateArchiveAsync(CreateArchiveRequest request)
+    public async Task<ArchiveDto> CreateArchiveAsync(CreateArchiveRequest request, CustomerScope? scope = null)
     {
         var archive = new Archive
         {
@@ -149,6 +171,11 @@ public class ArchiveService : IArchiveService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, archive.AppCode);
+        }
 
         await _archiveRepository.AddAsync(archive);
         await _unitOfWork.SaveChangesAsync();
@@ -181,7 +208,7 @@ public class ArchiveService : IArchiveService
     /// <summary>
     /// 更新档案
     /// </summary>
-    public async Task<ArchiveDto> UpdateArchiveAsync(long id, UpdateArchiveRequest request, string? appCode)
+    public async Task<ArchiveDto> UpdateArchiveAsync(long id, UpdateArchiveRequest request, string? appCode, CustomerScope? scope = null)
     {
         var archive = await _archiveRepository.GetQueryable()
             .Include(a => a.Area)
@@ -191,8 +218,12 @@ public class ArchiveService : IArchiveService
             throw new InvalidOperationException("档案不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
+        // 权限检查：档案 AppCode 为空属于归属缺陷，必须 fail-closed（不可当共享行）。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, archive.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该档案");
         }
@@ -235,7 +266,7 @@ public class ArchiveService : IArchiveService
     /// <summary>
     /// 删除档案
     /// </summary>
-    public async Task DeleteArchiveAsync(long id, string? appCode)
+    public async Task DeleteArchiveAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var archive = await _archiveRepository.GetByIdAsync(id);
         if (archive == null)
@@ -243,8 +274,12 @@ public class ArchiveService : IArchiveService
             throw new InvalidOperationException("档案不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
+        // 权限检查：档案 AppCode 为空属于归属缺陷，必须 fail-closed（不可当共享行）。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, archive.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该档案");
         }
@@ -256,7 +291,7 @@ public class ArchiveService : IArchiveService
     /// <summary>
     /// 获取档案设备标记
     /// </summary>
-    public async Task<List<ArchiveDeviceMarkerDto>> GetArchiveMarkersAsync(long archiveId, string? appCode)
+    public async Task<List<ArchiveDeviceMarkerDto>> GetArchiveMarkersAsync(long archiveId, string? appCode, CustomerScope? scope = null)
     {
         // 权限检查：验证档案所属租户
         var archive = await _archiveRepository.GetByIdAsync(archiveId);
@@ -265,7 +300,11 @@ public class ArchiveService : IArchiveService
             throw new InvalidOperationException("档案不存在");
         }
 
-        if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
+        if (scope != null)
+        {
+            await RequireGuard().AssertReadScopeByAppCodeAsync(scope, archive.AppCode, false, false);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && archive.AppCode != appCode && archive.AppCodeTenant != appCode)
         {
             throw new UnauthorizedAccessException("无权查看该档案标记");
         }

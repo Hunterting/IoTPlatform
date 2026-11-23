@@ -12,7 +12,11 @@ public interface IProtocolConfigService
     /// <summary>
     /// 获取协议配置列表
     /// </summary>
+    /// <summary>旧签名保留：内部/下级路径零回归。</summary>
     Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode);
+
+    /// <summary>B4/M5：Multi 授权客户集合范围下推。</summary>
+    Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null) => GetProtocolConfigsAsync(page, pageSize, keyword, type, appCode);
 
     /// <summary>
     /// 获取协议配置详情
@@ -24,22 +28,22 @@ public interface IProtocolConfigService
     /// </summary>
     /// <param name="request">协议配置创建请求</param>
     /// <param name="appCode">服务端从 JWT 解析的租户码，避免前端越权伪造归属</param>
-    Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request, string? appCode = null);
+    Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request, string? appCode = null, CustomerScope? scope = null);
 
     /// <summary>
     /// 更新协议配置
     /// </summary>
-    Task<ProtocolConfigDto> UpdateProtocolConfigAsync(long id, UpdateProtocolConfigRequest request, string? appCode);
+    Task<ProtocolConfigDto> UpdateProtocolConfigAsync(long id, UpdateProtocolConfigRequest request, string? appCode, CustomerScope? scope = null);
 
     /// <summary>
     /// 删除协议配置
     /// </summary>
-    Task DeleteProtocolConfigAsync(long id, string? appCode);
+    Task DeleteProtocolConfigAsync(long id, string? appCode, CustomerScope? scope = null);
 
     /// <summary>
     /// 启动协议
     /// </summary>
-    Task StartProtocolAsync(long id, string? appCode);
+    Task StartProtocolAsync(long id, string? appCode, CustomerScope? scope = null);
 
     /// <summary>
     /// 后端 cold start 时自动拉起所有已激活的协议配置（供 ProtocolConfigAutoStartHostedService 调用）。
@@ -50,5 +54,5 @@ public interface IProtocolConfigService
     /// <summary>
     /// 停止协议
     /// </summary>
-    Task StopProtocolAsync(long id, string? appCode);
+    Task StopProtocolAsync(long id, string? appCode, CustomerScope? scope = null);
 }

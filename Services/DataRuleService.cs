@@ -1,9 +1,10 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
 using IoTPlatform.Services.Rules;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -18,26 +19,46 @@ public class DataRuleService : IDataRuleService
     private readonly IAreaRepository _areaRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly RuleEngine _ruleEngine;
+    private readonly ICustomerScopeGuard? _scopeGuard;
+
+    /// <summary>守卫依赖缺失时 fail-closed，禁止静默降级为无校验写入。</summary>
+    private ICustomerScopeGuard RequireGuard() =>
+        _scopeGuard ?? throw new ForbiddenAccessException("缺少客户范围守卫，拒绝写入");
+
+    /// <summary>配置 AppCode="system" 属于平台共享行（设计 §3.5）。</summary>
+    private static bool IsSystemRow(string? appCode) =>
+        string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>写侧守卫：共享行仅超管可写；租户行按 Controller 下推的 scope 判定。</summary>
+    private Task AssertWriteAsync(CustomerScope? scope, string? appCode, CancellationToken ct = default) =>
+        RequireGuard().AssertWriteScopeByAppCodeAsync(scope, appCode, IsSystemRow(appCode), true, ct);
 
     public DataRuleService(
         IDataRuleRepository dataRuleRepository,
         IDeviceRepository deviceRepository,
         IAreaRepository areaRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ICustomerScopeGuard? scopeGuard = null)
     {
         _dataRuleRepository = dataRuleRepository;
         _deviceRepository = deviceRepository;
         _areaRepository = areaRepository;
         _unitOfWork = unitOfWork;
+        _scopeGuard = scopeGuard;
         _ruleEngine = new RuleEngine();
     }
 
     /// <summary>
     /// 获取数据规则列表
     /// </summary>
-    public async Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode) => GetDataRulesAsync(page, pageSize, keyword, ruleType, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<DataRuleDto>> GetDataRulesAsync(int page, int pageSize, string? keyword, string? ruleType, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _dataRuleRepository.GetQueryable();
+        query = query.ApplyQueryScopeWithShared(appCode, customerIds, appCodes);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -137,7 +158,7 @@ public class DataRuleService : IDataRuleService
     /// <summary>
     /// 创建数据规则
     /// </summary>
-    public async Task<DataRuleDto> CreateDataRuleAsync(CreateDataRuleRequest request)
+    public async Task<DataRuleDto> CreateDataRuleAsync(CreateDataRuleRequest request, CustomerScope? scope = null)
     {
         var rule = new DataRule
         {
@@ -156,6 +177,11 @@ public class DataRuleService : IDataRuleService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, rule.AppCode);
+        }
 
         await _dataRuleRepository.AddAsync(rule);
         await _unitOfWork.SaveChangesAsync();
@@ -191,7 +217,7 @@ public class DataRuleService : IDataRuleService
     /// <summary>
     /// 更新数据规则
     /// </summary>
-    public async Task<DataRuleDto> UpdateDataRuleAsync(long id, UpdateDataRuleRequest request, string? appCode)
+    public async Task<DataRuleDto> UpdateDataRuleAsync(long id, UpdateDataRuleRequest request, string? appCode, CustomerScope? scope = null)
     {
         var rule = await _dataRuleRepository.GetQueryable()
             .Include(d => d.Device)
@@ -202,8 +228,12 @@ public class DataRuleService : IDataRuleService
             throw new InvalidOperationException("数据规则不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && rule.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, rule.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && rule.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该数据规则");
         }
@@ -247,7 +277,7 @@ public class DataRuleService : IDataRuleService
     /// <summary>
     /// 删除数据规则
     /// </summary>
-    public async Task DeleteDataRuleAsync(long id, string? appCode)
+    public async Task DeleteDataRuleAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var rule = await _dataRuleRepository.GetByIdAsync(id);
         if (rule == null)
@@ -255,8 +285,12 @@ public class DataRuleService : IDataRuleService
             throw new InvalidOperationException("数据规则不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && rule.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, rule.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && rule.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该数据规则");
         }

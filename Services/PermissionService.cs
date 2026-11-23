@@ -1,8 +1,35 @@
 using IoTPlatform.Configuration;
 using IoTPlatform.Data.Repositories.Interfaces;
+using System.Security.Claims;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;
+
+/// <summary>
+/// M10 提权面专用扩展：从 principal 解析角色后调用 <see cref="IPermissionService.GetEffectivePermissionsAsync(string)"/>。
+/// 以扩展方法提供而非接口成员，避免破坏既有测试替身实现（接口零变更）。
+/// </summary>
+public static class PermissionServicePrincipalExtensions
+{
+    /// <summary>解析调用方（principal）的有效权限集合，用于权限白名单降级。</summary>
+    public static Task<List<string>> GetEffectivePermissionsAsync(
+        this IPermissionService service,
+        ClaimsPrincipal principal)
+    {
+        if (service == null || principal == null)
+        {
+            return Task.FromResult(new List<string>());
+        }
+
+        var roleCode = principal.FindFirst(ClaimTypes.Role)?.Value;
+        if (string.IsNullOrWhiteSpace(roleCode))
+        {
+            return Task.FromResult(new List<string>());
+        }
+
+        return service.GetEffectivePermissionsAsync(roleCode);
+    }
+}
 
 /// <summary>
 /// 权限服务接口

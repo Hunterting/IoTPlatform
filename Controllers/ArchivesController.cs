@@ -1,4 +1,4 @@
-﻿using IoTPlatform.DTOs.Requests;
+using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using IoTPlatform.Configuration;
+using IoTPlatform.Services.Guards;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,11 +20,17 @@ namespace IoTPlatform.Controllers;
 public class ArchivesController : ControllerBase
 {
     private readonly IArchiveService _archiveService;
+    private readonly ICustomerScopeService? _customerScope;
 
-    public ArchivesController(IArchiveService archiveService)
+    public ArchivesController(IArchiveService archiveService, ICustomerScopeService? customerScope = null)
     {
         _archiveService = archiveService;
+        _customerScope = customerScope;
     }
+
+    /// <summary>下推给 Service 双保险的范围；缺少范围服务时返回 null，由守卫 fail-closed。</summary>
+    private async Task<CustomerScope?> ResolveScopeAsync() =>
+        _customerScope == null ? null : await _customerScope.ResolveAsync(User);
 
     /// <summary>
     /// 获取档案列表
@@ -39,7 +46,8 @@ public class ArchivesController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _archiveService.GetArchivesAsync(page, pageSize, keyword, type, areaId, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _archiveService.GetArchivesAsync(page, pageSize, keyword, type, areaId, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<ArchiveDto>>.Success(result);
         }
         catch (Exception ex)
@@ -54,6 +62,12 @@ public class ArchivesController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<ArchiveDto>>> GetArchive(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.Archive>(id, false))
+            {
+                return Ok(ApiResponse<ArchiveDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
@@ -82,8 +96,20 @@ public class ArchivesController : ControllerBase
     {
         try
         {
-            var result = await _archiveService.CreateArchiveAsync(request);
+            var target = await WriteTargetResolver.ResolveAsync(_customerScope, User, request.AppCode);
+            if (!target.Allowed)
+            {
+                return Ok(target.ErrorCode == 400
+                    ? ApiResponse.BadRequest(target.ErrorMessage)
+                    : ApiResponse.Forbidden(target.ErrorMessage));
+            }
+
+            var result = await _archiveService.CreateArchiveAsync(request, await ResolveScopeAsync());
             return ApiResponse<ArchiveDto>.Success(result, "档案创建成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -107,8 +133,12 @@ public class ArchivesController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _archiveService.UpdateArchiveAsync(id, request, appCode);
+            var result = await _archiveService.UpdateArchiveAsync(id, request, appCode, await ResolveScopeAsync());
             return ApiResponse<ArchiveDto>.Success(result, "档案更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -137,8 +167,12 @@ public class ArchivesController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            await _archiveService.DeleteArchiveAsync(id, appCode);
+            await _archiveService.DeleteArchiveAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("档案删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -166,8 +200,12 @@ public class ArchivesController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _archiveService.GetArchiveMarkersAsync(id, appCode);
+            var result = await _archiveService.GetArchiveMarkersAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse<List<ArchiveDeviceMarkerDto>>.Success(result);
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return ApiResponse<List<ArchiveDeviceMarkerDto>>.Forbidden(ex.Message);
         }
         catch (InvalidOperationException ex)
         {

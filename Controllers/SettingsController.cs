@@ -1,4 +1,4 @@
-﻿using IoTPlatform.DTOs.Requests;
+using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using IoTPlatform.Configuration;
+using IoTPlatform.Services.Guards;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,11 +20,17 @@ namespace IoTPlatform.Controllers;
 public class SettingsController : ControllerBase
 {
     private readonly ISettingsService _settingsService;
+    private readonly ICustomerScopeService? _customerScope;
 
-    public SettingsController(ISettingsService settingsService)
+    public SettingsController(ISettingsService settingsService, ICustomerScopeService? customerScope = null)
     {
         _settingsService = settingsService;
+        _customerScope = customerScope;
     }
+
+    /// <summary>下推给 Service 双保险的范围；缺少范围服务时返回 null，由守卫 fail-closed。</summary>
+    private async Task<CustomerScope?> ResolveScopeAsync() =>
+        _customerScope == null ? null : await _customerScope.ResolveAsync(User);
 
     /// <summary>
     /// 获取系统设置列表
@@ -38,7 +45,8 @@ public class SettingsController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _settingsService.GetSettingsAsync(page, pageSize, category, keyword, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _settingsService.GetSettingsAsync(page, pageSize, category, keyword, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<SettingDto>>.Success(result);
         }
         catch (Exception ex)
@@ -55,6 +63,12 @@ public class SettingsController : ControllerBase
     {
         try
         {
+            // B4/M6 + PII：设置值可能含连接串/密钥，先按 Key 点查归属再返回。
+            if (!await this.CanReadDetailByKeyAsync<IoTPlatform.Models.SystemSetting>(key, allowShared: true))
+            {
+                return Ok(ApiResponse<SettingDto>.Fail(403, "无权访问该设置"));
+            }
+
             var appCode = User.FindFirst("AppCode")?.Value;
             var result = await _settingsService.GetSettingAsync(key, appCode);
             if (result == null)
@@ -81,7 +95,9 @@ public class SettingsController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _settingsService.GetSettingsByCategoryAsync(category, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _settingsService.GetSettingsByCategoryAsync(
+                category, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<Dictionary<string, string?>>.Success(result);
         }
         catch (Exception ex)
@@ -99,8 +115,20 @@ public class SettingsController : ControllerBase
     {
         try
         {
-            var result = await _settingsService.CreateSettingAsync(request);
+            var target = await WriteTargetResolver.ResolveAsync(_customerScope, User, request.AppCode);
+            if (!target.Allowed)
+            {
+                return Ok(target.ErrorCode == 400
+                    ? ApiResponse.BadRequest(target.ErrorMessage)
+                    : ApiResponse.Forbidden(target.ErrorMessage));
+            }
+
+            var result = await _settingsService.CreateSettingAsync(request, await ResolveScopeAsync());
             return ApiResponse<SettingDto>.Success(result, "设置创建成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -124,8 +152,12 @@ public class SettingsController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _settingsService.UpdateSettingAsync(key, request, appCode);
+            var result = await _settingsService.UpdateSettingAsync(key, request, appCode, await ResolveScopeAsync());
             return ApiResponse<SettingDto>.Success(result, "设置更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -154,8 +186,12 @@ public class SettingsController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            await _settingsService.DeleteSettingAsync(key, appCode);
+            await _settingsService.DeleteSettingAsync(key, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("设置删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {

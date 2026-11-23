@@ -1,4 +1,4 @@
-﻿using IoTPlatform.Data.Repositories.Interfaces;
+using IoTPlatform.Data.Repositories.Interfaces;
 using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
@@ -8,6 +8,7 @@ using IoTPlatform.Configuration;
 using IoTPlatform.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using IoTPlatform.Services.Guards;
 using System.Text.Json;
 
 namespace IoTPlatform.Services;
@@ -83,7 +84,8 @@ public class ProtocolConfigService : IProtocolConfigService
         IServiceScopeFactory scopeFactory,
         IAnShengDiscoveryService? discoveryService = null,
         ILogger<ProtocolConfigService>? logger = null,
-        IOptions<AnShengEventOptions>? eventOptions = null)
+        IOptions<AnShengEventOptions>? eventOptions = null,
+        ICustomerScopeGuard? scopeGuard = null)
     {
         _protocolConfigRepository = protocolConfigRepository;
         _unitOfWork = unitOfWork;
@@ -92,7 +94,22 @@ public class ProtocolConfigService : IProtocolConfigService
         _discoveryService = discoveryService;
         _logger = logger;
         _eventOptions = eventOptions?.Value ?? new AnShengEventOptions();
+        _scopeGuard = scopeGuard;
     }
+
+    private readonly ICustomerScopeGuard? _scopeGuard;
+
+    /// <summary>守卫依赖缺失时 fail-closed，禁止静默降级为无校验写入。</summary>
+    private ICustomerScopeGuard RequireGuard() =>
+        _scopeGuard ?? throw new ForbiddenAccessException("缺少客户范围守卫，拒绝写入");
+
+    /// <summary>配置 AppCode="system" 属于平台共享行（设计 §3.5）。</summary>
+    private static bool IsSystemRow(string? appCode) =>
+        string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>写侧守卫：共享行仅超管可写；租户行按 Controller 下推的 scope 判定。</summary>
+    private Task AssertWriteAsync(CustomerScope? scope, string? appCode, CancellationToken ct = default) =>
+        RequireGuard().AssertWriteScopeByAppCodeAsync(scope, appCode, IsSystemRow(appCode), true, ct);
 
     /// <summary>
     /// 是否抑制既有数据桥（<c>ProtocolConfigService → IDataCollectionService</c>）对事件报文的落库。
@@ -186,9 +203,14 @@ public class ProtocolConfigService : IProtocolConfigService
     /// <summary>
     /// 获取协议配置列表
     /// </summary>
-    public async Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode) => GetProtocolConfigsAsync(page, pageSize, keyword, type, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<ProtocolConfigDto>> GetProtocolConfigsAsync(int page, int pageSize, string? keyword, string? type, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _protocolConfigRepository.GetQueryable();
+        query = query.ApplyQueryScopeWithShared(appCode, customerIds, appCodes);
 
         // 租户数据隔离
         if (!string.IsNullOrEmpty(appCode))
@@ -287,7 +309,10 @@ public class ProtocolConfigService : IProtocolConfigService
     /// <summary>
     /// 创建协议配置
     /// </summary>
-    public async Task<ProtocolConfigDto> CreateProtocolConfigAsync(CreateProtocolConfigRequest request, string? appCode = null)
+    public async Task<ProtocolConfigDto> CreateProtocolConfigAsync(
+        CreateProtocolConfigRequest request,
+        string? appCode = null,
+        CustomerScope? scope = null)
     {
         var config = new ProtocolConfig
         {
@@ -302,9 +327,9 @@ public class ProtocolConfigService : IProtocolConfigService
             // 让所有按 IsActive 的筛选把一个尚未启动的配置当成活跃配置。
             IsActive = false,
             Description = request.Description,
-            // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
-            // 普通租户的 appCode 由控制器 TenantAppCode 强制注入，忽略前端伪造值。
-            AppCode = appCode ?? request.AppCode,
+            // M2：新路径（Controller 下推 scope）绝不回退到 request.AppCode——请求体只是待校验目标。
+            // 旧签名仅为内部通道保留，才沿用历史回退语义。
+            AppCode = scope != null ? appCode : appCode ?? request.AppCode,
             DeviceIds = request.DeviceIds != null
                 ? JsonSerializer.Serialize(request.DeviceIds)
                 : null,
@@ -314,6 +339,11 @@ public class ProtocolConfigService : IProtocolConfigService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, config.AppCode);
+        }
 
         await _protocolConfigRepository.AddAsync(config);
         await _unitOfWork.SaveChangesAsync();
@@ -339,7 +369,8 @@ public class ProtocolConfigService : IProtocolConfigService
     /// <summary>
     /// 更新协议配置
     /// </summary>
-    public async Task<ProtocolConfigDto> UpdateProtocolConfigAsync(long id, UpdateProtocolConfigRequest request, string? appCode)
+    public async Task<ProtocolConfigDto> UpdateProtocolConfigAsync(
+        long id, UpdateProtocolConfigRequest request, string? appCode, CustomerScope? scope = null)
     {
         var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
@@ -347,17 +378,32 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议配置不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, config.AppCode);
+
+            // M3c：非超管不得改写归属；请求体携带别的 AppCode 视为租户劫持，直接 403。
+            if (scope.Mode != CustomerScopeMode.All
+                && !string.IsNullOrWhiteSpace(request.AppCode)
+                && !string.Equals(request.AppCode, config.AppCode, StringComparison.Ordinal))
+            {
+                throw new ForbiddenAccessException("禁止改写协议配置的租户归属");
+            }
+        }
+        else if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该协议配置");
         }
 
-        // 【租户归属】仅超管（TenantAppCode 为空）可通过编辑指派目标租户，用于修复历史无主配置；
-        // 普通租户传值一律忽略，防止越权改归属。
-        if (string.IsNullOrEmpty(appCode) && !string.IsNullOrWhiteSpace(request.AppCode))
+        // 【租户归属】仅超管（下推 scope.Mode=All）可通过编辑指派目标租户，用于修复历史无主配置。
+        if (scope?.Mode == CustomerScopeMode.All && !string.IsNullOrWhiteSpace(request.AppCode))
         {
             config.AppCode = request.AppCode;
+        }
+        else if (scope == null && string.IsNullOrEmpty(appCode) && !string.IsNullOrWhiteSpace(request.AppCode))
+        {
+            config.AppCode = request.AppCode; // 旧签名：平台通道沿用历史语义。
         }
 
         config.Name = request.Name;
@@ -408,7 +454,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// <summary>
     /// 删除协议配置
     /// </summary>
-    public async Task DeleteProtocolConfigAsync(long id, string? appCode)
+    public async Task DeleteProtocolConfigAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
@@ -416,8 +462,12 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议配置不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, config.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该协议配置");
         }
@@ -441,7 +491,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// 3. 【P2】订阅 DataReceived 事件 → 桥接到 IDataCollectionService
     /// 4. 更新数据库状态为 active
     /// </summary>
-    public async Task StartProtocolAsync(long id, string? appCode)
+    public async Task StartProtocolAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
@@ -449,7 +499,7 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议配置不存在");
         }
 
-        await StartProtocolCoreAsync(config, appCode);
+        await StartProtocolCoreAsync(config, appCode, scope);
     }
 
     /// <summary>
@@ -459,10 +509,14 @@ public class ProtocolConfigService : IProtocolConfigService
     /// </summary>
     /// <param name="config">已取到的协议配置实体。</param>
     /// <param name="appCode">调用方租户码，用于权限校验（可为空）。</param>
-    private async Task StartProtocolCoreAsync(ProtocolConfig config, string? appCode)
+    private async Task StartProtocolCoreAsync(ProtocolConfig config, string? appCode, CustomerScope? scope = null)
     {
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
+        // 权限检查：必须在适配器启动/订阅之前完成（零副作用）。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, config.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权启动该协议配置");
         }
@@ -588,7 +642,7 @@ public class ProtocolConfigService : IProtocolConfigService
     /// 2. 释放协议适配器（断开 + Dispose）
     /// 3. 更新数据库状态为 inactive
     /// </summary>
-    public async Task StopProtocolAsync(long id, string? appCode)
+    public async Task StopProtocolAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var config = await _protocolConfigRepository.GetByIdAsync(id);
         if (config == null)
@@ -596,8 +650,12 @@ public class ProtocolConfigService : IProtocolConfigService
             throw new InvalidOperationException("协议配置不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
+        // 权限检查：必须在取消订阅/释放适配器之前完成。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, config.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && config.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权停止该协议配置");
         }

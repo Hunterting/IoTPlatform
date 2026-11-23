@@ -1,4 +1,4 @@
-﻿using IoTPlatform.DTOs.Requests;
+using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using IoTPlatform.Configuration;
+using IoTPlatform.Services.Guards;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,11 +20,19 @@ namespace IoTPlatform.Controllers;
 public class DictionariesController : ControllerBase
 {
     private readonly IDictionaryService _dictionaryService;
+    private readonly ICustomerScopeService? _customerScope;
 
-    public DictionariesController(IDictionaryService dictionaryService)
+    public DictionariesController(
+        IDictionaryService dictionaryService,
+        ICustomerScopeService? customerScope = null)
     {
         _dictionaryService = dictionaryService;
+        _customerScope = customerScope;
     }
+
+    /// <summary>下推给 Service 双保险的范围；缺少范围服务时返回 null，由守卫 fail-closed。</summary>
+    private async Task<CustomerScope?> ResolveScopeAsync() =>
+        _customerScope == null ? null : await _customerScope.ResolveAsync(User);
 
     /// <summary>
     /// 租户过滤码：普通租户取自身 AppCode；超管（无 AppCode / system）返回 null 表示看全部。
@@ -51,7 +60,8 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            var result = await _dictionaryService.GetDictionaryTypesAsync(page, pageSize, keyword, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _dictionaryService.GetDictionaryTypesAsync(page, pageSize, keyword, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<DictionaryTypeDto>>.Success(result);
         }
         catch (Exception ex)
@@ -66,6 +76,12 @@ public class DictionariesController : ControllerBase
     [HttpGet("types/{id}")]
     public async Task<ActionResult<ApiResponse<DictionaryTypeDto>>> GetDictionaryType(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.DictionaryTypeConfig>(id, true))
+            {
+                return Ok(ApiResponse<DictionaryTypeDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = TenantAppCode;
@@ -94,10 +110,21 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            // 租户传的 appCode 被 JWT 覆盖（防越权）；超管可代租户创建。
-            var effectiveAppCode = TenantAppCode ?? request.AppCode;
-            var result = await _dictionaryService.CreateDictionaryTypeAsync(request, effectiveAppCode);
+            // M2：请求体 AppCode 仅为待校验目标；admin 走 DB 授权集合，归属由服务端派生。
+            var target = await WriteTargetResolver.ResolveAsync(_customerScope, User, request.AppCode);
+            if (!target.Allowed)
+            {
+                return Ok(target.ErrorCode == 400
+                    ? ApiResponse.BadRequest(target.ErrorMessage)
+                    : ApiResponse.Forbidden(target.ErrorMessage));
+            }
+
+            var result = await _dictionaryService.CreateDictionaryTypeAsync(request, target.AppCode, await ResolveScopeAsync());
             return ApiResponse<DictionaryTypeDto>.Success(result, "字典类型创建成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -121,8 +148,12 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            var result = await _dictionaryService.UpdateDictionaryTypeAsync(id, request, appCode);
+            var result = await _dictionaryService.UpdateDictionaryTypeAsync(id, request, appCode, await ResolveScopeAsync());
             return ApiResponse<DictionaryTypeDto>.Success(result, "字典类型更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -151,8 +182,12 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            await _dictionaryService.DeleteDictionaryTypeAsync(id, appCode);
+            await _dictionaryService.DeleteDictionaryTypeAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("字典类型删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -184,7 +219,8 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            var result = await _dictionaryService.GetDictionaryItemsAsync(type, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _dictionaryService.GetDictionaryItemsAsync(type, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<List<DictionaryItemDto>>.Success(result);
         }
         catch (Exception ex)
@@ -199,6 +235,12 @@ public class DictionariesController : ControllerBase
     [HttpGet("items/{id}")]
     public async Task<ActionResult<ApiResponse<DictionaryItemDto>>> GetDictionaryItem(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.DictionaryItem>(id, true))
+            {
+                return Ok(ApiResponse<DictionaryItemDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = TenantAppCode;
@@ -227,10 +269,21 @@ public class DictionariesController : ControllerBase
     {
         try
         {
-            // 租户传的 appCode 被 JWT 覆盖（防越权）；超管可代租户创建。
-            var effectiveAppCode = TenantAppCode ?? request.AppCode;
-            var result = await _dictionaryService.CreateDictionaryItemAsync(request, effectiveAppCode);
+            // M2：请求体 AppCode 仅为待校验目标；admin 走 DB 授权集合，归属由服务端派生。
+            var target = await WriteTargetResolver.ResolveAsync(_customerScope, User, request.AppCode);
+            if (!target.Allowed)
+            {
+                return Ok(target.ErrorCode == 400
+                    ? ApiResponse.BadRequest(target.ErrorMessage)
+                    : ApiResponse.Forbidden(target.ErrorMessage));
+            }
+
+            var result = await _dictionaryService.CreateDictionaryItemAsync(request, target.AppCode, await ResolveScopeAsync());
             return ApiResponse<DictionaryItemDto>.Success(result, "字典项创建成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -254,8 +307,12 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            var result = await _dictionaryService.UpdateDictionaryItemAsync(id, request, appCode);
+            var result = await _dictionaryService.UpdateDictionaryItemAsync(id, request, appCode, await ResolveScopeAsync());
             return ApiResponse<DictionaryItemDto>.Success(result, "字典项更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -284,8 +341,12 @@ public class DictionariesController : ControllerBase
         try
         {
             var appCode = TenantAppCode;
-            await _dictionaryService.DeleteDictionaryItemAsync(id, appCode);
+            await _dictionaryService.DeleteDictionaryItemAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("字典项删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {

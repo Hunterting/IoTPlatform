@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -33,12 +34,18 @@ public class RoleService : IRoleService
     /// <summary>
     /// 获取角色列表
     /// </summary>
-    public async Task<PagedResponse<RoleDto>> GetRolesAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<RoleDto>> GetRolesAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole) => GetRolesAsync(page, pageSize, keyword, appCode, currentUserRole, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<RoleDto>> GetRolesAsync(int page, int pageSize, string? keyword, string? appCode, string? currentUserRole, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         // 超级管理员可以查看所有角色，其他角色只能查看所属租户的角色
         var queryAppCode = (currentUserRole != Configuration.Roles.SUPER_ADMIN && !string.IsNullOrEmpty(appCode)) ? appCode : null;
 
         var query = _roleRepository.GetQueryable(queryAppCode);
+        // B4 QA-D2：平台级角色（AppCode="system"）对所有角色可读；越集私有角色仍被过滤。
+        query = query.ApplyQueryScopeWithShared(appCode, customerIds, appCodes);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -101,9 +108,46 @@ public class RoleService : IRoleService
     }
 
     /// <summary>
-    /// 创建角色
+    /// 创建角色（旧签名保留：超管/下级原路径逐字不改）。
     /// </summary>
     public async Task<RoleDto> CreateRoleAsync(CreateRoleRequest request, string? appCode = null, string? currentUserRole = null)
+    {
+        string? resolvedAppCode = appCode;
+        if (currentUserRole == Configuration.Roles.SUPER_ADMIN && request.CustomerId.HasValue)
+        {
+            var targetCustomer = await _customerRepository.GetByIdAsync(request.CustomerId.Value);
+            resolvedAppCode = targetCustomer?.AppCode;
+        }
+
+        return await CreateRoleCoreAsync(request, resolvedAppCode).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// M10 提权面二次防御重载：仅当 Controller 已用 DB 授权集合校验目标客户、
+    /// 并完成权限白名单降级时，才允许写入显式归属的角色。
+    /// </summary>
+    /// <param name="request">创建请求。</param>
+    /// <param name="resolvedAppCode">服务端派生的客户 AppCode，严禁为 null。</param>
+    /// <param name="customerScopeVerified">Controller 是否已完成归属与权限校验。</param>
+    public Task<RoleDto> CreateRoleAsync(CreateRoleRequest request, string? resolvedAppCode, bool customerScopeVerified)
+    {
+        if (!customerScopeVerified)
+        {
+            return Task.FromException<RoleDto>(
+                new ForbiddenAccessException("角色创建未通过客户范围校验"));
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedAppCode))
+        {
+            return Task.FromException<RoleDto>(
+                new InvalidOperationException("目标客户缺少 AppCode，禁止创建平台级角色"));
+        }
+
+        return CreateRoleCoreAsync(request, resolvedAppCode);
+    }
+
+    /// <summary>创建角色真正写库的核心实现（所有调用方必须先完成归属判定）。</summary>
+    private async Task<RoleDto> CreateRoleCoreAsync(CreateRoleRequest request, string? resolvedAppCode)
     {
         // 检查角色代码是否已存在
         var exists = await _roleRepository.CodeExistsAsync(request.Code);
@@ -117,14 +161,6 @@ public class RoleService : IRoleService
             ? JsonSerializer.Serialize(request.Permissions)
             : null;
 
-        // 超管可指定目标租户（CustomerId）归属角色；普通租户忽略该字段，沿用自身 AppCode
-        string? resolvedAppCode = appCode;
-        if (currentUserRole == Configuration.Roles.SUPER_ADMIN && request.CustomerId.HasValue)
-        {
-            var targetCustomer = await _customerRepository.GetByIdAsync(request.CustomerId.Value);
-            resolvedAppCode = targetCustomer?.AppCode;
-        }
-
         var role = new Role
         {
             Code = request.Code,
@@ -132,7 +168,8 @@ public class RoleService : IRoleService
             Description = request.Description,
             Permissions = permissionsJson,
             DataScope = request.DataScope,
-            AppCode = resolvedAppCode, // 角色归属当前租户 AppCode；超管 JWT AppCode 为空 → null（平台级角色）；超管指定 CustomerId 时归属到该租户
+            // 归属一律服务端派生；M10 路径已强制非 null（平台级角色只能由旧签名内部通道创建）。
+            AppCode = resolvedAppCode,
             IsSystem = false,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
@@ -160,19 +197,46 @@ public class RoleService : IRoleService
     /// <summary>
     /// 更新角色
     /// </summary>
-    public async Task<RoleDto> UpdateRoleAsync(long id, UpdateRoleRequest request, string? appCode, string? currentUserRole)
+    public Task<RoleDto> UpdateRoleAsync(long id, UpdateRoleRequest request, string? appCode, string? currentUserRole)
+        => UpdateRoleCoreAsync(id, request, appCode, currentUserRole, null, false);
+
+    /// <summary>
+    /// B5/M8 三分支改删重载：范围由 Controller 显式解析后下推；未校验通过一律 403。
+    /// </summary>
+    public Task<RoleDto> UpdateRoleAsync(
+        long id, UpdateRoleRequest request, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException<RoleDto>(
+                new ForbiddenAccessException("角色更新未通过客户范围校验"));
+        }
+
+        return UpdateRoleCoreAsync(id, request, appCode, null, scope, true);
+    }
+
+    private async Task<RoleDto> UpdateRoleCoreAsync(
+        long id,
+        UpdateRoleRequest request,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("角色更新未通过客户范围校验");
+        }
+
         var role = await _roleRepository.GetByIdAsync(id);
         if (role == null)
         {
             throw new InvalidOperationException("角色不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && role.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权修改该角色");
-        }
+        // B5/M8：Role 无 CustomerId 列，Multi 分支按 DB 派生的 scope.AppCodes 反查比对。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, null, role.AppCode, appCode, currentUserRole, "修改该角色");
 
         // 系统角色不能修改
         if (role.IsSystem)
@@ -213,19 +277,41 @@ public class RoleService : IRoleService
     /// <summary>
     /// 删除角色
     /// </summary>
-    public async Task DeleteRoleAsync(long id, string? appCode, string? currentUserRole)
+    public Task DeleteRoleAsync(long id, string? appCode, string? currentUserRole)
+        => DeleteRoleCoreAsync(id, appCode, currentUserRole, null, false);
+
+    /// <summary>B5/M8 三分支删除重载：范围由 Controller 显式解析后下推；未校验通过一律 403。</summary>
+    public Task DeleteRoleAsync(long id, string? appCode, CustomerScope scope, bool customerScopeVerified)
     {
+        if (scope == null || !customerScopeVerified)
+        {
+            return Task.FromException(new ForbiddenAccessException("角色删除未通过客户范围校验"));
+        }
+
+        return DeleteRoleCoreAsync(id, appCode, null, scope, true);
+    }
+
+    private async Task DeleteRoleCoreAsync(
+        long id,
+        string? appCode,
+        string? currentUserRole,
+        CustomerScope? scope,
+        bool customerScopeVerified)
+    {
+        if (scope != null && !customerScopeVerified)
+        {
+            throw new ForbiddenAccessException("角色删除未通过客户范围校验");
+        }
+
         var role = await _roleRepository.GetByIdAsync(id);
         if (role == null)
         {
             throw new InvalidOperationException("角色不存在");
         }
 
-        // 权限检查
-        if (currentUserRole != Configuration.Roles.SUPER_ADMIN && role.AppCode != appCode)
-        {
-            throw new UnauthorizedAccessException("无权删除该角色");
-        }
+        // B5/M8：Role 无 CustomerId 列，Multi 分支按 DB 派生的 scope.AppCodes 反查比对。
+        WriteScopeAssertion.EnsureCanWrite(
+            scope, null, role.AppCode, appCode, currentUserRole, "删除该角色");
 
         // 系统角色不能删除
         if (role.IsSystem)

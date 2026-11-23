@@ -1,4 +1,4 @@
-﻿using IoTPlatform.DTOs.Requests;
+using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Filters;
 using IoTPlatform.Helpers;
@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using IoTPlatform.Configuration;
+using IoTPlatform.Services.Guards;
 
 namespace IoTPlatform.Controllers;
 
@@ -19,11 +20,17 @@ namespace IoTPlatform.Controllers;
 public class ETLTasksController : ControllerBase
 {
     private readonly IETLTaskService _etlTaskService;
+    private readonly ICustomerScopeService? _customerScope;
 
-    public ETLTasksController(IETLTaskService etlTaskService)
+    public ETLTasksController(IETLTaskService etlTaskService, ICustomerScopeService? customerScope = null)
     {
         _etlTaskService = etlTaskService;
+        _customerScope = customerScope;
     }
+
+    /// <summary>下推给 Service 双保险的范围；缺少范围服务时返回 null，由守卫 fail-closed。</summary>
+    private async Task<CustomerScope?> ResolveScopeAsync() =>
+        _customerScope == null ? null : await _customerScope.ResolveAsync(User);
 
     /// <summary>
     /// 获取ETL任务列表
@@ -38,7 +45,8 @@ public class ETLTasksController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _etlTaskService.GetETLTasksAsync(page, pageSize, keyword, taskType, appCode);
+            var listScope = await this.ResolveListScopeAsync(_customerScope);
+            var result = await _etlTaskService.GetETLTasksAsync(page, pageSize, keyword, taskType, appCode, listScope.CustomerIds, listScope.AppCodes);
             return ApiResponse<PagedResponse<ETLTaskDto>>.Success(result);
         }
         catch (Exception ex)
@@ -53,6 +61,12 @@ public class ETLTasksController : ControllerBase
     [HttpGet("{id}")]
     public async Task<ActionResult<ApiResponse<ETLTaskDto>>> GetETLTask(long id)
     {
+            // B4/M6：先点查权威归属并按 scope 三分支判定；越权 HTTP 200 + Code=403。
+            if (!await this.CanReadDetailAsync<IoTPlatform.Models.ETLTask>(id, false))
+            {
+                return Ok(ApiResponse<ETLTaskDto>.Fail(403, "无权访问该记录"));
+            }
+
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
@@ -81,8 +95,20 @@ public class ETLTasksController : ControllerBase
     {
         try
         {
-            var result = await _etlTaskService.CreateETLTaskAsync(request);
+            var target = await WriteTargetResolver.ResolveAsync(_customerScope, User, request.AppCode);
+            if (!target.Allowed)
+            {
+                return Ok(target.ErrorCode == 400
+                    ? ApiResponse.BadRequest(target.ErrorMessage)
+                    : ApiResponse.Forbidden(target.ErrorMessage));
+            }
+
+            var result = await _etlTaskService.CreateETLTaskAsync(request, await ResolveScopeAsync());
             return ApiResponse<ETLTaskDto>.Success(result, "ETL任务创建成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -106,8 +132,12 @@ public class ETLTasksController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            var result = await _etlTaskService.UpdateETLTaskAsync(id, request, appCode);
+            var result = await _etlTaskService.UpdateETLTaskAsync(id, request, appCode, await ResolveScopeAsync());
             return ApiResponse<ETLTaskDto>.Success(result, "ETL任务更新成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -136,8 +166,12 @@ public class ETLTasksController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            await _etlTaskService.DeleteETLTaskAsync(id, appCode);
+            await _etlTaskService.DeleteETLTaskAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("ETL任务删除成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -166,8 +200,12 @@ public class ETLTasksController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            await _etlTaskService.StartETLTaskAsync(id, appCode);
+            await _etlTaskService.StartETLTaskAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("ETL任务启动成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {
@@ -196,8 +234,12 @@ public class ETLTasksController : ControllerBase
         try
         {
             var appCode = User.FindFirst("AppCode")?.Value;
-            await _etlTaskService.StopETLTaskAsync(id, appCode);
+            await _etlTaskService.StopETLTaskAsync(id, appCode, await ResolveScopeAsync());
             return ApiResponse.Success("ETL任务停止成功");
+        }
+        catch (ForbiddenAccessException ex)
+        {
+            return Ok(ApiResponse.Forbidden(ex.Message));
         }
         catch (InvalidOperationException ex)
         {

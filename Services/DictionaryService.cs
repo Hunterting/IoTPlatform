@@ -3,6 +3,7 @@ using IoTPlatform.DTOs.Requests;
 using IoTPlatform.DTOs.Responses;
 using IoTPlatform.Helpers;
 using IoTPlatform.Models;
+using IoTPlatform.Services.Guards;
 using Microsoft.EntityFrameworkCore;
 
 namespace IoTPlatform.Services;
@@ -14,21 +15,41 @@ public class DictionaryService : IDictionaryService
 {
     private readonly IDictionaryRepository _dictionaryRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICustomerScopeGuard? _scopeGuard;
 
     public DictionaryService(
         IDictionaryRepository dictionaryRepository,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        ICustomerScopeGuard? scopeGuard = null)
     {
         _dictionaryRepository = dictionaryRepository;
         _unitOfWork = unitOfWork;
+        _scopeGuard = scopeGuard;
     }
+
+    /// <summary>守卫依赖缺失时 fail-closed，禁止静默降级为无校验写入。</summary>
+    private ICustomerScopeGuard RequireGuard() =>
+        _scopeGuard ?? throw new ForbiddenAccessException("缺少客户范围守卫，拒绝写入");
+
+    /// <summary>字典 AppCode="system" 属于平台共享行（设计 §3.5）。</summary>
+    private static bool IsSystemRow(string? appCode) =>
+        string.Equals(appCode, "system", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>写侧守卫：共享行仅超管可写，租户行按 Controller 下推的 scope 判定。</summary>
+    private Task AssertWriteAsync(CustomerScope? scope, string? appCode, CancellationToken ct = default) =>
+        RequireGuard().AssertWriteScopeByAppCodeAsync(scope, appCode, IsSystemRow(appCode), true, ct);
 
     /// <summary>
     /// 获取字典类型列表
     /// </summary>
-    public async Task<PagedResponse<DictionaryTypeDto>> GetDictionaryTypesAsync(int page, int pageSize, string? keyword, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<PagedResponse<DictionaryTypeDto>> GetDictionaryTypesAsync(int page, int pageSize, string? keyword, string? appCode) => GetDictionaryTypesAsync(page, pageSize, keyword, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<PagedResponse<DictionaryTypeDto>> GetDictionaryTypesAsync(int page, int pageSize, string? keyword, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _dictionaryRepository.GetTypesQuery(appCode);
+        query = query.ApplyQueryScopeWithShared(appCode, customerIds, appCodes);
 
         // 关键词搜索
         if (!string.IsNullOrEmpty(keyword))
@@ -89,7 +110,10 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 创建字典类型
     /// </summary>
-    public async Task<DictionaryTypeDto> CreateDictionaryTypeAsync(CreateDictionaryTypeRequest request, string? appCode = null)
+    public async Task<DictionaryTypeDto> CreateDictionaryTypeAsync(
+        CreateDictionaryTypeRequest request,
+        string? appCode = null,
+        CustomerScope? scope = null)
     {
         // 全局唯一：类型 Code 跨所有租户 + system 不得重复（用户确认「全局唯一·禁止复用」）
         var typeExists = await _dictionaryRepository.TypeCodeExistsAsync(request.Code, appCode: null, includeSystem: true);
@@ -106,10 +130,17 @@ public class DictionaryService : IDictionaryService
             SortOrder = request.SortOrder,
             IsActive = request.IsActive,
             // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
-            AppCode = appCode ?? request.AppCode,
+            // M2：新路径绝不回退到请求体 AppCode；旧签名仅供内部通道沿用历史语义。
+            AppCode = scope != null ? appCode : appCode ?? request.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        // 双保险：Controller 下推 scope 时，写库前由统一判据复核目标归属。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, type.AppCode);
+        }
 
         await _dictionaryRepository.AddTypeAsync(type);
         await _unitOfWork.SaveChangesAsync();
@@ -131,7 +162,8 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 更新字典类型
     /// </summary>
-    public async Task<DictionaryTypeDto> UpdateDictionaryTypeAsync(long id, UpdateDictionaryTypeRequest request, string? appCode)
+    public async Task<DictionaryTypeDto> UpdateDictionaryTypeAsync(
+        long id, UpdateDictionaryTypeRequest request, string? appCode, CustomerScope? scope = null)
     {
         var type = await _dictionaryRepository.GetTypeByIdAsync(id);
         if (type == null)
@@ -139,8 +171,12 @@ public class DictionaryService : IDictionaryService
             throw new InvalidOperationException("字典类型不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && type.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, type.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && type.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该字典类型");
         }
@@ -171,7 +207,7 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 删除字典类型
     /// </summary>
-    public async Task DeleteDictionaryTypeAsync(long id, string? appCode)
+    public async Task DeleteDictionaryTypeAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var type = await _dictionaryRepository.GetTypeByIdAsync(id);
         if (type == null)
@@ -179,8 +215,12 @@ public class DictionaryService : IDictionaryService
             throw new InvalidOperationException("字典类型不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && type.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, type.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && type.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该字典类型");
         }
@@ -199,9 +239,14 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 根据类型获取字典项列表
     /// </summary>
-    public async Task<List<DictionaryItemDto>> GetDictionaryItemsAsync(string type, string? appCode)
+        /// <summary>旧签名保留：委托到范围下推重载，下级/内部路径零回归。</summary>
+    public Task<List<DictionaryItemDto>> GetDictionaryItemsAsync(string type, string? appCode) => GetDictionaryItemsAsync(type, appCode, null, null);
+
+    /// <summary>B4/M5：admin 的 appCode=null 不再等于零过滤。</summary>
+    public async Task<List<DictionaryItemDto>> GetDictionaryItemsAsync(string type, string? appCode, IReadOnlyCollection<long>? customerIds, IReadOnlyCollection<string>? appCodes = null)
     {
         var query = _dictionaryRepository.GetItemsQuery(appCode, type, activeOnly: true);
+        query = query.ApplyQueryScopeWithShared(appCode, customerIds, appCodes);
 
         var items = await query
             .OrderBy(d => d.Sort)
@@ -252,7 +297,10 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 创建字典项
     /// </summary>
-    public async Task<DictionaryItemDto> CreateDictionaryItemAsync(CreateDictionaryItemRequest request, string? appCode = null)
+    public async Task<DictionaryItemDto> CreateDictionaryItemAsync(
+        CreateDictionaryItemRequest request,
+        string? appCode = null,
+        CustomerScope? scope = null)
     {
         // 类型存在性校验：允许引用 appCode=system 的平台共享类型，租户可在共享类型下自建本租户字典项。
         // 与 CreateDictionaryTypeAsync 的同名唯一性校验（includeSystem 默认 false）语义不同，勿混用。
@@ -277,10 +325,16 @@ public class DictionaryService : IDictionaryService
             Description = request.Description,
             Status = "active",
             // JWT 优先、超管可代建：服务端 appCode 为 null 时才回退到 request.AppCode。
-            AppCode = appCode ?? request.AppCode,
+            // M2：新路径绝不回退到请求体 AppCode；旧签名仅供内部通道沿用历史语义。
+            AppCode = scope != null ? appCode : appCode ?? request.AppCode,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
+
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, item.AppCode);
+        }
 
         await _dictionaryRepository.AddItemAsync(item);
         await _unitOfWork.SaveChangesAsync();
@@ -303,7 +357,8 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 更新字典项
     /// </summary>
-    public async Task<DictionaryItemDto> UpdateDictionaryItemAsync(long id, UpdateDictionaryItemRequest request, string? appCode)
+    public async Task<DictionaryItemDto> UpdateDictionaryItemAsync(
+        long id, UpdateDictionaryItemRequest request, string? appCode, CustomerScope? scope = null)
     {
         var item = await _dictionaryRepository.GetItemByIdAsync(id);
         if (item == null)
@@ -311,8 +366,12 @@ public class DictionaryService : IDictionaryService
             throw new InvalidOperationException("字典项不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && item.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, item.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && item.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权修改该字典项");
         }
@@ -344,7 +403,7 @@ public class DictionaryService : IDictionaryService
     /// <summary>
     /// 删除字典项
     /// </summary>
-    public async Task DeleteDictionaryItemAsync(long id, string? appCode)
+    public async Task DeleteDictionaryItemAsync(long id, string? appCode, CustomerScope? scope = null)
     {
         var item = await _dictionaryRepository.GetItemByIdAsync(id);
         if (item == null)
@@ -352,8 +411,12 @@ public class DictionaryService : IDictionaryService
             throw new InvalidOperationException("字典项不存在");
         }
 
-        // 权限检查
-        if (!string.IsNullOrEmpty(appCode) && item.AppCode != appCode)
+        // 权限检查：新路径按 scope fail-closed；旧签名仅供内部通道沿用。
+        if (scope != null)
+        {
+            await AssertWriteAsync(scope, item.AppCode);
+        }
+        else if (!string.IsNullOrEmpty(appCode) && item.AppCode != appCode)
         {
             throw new UnauthorizedAccessException("无权删除该字典项");
         }
