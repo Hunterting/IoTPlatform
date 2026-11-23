@@ -43,7 +43,7 @@ public sealed class UserCustomerGrantTests : IDisposable
             }
         };
 
-        // 客户 1..5 + 两个 admin（10/11）+ 一个 chef（20，不得作为分配目标）。
+        // 客户 1..5 + 两个 admin（10/11）+ 一个普通用户（20，不得作为分配目标）。
         for (long id = 1; id <= 5; id++)
         {
             _db.Customers.Add(new Customer
@@ -59,7 +59,7 @@ public sealed class UserCustomerGrantTests : IDisposable
         }
         SeedUser(10, "adminA@x.local", Roles.ADMIN);
         SeedUser(11, "adminB@x.local", Roles.ADMIN);
-        SeedUser(20, "chef@x.local", Roles.CHEF);
+        SeedUser(20, "user@x.local", Roles.USER);
         _db.SaveChanges();
         _db.ChangeTracker.Clear();
     }

@@ -100,7 +100,7 @@ public sealed class CustomerScopeServiceTests : IDisposable
         var throwingSut = new CustomerScopeService(
             new ThrowingUserCustomerRepository(),
             new Data.Repositories.Implementations.CustomerRepository(_db));
-        var principal = Principal(20, Roles.CHEF, customerId: 1, appCode: "customer_001");
+        var principal = Principal(20, Roles.OPERATOR, customerId: 1, appCode: "customer_001");
 
         var scope = await throwingSut.ResolveAsync(principal);
 
@@ -140,9 +140,9 @@ public sealed class CustomerScopeServiceTests : IDisposable
         Assert.True(await _sut.CanAccessCustomerAsync(Principal(10, Roles.ADMIN, managedClaim: "3"), 2));
         Assert.False(await _sut.CanAccessCustomerAsync(Principal(10, Roles.ADMIN, managedClaim: "1,2"), 3));
         Assert.True(await _sut.CanAccessCustomerAsync(
-            Principal(20, Roles.CHEF, customerId: 1, appCode: "customer_001"), 1));
+            Principal(20, Roles.OPERATOR, customerId: 1, appCode: "customer_001"), 1));
         Assert.False(await _sut.CanAccessCustomerAsync(
-            Principal(20, Roles.CHEF, customerId: 1, appCode: "customer_001"), 2));
+            Principal(20, Roles.OPERATOR, customerId: 1, appCode: "customer_001"), 2));
     }
 
     [Fact(DisplayName = "SCOPE-06b 存量下级无 CustomerId claim → CanAccess 回退 AppCode 比对，且零 user_customers 访问")]
@@ -152,7 +152,7 @@ public sealed class CustomerScopeServiceTests : IDisposable
         var throwingSut = new CustomerScopeService(
             new ThrowingUserCustomerRepository(),
             new Data.Repositories.Implementations.CustomerRepository(_db));
-        var principal = Principal(20, Roles.CHEF, appCode: "customer_001"); // 无 CustomerId claim
+        var principal = Principal(20, Roles.OPERATOR, appCode: "customer_001"); // 无 CustomerId claim
 
         Assert.True(await throwingSut.CanAccessCustomerAsync(principal, 1), "自身客户区域必须放行");
         Assert.False(await throwingSut.CanAccessCustomerAsync(principal, 2), "其它客户区域必须拒绝");

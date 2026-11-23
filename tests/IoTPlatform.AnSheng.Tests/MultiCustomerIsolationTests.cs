@@ -66,7 +66,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
         SeedUser(1, SuperEmail, Roles.SUPER_ADMIN, isSuperAdmin: true);
         SeedUser(10, AdminAEmail, Roles.ADMIN);
         SeedUser(11, AdminBEmail, Roles.ADMIN);
-        SeedUser(20, "chef@x.local", Roles.CHEF, customerId: 1, appCode: "customer_001");
+        SeedUser(20, "operator@x.local", Roles.OPERATOR, customerId: 1, appCode: "customer_001");
         _db.SaveChanges();
 
         _grants = new UserCustomerRepository(_db);
@@ -138,7 +138,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
     public async Task Admin_CreateUser_InGrant_SucceedsWithoutExpandingGrants()
     {
         _users.ControllerContext.HttpContext.User = AdminAPrincipal();
-        var request = NewUserRequest("newchef@x.local", 1);
+        var request = NewUserRequest("newoperator@x.local", 1);
 
         var response = UnwrapGeneric<UserResponseDto>(await _users.CreateUser(request));
 
@@ -146,7 +146,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
         Assert.NotNull(response.Data);
         Assert.Equal("customer_001", response.Data!.AppCode);
         var stored = await _db.Users.AsNoTracking().IgnoreQueryFilters()
-            .FirstAsync(u => u.Email == "newchef@x.local");
+            .FirstAsync(u => u.Email == "newoperator@x.local");
         Assert.Equal(1, stored.CustomerId);
         Assert.Equal("customer_001", stored.AppCode);
         // 建户不得顺带写 user_customers（D9）：授权集合仍与基线一致。
@@ -191,7 +191,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
     {
         var jwt = new JwtHelper(CreateJwtConfiguration());
         var adminToken = jwt.GenerateToken(10, AdminAEmail, Roles.ADMIN, null, null, "1,2,3", "1,2");
-        var chefToken = jwt.GenerateToken(20, "chef@x.local", Roles.CHEF, 1, "customer_001", "1");
+        var subordinateToken = jwt.GenerateToken(20, "operator@x.local", Roles.OPERATOR, 1, "customer_001", "1");
 
         var adminClaims = ReadToken(adminToken).Claims;
         Assert.Equal("1,2", adminClaims.First(c => c.Type == CustomerScopeConstants.ClaimManagedCustomerIds).Value);
@@ -199,11 +199,11 @@ public sealed class MultiCustomerIsolationTests : IDisposable
         Assert.DoesNotContain(adminClaims, c => c.Type == "CustomerId");
         Assert.Equal(new long[] { 1, 2 }, jwt.GetManagedCustomerIdsFromToken(adminToken));
 
-        var chefClaims = ReadToken(chefToken).Claims;
-        Assert.DoesNotContain(chefClaims, c => c.Type == CustomerScopeConstants.ClaimManagedCustomerIds);
-        Assert.Equal("1", chefClaims.First(c => c.Type == "CustomerId").Value);
-        Assert.Equal("customer_001", chefClaims.First(c => c.Type == "AppCode").Value);
-        Assert.Null(jwt.GetManagedCustomerIdsFromToken(chefToken));
+        var subordinateClaims = ReadToken(subordinateToken).Claims;
+        Assert.DoesNotContain(subordinateClaims, c => c.Type == CustomerScopeConstants.ClaimManagedCustomerIds);
+        Assert.Equal("1", subordinateClaims.First(c => c.Type == "CustomerId").Value);
+        Assert.Equal("customer_001", subordinateClaims.First(c => c.Type == "AppCode").Value);
+        Assert.Null(jwt.GetManagedCustomerIdsFromToken(subordinateToken));
     }
 
     // ───────────────────────────── D6 / P-E / RESTRICT ─────────────────────────────
@@ -290,7 +290,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
     private static ClaimsPrincipal AdminBPrincipal() => Principal(11, Roles.ADMIN, managedClaim: "3");
 
     private static ClaimsPrincipal SubordinatePrincipal() => Principal(
-        20, Roles.CHEF, customerId: 1, appCode: "customer_001");
+        20, Roles.OPERATOR, customerId: 1, appCode: "customer_001");
 
     private static ClaimsPrincipal Principal(long userId, string role, long? customerId = null,
         string? appCode = null, string? managedClaim = null)
@@ -319,7 +319,7 @@ public sealed class MultiCustomerIsolationTests : IDisposable
         Name = "测试新建用户",
         Email = email,
         Password = "abc123",
-        Role = Roles.CHEF,
+        Role = Roles.OPERATOR,
         CustomerId = customerId,
         IsActive = true
     };

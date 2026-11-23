@@ -36,7 +36,7 @@ namespace IoTPlatform.AnSheng.Tests;
 ///
 /// 【多客户授权模型 T03 收口】role=admin 的账号不再走单值回填：CustomerId / AppCode /
 /// CustomerName / CurrentCustomer 恒为 null，ManagedCustomerIds 来自 user_customers（DB 为准），
-/// JWT 不签发单值 claim。下级（staff/chef/operator）与超管链路逐字不变（零回归）。
+/// JWT 不签发单值 claim。下级（user/operator）与超管链路逐字不变（零回归）。
 /// 因此 S1/S2/S4-01 中原本断言 admin 单值回填的用例已按新契约改写。
 /// </summary>
 public sealed class AuthServiceTenantContextTests : IDisposable
@@ -319,7 +319,7 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     {
         // Arrange：§5 表 S4 边界
         var customer = SeedCustomer(2, "customer_002", "绿能科技");
-        var user = SeedUser(13, "chef@greenenergy.com", Roles.STAFF,
+        var user = SeedUser(13, "user@greenenergy.com", Roles.USER,
             isSuperAdmin: false, customerId: 999, appCode: "customer_002");
         await CommitAsync();
 
@@ -346,7 +346,7 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     {
         // Arrange
         SeedCustomer(2, "customer_002", "绿能科技");
-        var tenant = SeedUser(13, "chef@greenenergy.com", Roles.STAFF,
+        var tenant = SeedUser(13, "user@greenenergy.com", Roles.USER,
             isSuperAdmin: false, customerId: null, appCode: "customer_002");
         var admin = SeedUser(1, "admin@system.com", Roles.SUPER_ADMIN,
             isSuperAdmin: true, customerId: null, appCode: "system");
@@ -358,9 +358,9 @@ public sealed class AuthServiceTenantContextTests : IDisposable
         var switched = await _sut.SwitchCustomerAsync(admin.Id, 2);
 
         // Assert：三处调用入参严格是 user.Role，且权限集合与改动前静态快照一致
-        Assert.Equal(new[] { Roles.STAFF, Roles.STAFF, Roles.SUPER_ADMIN }, _permissions.RolesAsked);
-        Assert.Equal(Roles.GetStaffPermissions(), login.User.Permissions);
-        Assert.Equal(Roles.GetStaffPermissions(), me!.User.Permissions);
+        Assert.Equal(new[] { Roles.USER, Roles.USER, Roles.SUPER_ADMIN }, _permissions.RolesAsked);
+        Assert.Equal(Roles.GetUserPermissions(), login.User.Permissions);
+        Assert.Equal(Roles.GetUserPermissions(), me!.User.Permissions);
         Assert.Equal(Permissions.All, switched!.User.Permissions);
         Assert.All(new[] { login.User.Permissions, me.User.Permissions, switched.User.Permissions },
             perms => Assert.NotEmpty(perms));
@@ -399,7 +399,7 @@ public sealed class AuthServiceTenantContextTests : IDisposable
     {
         // Arrange
         SeedCustomer(2, "customer_002", "绿能科技");
-        var tenant = SeedUser(13, "chef@greenenergy.com", Roles.STAFF,
+        var tenant = SeedUser(13, "user@greenenergy.com", Roles.USER,
             isSuperAdmin: false, customerId: null, appCode: "customer_002");
         await CommitAsync();
 
@@ -625,7 +625,7 @@ public sealed class AuthServiceTenantContextTests : IDisposable
         {
             [Roles.SUPER_ADMIN] = Roles.GetSuperAdminPermissions(),
             [Roles.ADMIN] = Roles.GetAdminPermissions(),
-            [Roles.STAFF] = Roles.GetStaffPermissions()
+            [Roles.USER] = Roles.GetUserPermissions()
         };
 
         public List<string> GetAllPermissionCodes() => Permissions.All;

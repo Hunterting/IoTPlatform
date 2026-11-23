@@ -68,13 +68,16 @@ public sealed class SeedAndMigrationTests : IDisposable
         Assert.Equal(CustomerScopeConstants.SourceSeed, grant.Source);
         Assert.Null(grant.RevokedAt);
 
-        // 下级与超管单值列逐字不动（零回归）。
+        // 下级与超管单值列逐字不动（零回归）；Id=3/4 的 Role 字符串显式落库，不再回落到默认角色。
         var superAdmin = await _db.Users.AsNoTracking().IgnoreQueryFilters().SingleAsync(u => u.Id == 1);
         Assert.True(superAdmin.IsSuperAdmin);
         Assert.Null(superAdmin.CustomerId);
-        var chef = await _db.Users.AsNoTracking().IgnoreQueryFilters().SingleAsync(u => u.Id == 5);
-        Assert.Equal(2L, chef.CustomerId);
-        Assert.Equal("customer_002", chef.AppCode);
+        var operatorUser = await _db.Users.AsNoTracking().IgnoreQueryFilters().SingleAsync(u => u.Id == 3);
+        Assert.Equal(Roles.OPERATOR, operatorUser.Role);
+        var ordinaryUser = await _db.Users.AsNoTracking().IgnoreQueryFilters().SingleAsync(u => u.Id == 4);
+        Assert.Equal(Roles.USER, ordinaryUser.Role);
+        Assert.Equal(1L, ordinaryUser.CustomerId);
+        Assert.Equal("customer_001", ordinaryUser.AppCode);
     }
 
     [Fact(DisplayName = "SEED-02 种子重复执行幂等：不新增用户、不产生重复授权行")]
@@ -85,7 +88,7 @@ public sealed class SeedAndMigrationTests : IDisposable
         await seeder.InitializeAsync(_db);
         await seeder.InitializeAsync(_db);
 
-        Assert.Equal(6, await _db.Users.AsNoTracking().IgnoreQueryFilters().CountAsync());
+        Assert.Equal(4, await _db.Users.AsNoTracking().IgnoreQueryFilters().CountAsync());
         Assert.Equal(1, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters().CountAsync());
         Assert.Equal(1, await _db.UserCustomers.AsNoTracking().IgnoreQueryFilters()
             .CountAsync(uc => uc.UserId == 2 && uc.CustomerId == 1));

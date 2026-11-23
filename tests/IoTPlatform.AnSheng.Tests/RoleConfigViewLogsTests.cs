@@ -4,7 +4,7 @@ using Xunit;
 namespace IoTPlatform.AnSheng.Tests;
 
 /// <summary>
-/// 验收「P1 权限修复」：全部非超管租户角色（admin/operator/chef/staff/customer_admin/user）
+/// 验收「P1 权限修复」：全部非超管租户角色（admin/operator/customer_admin/user）
 /// 的静态权限集均已包含 <see cref="Permissions.VIEW_LOGS"/>；超管返回 <see cref="Permissions.All"/>（含 VIEW_LOGS）。
 ///
 /// 纯单元测试，无 DB 依赖：直接调用 <see cref="Roles.GetRolePermissions(string)"/> 与各
@@ -22,8 +22,6 @@ public sealed class RoleConfigViewLogsTests
     {
         Roles.ADMIN,
         Roles.OPERATOR,
-        Roles.CHEF,
-        Roles.STAFF,
         Roles.CUSTOMER_ADMIN,
         Roles.USER
     };
@@ -50,8 +48,6 @@ public sealed class RoleConfigViewLogsTests
             Roles.ADMIN => Roles.GetAdminPermissions(),
             Roles.CUSTOMER_ADMIN => Roles.GetCustomerAdminPermissions(),
             Roles.OPERATOR => Roles.GetOperatorPermissions(),
-            Roles.CHEF => Roles.GetChefPermissions(),
-            Roles.STAFF => Roles.GetStaffPermissions(),
             Roles.USER => Roles.GetUserPermissions(),
             _ => Roles.GetRolePermissions(role)
         };

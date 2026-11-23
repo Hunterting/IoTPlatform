@@ -109,19 +109,19 @@ public sealed class PermissionServiceTests
     }
 
     /// <summary>
-    /// 内置角色（staff）且无 DB 记录 → 回退到静态表 <see cref="Roles.GetStaffPermissions"/>，
+    /// 内置角色（user）且无 DB 记录 → 回退到静态表 <see cref="Roles.GetUserPermissions"/>，
     /// 证明 5 个内置角色零回归（不读 DB 也能拿到正确权限）。
     /// </summary>
-    [Fact(DisplayName = "PS-02 内置角色 staff(DB 无记录) → 回退静态 staff 权限")]
+    [Fact(DisplayName = "PS-02 内置角色 user(DB 无记录) → 回退静态 user 权限")]
     public async Task BuiltInRole_NoDbRecord_ReturnsStaticPermissions()
     {
         var repo = new FakeRoleRepository();
-        repo.Seed(Roles.STAFF, null); // DB 查不到 → 回退静态
+        repo.Seed(Roles.USER, null); // DB 查不到 → 回退静态
         var svc = CreateService(repo);
 
-        var result = await svc.GetEffectivePermissionsAsync(Roles.STAFF);
+        var result = await svc.GetEffectivePermissionsAsync(Roles.USER);
 
-        AssertSetEqual(Roles.GetStaffPermissions(), result);
+        AssertSetEqual(Roles.GetUserPermissions(), result);
     }
 
     /// <summary>

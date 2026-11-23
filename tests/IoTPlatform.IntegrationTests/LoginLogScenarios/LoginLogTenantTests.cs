@@ -16,7 +16,7 @@ namespace IoTPlatform.IntegrationTests.LoginLogScenarios;
 /// 「租户登录日志可见性」修复的集成验收（对应 P0 / P1）。
 ///
 /// 真实 TestServer + 一次性 MySQL schema，覆盖：
-///   · 授权（P1）：全部非超管租户角色（admin/operator/chef/staff/customer_admin/user）调
+///   · 授权（P1）：全部非超管租户角色（admin/operator/customer_admin/user）调
 ///     <c>GET /api/v1/logs/login</c> 不再 403，返回 200；超管同样 200。
 ///   · 租户隔离（P0 落 AppCode 的下游效果）：租户身份只看到自身 AppCode 的登录日志；
 ///     超管（无 AppCode claim）能看到跨租户 + 历史 null 行的全部登录日志。
@@ -88,8 +88,6 @@ public sealed class LoginLogTenantTests : IntegrationTestBase
     [Theory(DisplayName = "C-01 非超管租户角色 GET /logs/login → 200（修复前为 403）")]
     [InlineData(Roles.ADMIN)]
     [InlineData(Roles.OPERATOR)]
-    [InlineData(Roles.CHEF)]
-    [InlineData(Roles.STAFF)]
     [InlineData(Roles.CUSTOMER_ADMIN)]
     [InlineData(Roles.USER)]
     public async Task NonSuperAdminRole_CanViewLoginLogs_Returns200(string role)

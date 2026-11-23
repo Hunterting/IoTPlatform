@@ -35,12 +35,12 @@ namespace IoTPlatform.IntegrationTests.Customers;
 /// 【为什么额外播种角色】
 ///   PermissionAuthorizeAttribute 对非超管角色调用 IPermissionService.GetEffectivePermissionsAsync，
 ///   其单一事实来源是 DB Role.Permissions。SeedData 只播种了 admin（Permissions="[]" → 回退静态表，
-///   静态表 admin 含 CRUD_CUSTOMERS），而静态表 staff <b>不含 view_customers</b>。
-///   为对齐真机基线（tenantB staff 仅 view_customers / view_projects / view_devices 3 权限），
+///   静态表 admin 含 CRUD_CUSTOMERS），而静态表 user <b>不含 view_customers</b>。
+///   为对齐真机基线（tenantB 普通用户 user 仅 view_customers / view_projects / view_devices 3 权限），
 ///   本类在 OnInitializedAsync 显式播种：
-///     · staff            → 仅 3 个 view_* 权限（真实基线，天然无写权限）；
+///     · user            → 仅 3 个 view_* 权限（真实基线，天然无写权限）；
 ///     · qa_admincust_writer → 拥有 4 个 customers 权限的<b>普通</b>角色。
-///   后者是关键：staff 会在方法级 PermissionAuthorize 被拦（Code 403「权限不足」），
+///   后者是关键：user 会在方法级 PermissionAuthorize 被拦（Code 403「权限不足」），
 ///   根本走不到控制器里新增的归属校验。要真正证伪「归属校验生效」，
 ///   必须用一个<b>拥有写权限但不是 admin</b>的普通角色，把请求送进控制器分支。
 ///
@@ -53,8 +53,8 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 {
     private const string CustomersUrl = "/api/v1/customers";
 
-    /// <summary>真机基线中的普通只读角色。</summary>
-    private const string StaffRole = "staff";
+    /// <summary>真机基线中的普通只读用户角色（内置 user，权限由测试库角色表覆盖）。</summary>
+    private const string UserRole = Roles.USER;
 
     /// <summary>
     /// 测试专用「普通角色 + 客户写权限」。非 admin ⇒ IsAdminLike() 为 false，
@@ -83,7 +83,7 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
 
     /// <summary>
     /// 基线（1 条 AppCode=TEST 的客户）之上，追加 2 条「其他租户」客户 + 2 个测试角色。
-    /// 因此每个用例的客户全集恒为 3 条，超管/admin 应看到 3 条，staff 应只看到 1 条。
+    /// 因此每个用例的客户全集恒为 3 条，超管/admin 应看到 3 条，user 应只看到 1 条。
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
@@ -91,9 +91,9 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         {
             db.Set<Role>().Add(new Role
             {
-                Code = StaffRole,
-                Name = "QA-真机基线只读员工",
-                Description = "对齐真机 tenantB staff：仅 view_customers / view_projects / view_devices",
+                Code = UserRole,
+                Name = "QA-真机基线只读用户",
+                Description = "对齐真机 tenantB 普通用户 user：仅 view_customers / view_projects / view_devices",
                 Permissions = """["view_customers","view_projects","view_devices"]""",
                 DataScope = "CUSTOM",
                 AppCode = SharedTestConstants.AppCode,
@@ -144,7 +144,7 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
                 }
 
                 var staleRoles = await db.Set<Role>()
-                    .Where(r => r.Code == StaffRole || r.Code == TenantWriterRole)
+                    .Where(r => r.Code == UserRole || r.Code == TenantWriterRole)
                     .ToListAsync();
                 if (staleRoles.Count > 0)
                 {
@@ -202,17 +202,17 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
             .And.NotContain(OtherAppCodeB, "他租户客户不得出现在授权集合外");
     }
 
-    [Fact(DisplayName = "AC-03 staff GET /customers → 只看自身 AppCode 1 条")]
-    public async Task AC03_Staff_List_OnlyOwnTenant()
+    [Fact(DisplayName = "AC-03 user GET /customers → 只看自身 AppCode 1 条")]
+    public async Task AC03_User_List_OnlyOwnTenant()
     {
-        // Arrange：staff 拥有 view_customers（测试库播种），但非 admin ⇒ 走严格 AppCode 隔离
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        // Arrange：user 拥有 view_customers（测试库播种），但非 admin ⇒ 走严格 AppCode 隔离
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var body = await ReadListAsync(await client.GetAsync($"{CustomersUrl}?pageSize=50"));
 
         // Assert
-        body.Code.Should().Be(200, $"staff 读取客户列表应成功，实际：{body.Message}");
+        body.Code.Should().Be(200, $"user 读取客户列表应成功，实际：{body.Message}");
         body.Data.Should().NotBeNull();
         body.Data!.TotalCount.Should().Be(1, "普通角色严格按 AppCode 隔离");
         body.Data.Items.Should().ContainSingle()
@@ -240,11 +240,11 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
             "他租户客户不得出现在可访问列表");
     }
 
-    [Fact(DisplayName = "AC-15 staff GET /customers/accessible → 只看自身 AppCode 1 条")]
-    public async Task AC15_Staff_AccessibleList_OnlyOwnTenant()
+    [Fact(DisplayName = "AC-15 user GET /customers/accessible → 只看自身 AppCode 1 条")]
+    public async Task AC15_User_AccessibleList_OnlyOwnTenant()
     {
         // Arrange
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var response = await client.GetAsync($"{CustomersUrl}/accessible");
@@ -253,7 +253,7 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await ReadAsync<ApiResponse<List<CustomerDto>>>(response);
         body.Should().NotBeNull();
-        body!.Code.Should().Be(200, $"staff 读取可访问客户列表应成功，实际：{body.Message}");
+        body!.Code.Should().Be(200, $"user 读取可访问客户列表应成功，实际：{body.Message}");
         body.Data.Should().NotBeNull();
         body.Data!.Should().ContainSingle()
             .Which.AppCode.Should().Be(SharedTestConstants.AppCode, "普通角色仍严格按 AppCode 隔离");
@@ -274,16 +274,16 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         body.Code.Should().Be(403, "admin 不得访问授权集合外客户详情");
     }
 
-    [Fact(DisplayName = "AC-05 staff GET /customers/{他租户id} → 403")]
-    public async Task AC05_Staff_Detail_OtherTenant_Returns403()
+    [Fact(DisplayName = "AC-05 user GET /customers/{他租户id} → 403")]
+    public async Task AC05_User_Detail_OtherTenant_Returns403()
     {
         // Arrange
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.GetAsync($"{CustomersUrl}/{_otherCustomerAId}"));
 
-        // Assert：staff 有 view_customers，能穿过类级过滤器，被控制器归属校验挡下
+        // Assert：user 有 view_customers，能穿过类级过滤器，被控制器归属校验挡下
         body.Code.Should().Be(403);
         body.Message.Should().Be("无权访问该客户", "403 必须来自 CustomersController 的归属校验");
     }
@@ -310,18 +310,18 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         storedName.Should().Be("QA-他租户客户A", "越权请求不得产生任何落库副作用");
     }
 
-    [Fact(DisplayName = "AC-07 staff PUT /customers/{他租户id} → 403 且未改动")]
-    public async Task AC07_Staff_Update_OtherTenant_Returns403()
+    [Fact(DisplayName = "AC-07 user PUT /customers/{他租户id} → 403 且未改动")]
+    public async Task AC07_User_Update_OtherTenant_Returns403()
     {
         // Arrange
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.PutAsJsonAsync(
-            $"{CustomersUrl}/{_otherCustomerAId}", NewUpdateBody("QA-staff-越权改名")));
+            $"{CustomersUrl}/{_otherCustomerAId}", NewUpdateBody("QA-user-越权改名")));
 
         // Assert
-        body.Code.Should().Be(403, "staff 无 update_customers 权限且不得跨租户修改");
+        body.Code.Should().Be(403, "user 无 update_customers 权限且不得跨租户修改");
 
         var storedName = await QueryDbAsync(db => db.Customers
             .Where(c => c.Id == _otherCustomerAId)
@@ -364,11 +364,11 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         stillExists.Should().BeTrue("越权删除必须被拒绝，客户不得消失");
     }
 
-    [Fact(DisplayName = "AC-09 staff DELETE 他租户客户 → 403 且客户仍在库")]
-    public async Task AC09_Staff_Delete_OtherTenant_Returns403()
+    [Fact(DisplayName = "AC-09 user DELETE 他租户客户 → 403 且客户仍在库")]
+    public async Task AC09_User_Delete_OtherTenant_Returns403()
     {
         // Arrange
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.DeleteAsync($"{CustomersUrl}/{_otherCustomerAId}"));
@@ -474,15 +474,15 @@ public sealed class CustomerAdminBoundaryTests : IntegrationTestBase
         body.Message.Should().Be("应用代码不能为空");
     }
 
-    [Fact(DisplayName = "AC-13 staff 带他租户 AppCode 创建 → 403（纵深防御）")]
-    public async Task AC13_Staff_Create_WithForeignAppCode_Returns403()
+    [Fact(DisplayName = "AC-13 user 带他租户 AppCode 创建 → 403（纵深防御）")]
+    public async Task AC13_User_Create_WithForeignAppCode_Returns403()
     {
-        // Arrange：staff 无 create_customers，方法级 PermissionAuthorize 先行拦截
-        var client = Client.AsRole(StaffRole, SharedTestConstants.AppCode);
+        // Arrange：user 无 create_customers，方法级 PermissionAuthorize 先行拦截
+        var client = Client.AsRole(UserRole, SharedTestConstants.AppCode);
 
         // Act
         var body = await ReadEnvelopeAsync(await client.PostAsJsonAsync(
-            CustomersUrl, NewCreateBody("QA-staff越权建", $"{_prefix}_cstaff", OtherAppCodeA)));
+            CustomersUrl, NewCreateBody("QA-user越权建", $"{_prefix}_cuser", OtherAppCodeA)));
 
         // Assert
         body.Code.Should().Be(403, "普通角色不得为他租户创建客户");
