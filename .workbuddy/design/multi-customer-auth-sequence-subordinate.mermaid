@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant SU as 下级 chef(绑 customer_001)
+    participant AS as AuthService
+    participant JH as JwtHelper
+    participant DB as MySQL
+    participant PF as PermissionFilter / TenantFilter
+    participant SS as ICustomerScopeService
+    participant AR as AreaRepository / AreaService
+    participant DV as DeviceService
+
+    SU->>AS: POST /api/v1/auth/login (chef)
+    AS->>DB: 查 user → CustomerId=1, AppCode=customer_001
+    AS->>AS: ComputeEffectiveAppCode() → "customer_001" (原逻辑)
+    AS->>JH: GenerateToken(id, email, "chef", 1, "customer_001", areas, null)
+    JH-->>AS: JWT{CustomerId=1, AppCode=customer_001, 无 ManagedCustomerIds}
+    AS-->>SU: LoginResponse{CurrentCustomer=customer_001}
+
+    SU->>PF: GET /api/v1/areas/tree (Bearer token)
+    PF->>PF: TenantFilter: role=chef → 原 AppCode 非空校验 → 放行
+    PF->>SS: ResolveAsync → ScopeMode=Single, AppCodes=["customer_001"]
+    SS-->>PF: 单值 scope（不读 user_customers）
+    PF->>AR: GetTreeAsync(customerId=1, appCode="customer_001")
+    AR->>DB: ApplyFilters(AppCode=customer_001) + CustomerId=1
+    DB-->>SU: 仅客户 1 的区域树
+
+    SU->>DV: GET /api/v1/devices/area/{areaId}
+    Note over DV: appCode 仍为单值 "customer_001"（逐字未改）
+    DV->>DB: WHERE AreaId=? AND AppCode="customer_001" (原过滤)
+    DB-->>SU: 仅客户 1 的设备 — 零回归、无越权继承

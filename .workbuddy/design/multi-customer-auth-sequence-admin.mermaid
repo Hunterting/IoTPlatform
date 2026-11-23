@@ -1,0 +1,54 @@
+sequenceDiagram
+    autonumber
+    participant AD as admin
+    participant AU as AuthController
+    participant AS as AuthService
+    participant JH as JwtHelper
+    participant DB as MySQL
+    participant PF as PermissionFilter / TenantFilter
+    participant SS as ICustomerScopeService
+    participant CC as CustomersController
+    participant UC as UsersController / UserService
+
+    AD->>AU: POST /api/v1/auth/login
+    AU->>AS: LoginAsync(email, pwd)
+    AS->>DB: 查 user(role=admin) + BCrypt 校验
+    DB-->>AS: user(role=admin, CustomerId=NULL, AppCode=NULL)
+    AS->>AS: ComputeEffectiveAppCode() → null (admin 分支)
+    AS->>SS: ResolveAsync(构造 principal: role=admin, userId)
+    SS->>DB: SELECT customer_id FROM user_customers WHERE user_id=?
+    DB-->>SS: [1,2]
+    SS-->>AS: CustomerScope(Multi, [1,2])
+    AS->>JH: GenerateToken(id, email, "admin", null, null, areas, "1,2")
+    JH-->>AS: JWT{role=admin, ManagedCustomerIds="1,2", 无 CustomerId/AppCode}
+    AS-->>AU: LoginResponse{User.managedCustomerIds:[1,2], CurrentCustomer:null}
+    AU-->>AD: token + user
+
+    AD->>PF: GET /api/v1/customers (Bearer token)
+    PF->>PF: PermissionAuthorize: admin 有 VIEW_CUSTOMERS → 放行
+    PF->>PF: TenantFilter: role=admin → 跳过 AppCode 校验(原 :115-121 会 403)
+    PF->>SS: InitializeFromHttpContext → ScopeMode=Multi
+    PF->>CC: 进入 Action
+    CC->>SS: ResolveAsync(principal)
+    SS->>DB: 读集合 [1,2] (每次请求, 权威)
+    DB-->>SS: [1,2]
+    SS-->>CC: scope
+    CC->>DB: SELECT * FROM customers WHERE id IN (1,2) + keyword
+    DB-->>AD: 恰好客户 1、2（无客户 3）
+
+    AD->>UC: POST /api/v1/users {customerId:1, role:"chef", ...}
+    UC->>SS: CanAccessCustomerAsync(principal, 1)
+    SS->>DB: EXISTS(user_id=adminId AND customer_id=1)
+    DB-->>SS: true
+    SS-->>UC: true
+    UC->>UC: 沿用原逻辑 AppCode = customer.AppCode（1:1）
+    UC->>DB: INSERT user(CustomerId=1, AppCode=customer_001, Role=chef)
+    DB-->>UC: 成功
+    UC-->>AD: {code:200}
+
+    AD->>UC: POST /api/v1/users {customerId:3(授权外), role:"chef"}
+    UC->>SS: CanAccessCustomerAsync(principal, 3)
+    SS->>DB: EXISTS(user_id=adminId AND customer_id=3)
+    DB-->>SS: false
+    SS-->>UC: false
+    UC-->>AD: {code:403, message:"无权在该客户下创建用户"} — 无 INSERT

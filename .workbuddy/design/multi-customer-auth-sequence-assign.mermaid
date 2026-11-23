@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant SA as 超管 super_admin
+    participant GC as AdminCustomerGrantsController
+    participant PS as PermissionAuthorizeAttribute
+    participant SS as ICustomerScopeService
+    participant UR as IUserCustomerRepository
+    participant DB as MySQL(user_customers)
+    participant AD as admin(持旧 token)
+
+    SA->>GC: PUT /api/v1/users/{id}/managed-customers {customerIds:[1,2,4]}
+    GC->>PS: 鉴权
+    PS-->>GC: Roles.IsSuperAdmin → 短路放行(不查DB)
+    GC->>GC: 校验目标 user.Role == admin；ids 非空且 ≤ MaxManagedCustomers(50)
+    GC->>DB: 校验 customerIds 全部存在(SELECT id IN ...)
+    DB-->>GC: 存在
+    GC->>UR: SyncAsync(adminId, [1,2,4], grantedBy=超管Id)
+    UR->>DB: BEGIN; DELETE 差集(3); INSERT 并集(4); COMMIT
+    DB-->>UR: 3 行变更
+    UR-->>GC: OK
+    GC-->>SA: {code:200, data:{userId, customerIds:[1,2,4]}}
+
+    Note over GC,DB: claim 不刷新；授权事实以 DB 为准 → 下次请求即时生效
+
+    AD->>SS: 任意请求(携带旧 token, claim 仍是 [1,2])
+    SS->>UR: GetCustomerIdsAsync(adminId from NameIdentifier)
+    UR->>DB: SELECT customer_id WHERE user_id=? (走 uk_user_customer)
+    DB-->>UR: [1,2,4]
+    UR-->>SS: [1,2,4]
+    SS-->>AD: CustomerScope(Multi, [1,2,4]) → 新客户 4 可见

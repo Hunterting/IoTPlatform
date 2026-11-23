@@ -1,0 +1,148 @@
+classDiagram
+    %% ===== 数据实体 =====
+    class User {
+        +long Id
+        +string Username
+        +string Email
+        +string Role
+        +bool IsSuperAdmin
+        +long? CustomerId
+        +string? AppCode
+        +string? AllowedAreaIds
+    }
+    class Customer {
+        +long Id
+        +string Code
+        +string AppCode
+        +string Name
+    }
+    class UserCustomer {
+        +long Id
+        +long UserId
+        +long CustomerId
+        +long? GrantedByUserId
+        +string Source
+        +DateTime CreatedAt
+        +DateTime UpdatedAt
+        +DateTime? RevokedAt
+    }
+
+    %% ===== 仓储与范围服务 =====
+    class IUserCustomerRepository {
+        <<interface>>
+        +GetCustomerIdsAsync(long userId) Task~IReadOnlyList~long~~
+        +GetAdminIdsByCustomerIdAsync(long customerId) Task~IReadOnlyList~long~~
+        +ExistsAsync(long userId, long customerId) Task~bool~
+        +SyncAsync(long userId, IReadOnlyCollection~long~ ids, long? grantedBy) Task
+    }
+    class UserCustomerRepository {
+        -AppDbContext _db
+        +SyncAsync() Task
+    }
+    class CustomerScopeMode {
+        <<enumeration>>
+        All
+        Multi
+        Single
+    }
+    class CustomerScope {
+        <<record>>
+        +CustomerScopeMode Mode
+        +IReadOnlyList~long~ CustomerIds
+        +IReadOnlyList~string~ AppCodes
+    }
+    class ICustomerScopeService {
+        <<interface>>
+        +ResolveAsync(ClaimsPrincipal p) Task~CustomerScope~
+        +CanAccessCustomerAsync(ClaimsPrincipal p, long customerId) Task~bool~
+        +GetAppCodesAsync(ClaimsPrincipal p) Task~IReadOnlyList~string~~
+    }
+    class CustomerScopeService {
+        -IUserCustomerRepository _grants
+        -ICustomerRepository _customers
+        +ResolveAsync() Task~CustomerScope~
+    }
+
+    %% ===== JWT 与鉴权 =====
+    class JwtHelper {
+        -IConfiguration _configuration
+        +GenerateToken(long userId, string email, string role, long? customerId, string? appCode, string? allowedAreaIds, string? managedCustomerIds) string
+        +GetManagedCustomerIdsFromToken(string token) List~long~
+    }
+    class TenantFilterAttribute {
+        +OnActionExecuting(ActionExecutingContext c) void
+    }
+    class ITenantContext {
+        <<interface>>
+        +string AppCode
+        +long? CustomerId
+        +IReadOnlyList~long~ ManagedCustomerIds
+        +CustomerScopeMode ScopeMode
+        +SetTenant(string appCode, long? customerId, long? userId, string role) void
+    }
+    class ScopedTenantContextAccessor {
+        +Current ITenantContext
+        +InitializeFromHttpContext(HttpContext h) void
+    }
+
+    %% ===== 服务与控制器 =====
+    class AuthService {
+        -JwtHelper _jwtHelper
+        +LoginAsync(LoginRequest r) Task~LoginResponse~
+        +GetCurrentUserAsync(long id) Task~LoginResponse~
+        -BuildUserDto(User u, string? appCode, Customer? c, List~long~? areas) UserDto
+    }
+    class AdminCustomerGrantsController {
+        -IUserCustomerRepository _grants
+        -ICustomerScopeService _scope
+        +Assign(long userId, AssignManagedCustomersRequest r) Task
+        +Get(long userId) Task
+    }
+    class CustomersController {
+        -ICustomerScopeService _scope
+        +GetCustomers() Task
+        +GetAccessibleCustomers() Task
+        +UpdateCustomer(long id) Task
+    }
+    class UsersController {
+        -ICustomerScopeService _scope
+        -IUserService _users
+        +CreateUser(CreateUserRequest r) Task
+    }
+    class AreaService {
+        +GetAreasAsync(IReadOnlyCollection~long~? customerIds) Task
+        +GetAreaTreeAsync(IReadOnlyCollection~long~? customerIds) Task
+    }
+    class DevicesController {
+        +GetDevicesByArea(long areaId) Task
+    }
+    class AreaRepository {
+        +GetTreeAsync(IEnumerable~long~ customerIds, string? appCode) Task
+        +GetTreeAsync(long? customerId, string? appCode) Task
+    }
+    class UserDto {
+        +long? CustomerId
+        +string? AppCode
+        +List~long~? ManagedCustomerIds
+    }
+
+    %% ===== 关系 =====
+    User "1" -- "*" UserCustomer : 被授权 UserId
+    Customer "1" -- "*" UserCustomer : 被授予 CustomerId
+    User "1" -- "0..1" Customer : 下级单值绑定
+    IUserCustomerRepository <|.. UserCustomerRepository : 实现
+    ICustomerScopeService <|.. CustomerScopeService : 实现
+    CustomerScopeService --> IUserCustomerRepository : 读集合 DB权威
+    CustomerScopeService --> CustomerScope : 产出
+    CustomerScopeService --> CustomerScopeMode : 判定
+    AuthService --> JwtHelper : 签发 claim
+    AuthService --> ICustomerScopeService : admin 分支取集合
+    AuthService --> UserDto : 构建
+    TenantFilterAttribute --> ITenantContext : 初始化
+    ScopedTenantContextAccessor ..|> ITenantContext : 实现
+    AdminCustomerGrantsController --> IUserCustomerRepository : 全量同步
+    CustomersController --> ICustomerScopeService : 显式过滤
+    UsersController --> ICustomerScopeService : 建户校验
+    AreaService --> ICustomerScopeService : 集合取树
+    AreaService --> AreaRepository : 复用 GetTreeAsync
+    DevicesController --> ICustomerScopeService : area 归属校验
