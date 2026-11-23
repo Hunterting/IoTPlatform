@@ -4404,11 +4404,124 @@ DROP PROCEDURE MigrationsScript;
 
 COMMIT;
 
--- ============================================================================
--- 多客户授权模型 T01：admin ↔ 客户授权中间表 user_customers
--- 迁移 ID 与 Migrations/20261123025525_AddUserCustomers.cs 保持一致。
--- 沿用本文件既有风格：用一次性存储过程 + __EFMigrationsHistory 保证幂等。
--- ============================================================================
+START TRANSACTION;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261109091012_T12WaterFlow') THEN
+
+    ALTER TABLE `device_data_records` ADD `WaterPulses` bigint NULL;
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261109091012_T12WaterFlow') THEN
+
+    CREATE TABLE `ansheng_wf_config` (
+        `Id` bigint NOT NULL AUTO_INCREMENT,
+        `AppCode` varchar(50) CHARACTER SET utf8mb4 NOT NULL,
+        `DeviceId` bigint NOT NULL,
+        `K` double NOT NULL,
+        `Offset` double NOT NULL,
+        `MinFlow` double NOT NULL,
+        `MaxFlow` double NOT NULL,
+        `SyncedAt` datetime(6) NOT NULL,
+        CONSTRAINT `PK_ansheng_wf_config` PRIMARY KEY (`Id`)
+    ) CHARACTER SET=utf8mb4;
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261109091012_T12WaterFlow') THEN
+
+    CREATE UNIQUE INDEX `IX_ansheng_wf_config_DeviceId` ON `ansheng_wf_config` (`DeviceId`, `AppCode`);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261109091012_T12WaterFlow') THEN
+
+    CREATE INDEX `IX_ansheng_wf_config_DeviceId1` ON `ansheng_wf_config` (`DeviceId`);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261109091012_T12WaterFlow') THEN
+
+    INSERT INTO `__EFMigrationsHistory` (`MigrationId`, `ProductVersion`)
+    VALUES ('20261109091012_T12WaterFlow', '8.0.11');
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+COMMIT;
+
+START TRANSACTION;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261114000000_AddCameraEncryptionCode') THEN
+
+    ALTER TABLE `cameras` ADD `EncryptionCode` varchar(200) NULL;
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261114000000_AddCameraEncryptionCode') THEN
+
+    INSERT INTO `__EFMigrationsHistory` (`MigrationId`, `ProductVersion`)
+    VALUES ('20261114000000_AddCameraEncryptionCode', '8.0.11');
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+COMMIT;
+
 START TRANSACTION;
 
 DROP PROCEDURE IF EXISTS MigrationsScript;
@@ -4417,19 +4530,16 @@ CREATE PROCEDURE MigrationsScript()
 BEGIN
     IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
 
-    CREATE TABLE IF NOT EXISTS `user_customers` (
+    CREATE TABLE `user_customers` (
         `Id` bigint NOT NULL AUTO_INCREMENT,
         `UserId` bigint NOT NULL,
         `CustomerId` bigint NOT NULL,
         `GrantedByUserId` bigint NULL,
         `Source` varchar(20) CHARACTER SET utf8mb4 NOT NULL DEFAULT 'manual',
         `CreatedAt` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-        `UpdatedAt` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        `UpdatedAt` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
         `RevokedAt` datetime(3) NULL,
         CONSTRAINT `PK_user_customers` PRIMARY KEY (`Id`),
-        CONSTRAINT `uk_user_customer` UNIQUE (`UserId`, `CustomerId`),
-        KEY `idx_customer_id` (`CustomerId`),
-        KEY `idx_granted_by` (`GrantedByUserId`),
         CONSTRAINT `FK_user_customers_customers_CustomerId` FOREIGN KEY (`CustomerId`) REFERENCES `customers` (`Id`) ON DELETE RESTRICT,
         CONSTRAINT `FK_user_customers_users_GrantedByUserId` FOREIGN KEY (`GrantedByUserId`) REFERENCES `users` (`Id`) ON DELETE SET NULL,
         CONSTRAINT `FK_user_customers_users_UserId` FOREIGN KEY (`UserId`) REFERENCES `users` (`Id`) ON DELETE CASCADE
@@ -4447,8 +4557,63 @@ CREATE PROCEDURE MigrationsScript()
 BEGIN
     IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
 
-    -- 存量回填：CustomerId 优先、AppCode 兜底；仅 role='admin'。
-    -- NOT EXISTS 守卫保证重复执行不撞 uk_user_customer。
+    CREATE INDEX `idx_customer_id` ON `user_customers` (`CustomerId`);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    CREATE INDEX `idx_granted_by` ON `user_customers` (`GrantedByUserId`);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    CREATE UNIQUE INDEX `uk_user_customer` ON `user_customers` (`UserId`, `CustomerId`);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+    ALTER TABLE user_customers MODIFY COLUMN UpdatedAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3);
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+
     INSERT INTO user_customers
         (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
     SELECT u.Id, c.Id, NULL, 'migration', NOW(3), NOW(3)
@@ -4462,8 +4627,24 @@ BEGIN
           SELECT 1 FROM user_customers uc
           WHERE uc.UserId = u.Id AND uc.CustomerId = c.Id);
 
-    -- 清空 admin 单值列；super_admin 与下级账号不动。
-    UPDATE users SET CustomerId = NULL, AppCode = NULL, UpdatedAt = NOW(3) WHERE Role = 'admin';
+
+    END IF;
+END //
+DELIMITER ;
+CALL MigrationsScript();
+DROP PROCEDURE MigrationsScript;
+
+DROP PROCEDURE IF EXISTS MigrationsScript;
+DELIMITER //
+CREATE PROCEDURE MigrationsScript()
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM `__EFMigrationsHistory` WHERE `MigrationId` = '20261123025525_AddUserCustomers') THEN
+
+
+    UPDATE users
+    SET CustomerId = NULL, AppCode = NULL, UpdatedAt = NOW(3)
+    WHERE Role = 'admin';
+
 
     END IF;
 END //
@@ -4491,9 +4672,10 @@ COMMIT;
 -- ----------------------------------------------------------------------------
 -- 幂等 seed 段：本脚本只建库结构，业务种子由应用启动时的 SeedUsers 写入。
 -- 若脚本执行时库内已有 admin 用户，则按原单值回填；
--- 另按种子固定映射 manager(Id=2) → customer_001(Id=1) 兜底，
--- 保证「全新空库按脚本建库 + 应用种子」后 manager 的授权集合恰为 [1]。
--- 两段均带 NOT EXISTS 守卫，可重复执行。
+-- 另按种子固定映射 manager(Id=2) -> customer_001/002/003(Id=1,2,3) 兜底，
+-- 与 SeedUsers.adminOriginalGrants 中 [2] = [1,2,3] 保持一致，
+-- 保证「全新空库按脚本建库 + 应用种子」后 manager 的授权集合恰为 [1,2,3]。
+-- 三段均带 NOT EXISTS 守卫，可重复执行。
 -- ----------------------------------------------------------------------------
 START TRANSACTION;
 
@@ -4514,6 +4696,8 @@ BEGIN
           SELECT 1 FROM user_customers uc
           WHERE uc.UserId = u.Id AND uc.CustomerId = c.Id);
 
+    -- manager(Id=2) 固定兜底：授权集合 [1,2,3]（customer_001/002/003）。
+    -- 三条各自独立带 users(2,'admin')、customers(Id=N)、NOT EXISTS 守卫，可重复执行。
     INSERT INTO user_customers
         (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
     SELECT 2, 1, NULL, 'seed', NOW(3), NOW(3)
@@ -4521,10 +4705,25 @@ BEGIN
     WHERE EXISTS (SELECT 1 FROM users u WHERE u.Id = 2 AND u.Role = 'admin')
       AND EXISTS (SELECT 1 FROM customers c WHERE c.Id = 1)
       AND NOT EXISTS (SELECT 1 FROM user_customers uc WHERE uc.UserId = 2 AND uc.CustomerId = 1);
+
+    INSERT INTO user_customers
+        (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
+    SELECT 2, 2, NULL, 'seed', NOW(3), NOW(3)
+    FROM DUAL
+    WHERE EXISTS (SELECT 1 FROM users u WHERE u.Id = 2 AND u.Role = 'admin')
+      AND EXISTS (SELECT 1 FROM customers c WHERE c.Id = 2)
+      AND NOT EXISTS (SELECT 1 FROM user_customers uc WHERE uc.UserId = 2 AND uc.CustomerId = 2);
+
+    INSERT INTO user_customers
+        (UserId, CustomerId, GrantedByUserId, Source, CreatedAt, UpdatedAt)
+    SELECT 2, 3, NULL, 'seed', NOW(3), NOW(3)
+    FROM DUAL
+    WHERE EXISTS (SELECT 1 FROM users u WHERE u.Id = 2 AND u.Role = 'admin')
+      AND EXISTS (SELECT 1 FROM customers c WHERE c.Id = 3)
+      AND NOT EXISTS (SELECT 1 FROM user_customers uc WHERE uc.UserId = 2 AND uc.CustomerId = 3);
 END //
 DELIMITER ;
 CALL MigrationsScript();
 DROP PROCEDURE MigrationsScript;
 
 COMMIT;
-
