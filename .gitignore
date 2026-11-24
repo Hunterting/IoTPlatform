@@ -4,12 +4,27 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Production builds
-/web/dist
-/web/build
+# Production builds (case-insensitive: actual dir is Web/dist)
+/[Ww]eb/dist/
+/[Ww]eb/build/
 bin/
 obj/
 .vs/
+
+# Build archives & generated deploy packages
+IoTPlatform-Web-dist-*.zip
+
+# Test results
+*.trx
+[Tt]est[Rr]esults/
+
+# Local IDE publish profiles & backups
+*.pubxml.user
+*.bak
+
+# WorkBuddy transient artifacts (keep design/ and memory/ tracked)
+.workbuddy/tmp/
+.workbuddy/reports/
 
 # Environment variables
 .env
